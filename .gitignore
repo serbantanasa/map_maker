@@ -1,0 +1,16 @@
+# Virtual environments
+.venv/
+
+# Bytecode
+__pycache__/
+*.py[cod]
+
+# Test and type caches
+.pytest_cache/
+.mypy_cache/
+
+# Editor cruft
+.DS_Store
+
+# Generated artifacts
+out/

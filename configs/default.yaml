@@ -1,0 +1,12 @@
+ocean_level: 0.0
+river_acc_min: 300
+elev_scale: 320
+elev_octaves: 6
+elev_scale2: 90
+elev_octaves2: 3
+falloff_power: 2.6
+falloff_strength: 0.6
+temp_lapse: 0.45
+moist_scale: 220
+moist_octaves: 4
+coast_moist_boost: 0.25
