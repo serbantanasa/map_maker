@@ -2,7 +2,26 @@
 
 Utilities for procedural world generation."""
 
-from .generate import export_dataset, generate_world, render_png
+from __future__ import annotations
 
-__all__ = ["generate_world", "render_png", "export_dataset"]
+import importlib
+from typing import Any
+
+__all__ = [
+    "generate_world",
+    "render_png",
+    "export_dataset",
+    "generate_tectonic_field",
+    "save_tectonic_field",
+]
 __version__ = "0.1.0"
+
+
+def __getattr__(name: str) -> Any:
+    if name in {"generate_world", "render_png", "export_dataset"}:
+        module = importlib.import_module(".generate", __name__)
+        return getattr(module, name)
+    if name in {"generate_tectonic_field", "save_tectonic_field"}:
+        module = importlib.import_module(".core.tectonics", __name__)
+        return getattr(module, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -1,0 +1,13 @@
+[package]
+name = "tectonics_native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "tectonics_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+rand = "0.8"
+rand_chacha = "0.3"
+rayon = "1.9"

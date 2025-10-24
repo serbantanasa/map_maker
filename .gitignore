@@ -12,5 +12,11 @@ __pycache__/
 # Editor cruft
 .DS_Store
 
+# Native build artifacts
+src/map_maker/pipeline/native/**/target/
+src/map_maker/pipeline/native/**/Cargo.lock
+
 # Generated artifacts
 out/
+cache/
+logs/
