@@ -1,0 +1,10 @@
+[package]
+name = "erosion_native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "erosion_native"
+crate-type = ["cdylib"]
+
+[dependencies]

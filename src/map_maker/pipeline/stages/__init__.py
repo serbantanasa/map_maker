@@ -2,3 +2,5 @@
 
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
+from . import erosion  # noqa: F401
+from . import erosion  # noqa: F401
