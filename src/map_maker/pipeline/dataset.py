@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.feather as feather
 
 from .memory import ArrayHandle, GridHandle, MemoryArena, VectorHandle
 from .models import ArtifactRecord, StageResult
@@ -61,6 +63,8 @@ class DatasetWriter:
             return self._write_array(stage_dir, cache_dir, name, value)
         if isinstance(value, np.ndarray):
             return self._write_ndarray(stage_dir, cache_dir, name, value)
+        if isinstance(value, pa.Table):
+            return self._write_arrow_table(stage_dir, cache_dir, name, value)
         if isinstance(value, (dict, list, int, float, str, bool)) or value is None:
             return self._write_json(stage_dir, cache_dir, name, value)
         raise TypeError(f"Unsupported artifact type for '{name}': {type(value)!r}")
@@ -140,6 +144,25 @@ class DatasetWriter:
             value=array,
         )
 
+    def _write_arrow_table(self, stage_dir: Path, cache_dir: Path, name: str, table: pa.Table) -> ArtifactRecord:
+        filename = f"{name}.arrow"
+        cache_path = cache_dir / filename
+        feather.write_feather(table, cache_path)
+        dataset_path = stage_dir / filename
+        if cache_path != dataset_path:
+            shutil.copy2(cache_path, dataset_path)
+        data_bytes = cache_path.read_bytes()
+        checksum = _hash_bytes(data_bytes)
+        return ArtifactRecord(
+            name=name,
+            kind="arrow",
+            checksum=checksum,
+            dataset_path=dataset_path,
+            cache_path=cache_path,
+            metadata={"filename": filename, "schema": table.schema.to_string()},
+            value=table,
+        )
+
     def _write_json(self, stage_dir: Path, cache_dir: Path, name: str, value: Any) -> ArtifactRecord:
         filename = f"{name}.json"
         cache_path = cache_dir / filename
@@ -188,4 +211,7 @@ class DatasetWriter:
             return array.reshape(shape)
         if record.kind == "json":
             return json.loads(record.dataset_path.read_text(encoding="utf8"))
+        if record.kind == "arrow":
+            table = feather.read_table(record.dataset_path)
+            return table
         return np.load(record.dataset_path, allow_pickle=False)
