@@ -11,7 +11,17 @@ import numpy as np
 from PIL import Image
 
 from .._native import native_library_info
-from ._cubed_sphere_native import D4_NEIGHBORS, FACE_COUNT, generate_cubed_sphere
+from ._cubed_sphere_native import (
+    D4_NEIGHBORS,
+    FACE_COUNT,
+    children_map as native_children_map,
+    fill_d4_halo as native_fill_d4_halo,
+    generate_cubed_sphere,
+    parent_map as native_parent_map,
+    prolongate_constant as native_prolongate_constant,
+    restrict_extensive as native_restrict_extensive,
+    restrict_intensive as native_restrict_intensive,
+)
 
 FACE_NAMES = ("+X", "-X", "+Y", "-Y", "+Z", "-Z")
 
@@ -68,6 +78,46 @@ class CubedSphereGrid:
         vector_b = self.xyz[face_b, row_b, col_b]
         dot = float(np.clip(np.dot(vector_a, vector_b), -1.0, 1.0))
         return math.acos(dot)
+
+    def _require_field(self, values: np.ndarray, *, name: str = "values") -> np.ndarray:
+        array = np.asarray(values)
+        if array.shape != self.face_shape:
+            raise ValueError(f"{name} must have shape {self.face_shape}, got {array.shape}")
+        return array
+
+    def parent_map(self, factor: int = 2) -> np.ndarray:
+        """Return the same-face coarse parent global ID for every cell."""
+
+        parents = native_parent_map(self.face_resolution, factor)
+        parents.setflags(write=False)
+        return parents
+
+    def children_map(self, factor: int = 2) -> np.ndarray:
+        """Return row-major child global IDs, treating this grid as coarse."""
+
+        children = native_children_map(self.face_resolution, factor)
+        children.setflags(write=False)
+        return children
+
+    def restrict_extensive(self, values: np.ndarray, factor: int = 2) -> np.ndarray:
+        """Sum child quantities into same-face parent cells."""
+
+        return native_restrict_extensive(self._require_field(values), factor)
+
+    def restrict_intensive(self, values: np.ndarray, factor: int = 2) -> np.ndarray:
+        """Area-weight child values into same-face parent cells."""
+
+        return native_restrict_intensive(self._require_field(values), self.cell_areas, factor)
+
+    def prolongate_constant(self, values: np.ndarray, factor: int = 2) -> np.ndarray:
+        """Copy each coarse prior to its row-major same-face children."""
+
+        return native_prolongate_constant(self._require_field(values), factor)
+
+    def with_d4_halo(self, values: np.ndarray) -> np.ndarray:
+        """Add topology-aware width-one edge halos with undefined corners."""
+
+        return native_fill_d4_halo(self._require_field(values))
 
 
 def _direction_colors(grid: CubedSphereGrid) -> np.ndarray:

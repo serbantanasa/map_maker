@@ -76,18 +76,30 @@ cell corners. On the unit sphere:
 
 Physical area is canonical steradian area multiplied by planet radius squared.
 
-## Multi-Resolution Requirements
+## Multi-Resolution Operations
 
-Later levels use face resolutions related by powers of two. Required operations:
+Levels use integer refinement factors, with powers of two as the normal
+production hierarchy. Refinement never changes a cell's face. Children are
+ordered row-major within each parent, and global IDs remain local to a specific
+resolution.
 
-- Parent/child global-ID mapping.
-- Area-conserving restriction for extensive quantities.
-- Area-weighted restriction for intensive quantities.
-- Constrained interpolation for refinement priors.
-- Cross-face halo exchange with no duplicated authoritative cells.
+The native topology library provides coarse-buffer operations for:
 
-These operations remain pending; the current milestone establishes only the
-single-resolution geometry and D4 graph they depend on.
+- Fine-cell to parent and parent to child global-ID mappings.
+- Restriction of extensive quantities by summing children.
+- Restriction of intensive quantities by spherical-area-weighted mean.
+- Constant prolongation that copies a parent prior to all children.
+- Width-one float32/float64 D4 face halos sourced through canonical cross-face
+  neighbors without dtype narrowing.
+
+Restriction rejects non-finite values and non-positive or non-finite areas.
+It also rejects accumulation overflow instead of publishing non-finite parent
+fields.
+Constant prolongation is a prior transfer, not the final constrained
+interpolation needed for detailed terrain refinement. Halo interiors and edges
+are populated, while the four cube-corner diagonals are `NaN` until D8 and
+vector-basis transport define their semantics. Authoritative state remains the
+unhaloed six-face field.
 
 ## Diagnostics
 
@@ -111,6 +123,10 @@ The cube net is a topology diagnostic, not an atlas projection.
 - Maximum/minimum cell area ratio is below `1.5` for the equiangular grid.
 - Maximum/minimum D4 angular-spacing ratio is below `1.5`.
 - The fixed cube-net diagnostic has no discontinuity on touching face edges.
+- Parent and child maps are inverse under every tested refinement factor.
+- Extensive totals and area-weighted intensive integrals survive restriction.
+- Restricted fine-cell areas match directly generated parent-cell areas.
+- D4 halo edges exactly match canonical cross-face neighbor values.
 - Native generation remains a coarse call and does not compile during import.
 
 ## Migration Boundary
