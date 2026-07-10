@@ -56,6 +56,25 @@ def _validation_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _topology_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "topology", help="Generate the canonical cubed-sphere topology diagnostic."
+    )
+    parser.add_argument(
+        "--face-resolution",
+        type=int,
+        default=64,
+        help="Cells along each face edge (default: 64).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("out/topology"),
+        help="Diagnostic output directory (default: out/topology).",
+    )
+    return parser
+
+
 def _config_from_args(args: argparse.Namespace) -> "PipelineConfig":
     from .pipeline.config import GridInfo, PipelineConfig, ResolutionSet
 
@@ -154,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     _generate_parser(subparsers)
     _validation_parser(subparsers)
+    _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
     args = parser.parse_args(raw_args)
@@ -195,6 +215,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"(expected {gate.expectation})"
                     )
         return 1
+
+    if args.command == "topology":
+        try:
+            from .pipeline.cubed_sphere import run_cubed_sphere_diagnostic
+
+            net_path, report_path = run_cubed_sphere_diagnostic(
+                face_resolution=args.face_resolution,
+                output_dir=args.output_dir,
+            )
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Cube net: {net_path}")
+        print(f"Topology report: {report_path}")
+        return 0
 
     try:
         from .pipeline.generate import generate_world

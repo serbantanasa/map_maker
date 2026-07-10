@@ -56,3 +56,15 @@ It gates deterministic cold runs, cache replay, seed uniqueness, finite fields,
 prototype morphology, longitude seams, and plate imprint, then writes a gallery
 for mandatory human review. The thresholds remain provisional until geological
 scenarios and reference distributions can calibrate them.
+
+The first cubed-sphere milestone now provides native equiangular geometry,
+steradian cell areas, and reciprocal cross-face D4 neighbors. Geological kernels
+remain on the provisional grid until they can consume topology-owned neighbor
+tables or face-aware halos; a flattened compatibility mode is explicitly
+rejected.
+
+Native ABI version and binary SHA-256 fingerprints are now verified before FFI
+use, included in simulation cache keys, and recorded in run manifests. Debug and
+release native profiles both execute the physical pipeline. Cached artifact
+content is checksum-verified during hydration and corrupt stage entries are
+recomputed.

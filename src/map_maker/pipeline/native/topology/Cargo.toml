@@ -1,0 +1,9 @@
+[package]
+name = "topology_native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+name = "topology_native"
+crate-type = ["cdylib", "rlib"]

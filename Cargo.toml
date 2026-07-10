@@ -2,6 +2,7 @@
 members = [
     "src/map_maker/pipeline/native/erosion",
     "src/map_maker/pipeline/native/tectonics",
+    "src/map_maker/pipeline/native/topology",
     "src/map_maker/pipeline/native/world_age",
 ]
 resolver = "2"
