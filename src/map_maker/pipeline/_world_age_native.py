@@ -8,7 +8,7 @@ import numpy as np
 import pyarrow as pa
 from cffi import FFI
 
-from .._native import native_library_path
+from .._native import native_library_info, native_library_path
 
 HOTSPOT_EVENT_DTYPE = np.dtype(
     [
@@ -107,6 +107,7 @@ def _as_write_array(array: np.ndarray, *, name: str) -> np.ndarray:
 
 _ffi = FFI()
 _ffi.cdef(_CDEF)
+native_library_info("world_age_native")
 _lib = _ffi.dlopen(str(native_library_path("world_age_native")))
 
 

@@ -7,6 +7,11 @@ use std::f32::consts::PI;
 
 const PLATE_COMPONENTS: usize = 6;
 
+#[no_mangle]
+pub extern "C" fn tectonics_native_abi_version() -> u32 {
+    1
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PlateType {
     Continental,
@@ -379,8 +384,8 @@ fn compute_plate_velocities(
 ) -> Vec<[f32; 2]> {
     let mut velocities = vec![[0.0f32; 2]; seeds.len()];
     for (idx, seed) in seeds.iter().enumerate() {
-        let mut rng =
-            ChaCha8Rng::seed_from_u64(base_seed ^ ((idx as u64 + 1) * 0x9E37_79B9_7F4A_7C15));
+        let stream_seed = (idx as u64 + 1).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut rng = ChaCha8Rng::seed_from_u64(base_seed ^ stream_seed);
         let angle = rng.gen::<f32>() * 2.0 * PI;
         let magnitude = velocity_scale.max(1e-3) * (0.45 + rng.gen::<f32>() * 0.55);
         let random_component = [angle.cos() * magnitude, angle.sin() * magnitude];
@@ -1161,5 +1166,22 @@ mod tests {
         assert!((sum - 1.0).abs() < 1e-5);
         assert!(nonzero > 5);
         assert!(field[4 * 9 + 4] < 1.0);
+    }
+
+    #[test]
+    fn plate_velocity_stream_seeds_do_not_overflow_in_debug_builds() {
+        let seeds: Vec<PlateSeed> = (0..64)
+            .map(|index| PlateSeed {
+                position: [index as f32, index as f32 * 0.5],
+                plate_type: PlateType::Oceanic,
+            })
+            .collect();
+        let counts = vec![1.0f32; seeds.len()];
+        let velocities = compute_plate_velocities(&seeds, &counts, 1.0, 0.1, u64::MAX, 128);
+        assert_eq!(velocities.len(), seeds.len());
+        assert!(velocities
+            .iter()
+            .flatten()
+            .all(|component| component.is_finite()));
     }
 }

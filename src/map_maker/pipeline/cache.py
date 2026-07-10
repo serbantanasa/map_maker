@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 from typing import Optional
 
 from .models import ArtifactRecord, StageResult, StageStats
@@ -18,6 +19,9 @@ class CacheManager:
 
     def cache_dir(self, stage_name: str, cache_key: str) -> Path:
         return self._base_dir / stage_name / cache_key
+
+    def invalidate(self, stage_name: str, cache_key: str) -> None:
+        shutil.rmtree(self.cache_dir(stage_name, cache_key), ignore_errors=True)
 
     def load(self, stage_name: str, cache_key: str) -> Optional[StageResult]:
         directory = self.cache_dir(stage_name, cache_key)

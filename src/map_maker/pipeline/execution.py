@@ -11,9 +11,10 @@ from typing import Any, Dict, Iterable, Iterator, Mapping
 
 import numpy as np
 
+from .._native import simulation_native_fingerprints
 from .cache import CacheManager
 from .config import PipelineConfig, ResolutionSet
-from .dataset import DatasetWriter
+from .dataset import CacheCorruptionError, DatasetWriter
 from .logging import RunLogger
 from .memory import MemoryArena
 from .models import StageResult, StageStats
@@ -169,6 +170,7 @@ class ExecutionEngine:
             "stage": descriptor.name,
             "version": descriptor.version,
             "rng_seed": self._context.config.rng_seed,
+            "native_libraries": simulation_native_fingerprints(),
             "config": _serialize_for_hash(stage_config),
             "topology": {
                 "type": self._context.config.topology,
@@ -208,7 +210,20 @@ class ExecutionEngine:
                 cached = self._context.cache_manager.load(stage_name, cache_key)
                 if cached:
                     cached.set_cache_key(cache_key)
-                    self._dataset_writer.hydrate_from_cache(cached, self._arena)
+                    try:
+                        self._dataset_writer.hydrate_from_cache(cached, self._arena)
+                    except CacheCorruptionError as exc:
+                        self._logger.log_event(
+                            {
+                                "type": "cache_corruption",
+                                "stage": stage_name,
+                                "cache_key": cache_key,
+                                "error": str(exc),
+                            }
+                        )
+                        self._context.cache_manager.invalidate(stage_name, cache_key)
+                        cached = None
+                if cached:
                     if self._visuals:
                         if descriptor.visualizer:
                             self._visuals.emit_custom(cached, descriptor.visualizer)

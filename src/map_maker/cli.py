@@ -9,7 +9,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ._native import NativeLibraryNotBuiltError, native_library_path, workspace_root
+from ._native import (
+    NativeLibraryAbiError,
+    NativeLibraryNotBuiltError,
+    native_library_info,
+    workspace_root,
+)
 from .native_build import NATIVE_LIBRARIES
 
 if TYPE_CHECKING:
@@ -48,6 +53,25 @@ def _validation_parser(subparsers) -> argparse.ArgumentParser:
         help="Validation YAML configuration (default: configs/validation.yaml).",
     )
     parser.add_argument("--output-dir", type=Path, help="Override validation output root.")
+    return parser
+
+
+def _topology_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "topology", help="Generate the canonical cubed-sphere topology diagnostic."
+    )
+    parser.add_argument(
+        "--face-resolution",
+        type=int,
+        default=64,
+        help="Cells along each face edge (default: 64).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("out/topology"),
+        help="Diagnostic output directory (default: out/topology).",
+    )
     return parser
 
 
@@ -103,27 +127,36 @@ def _config_from_args(args: argparse.Namespace) -> "PipelineConfig":
 
 def _doctor() -> int:
     failures: list[str] = []
+    missing_libraries = False
     root = workspace_root()
     print(f"Python: {sys.version.split()[0]}")
     print(f"Cargo: {shutil.which('cargo') or 'MISSING'}")
     print(f"Workspace: {root or 'MISSING'}")
-    if shutil.which("cargo") is None:
-        failures.append("Cargo is not available on PATH")
-    if root is None:
-        failures.append("the map_maker Cargo workspace could not be located")
     for library in NATIVE_LIBRARIES:
         try:
-            path = native_library_path(library)
+            info = native_library_info(library)
         except NativeLibraryNotBuiltError:
             print(f"Native {library}: MISSING")
             failures.append(f"native library {library} has not been built")
+            missing_libraries = True
+        except NativeLibraryAbiError as exc:
+            print(f"Native {library}: INCOMPATIBLE")
+            failures.append(str(exc))
         else:
-            print(f"Native {library}: {path}")
+            print(
+                f"Native {library}: {info['path']} "
+                f"(ABI {info['abi_version']}, sha256 {info['sha256'][:12]})"
+            )
+    if missing_libraries and shutil.which("cargo") is None:
+        failures.append("Cargo is required to build missing native libraries")
+    if missing_libraries and root is None:
+        failures.append("a source workspace is required to build missing native libraries")
     if failures:
         print("\nNot ready:")
         for failure in failures:
             print(f"  - {failure}")
-        print("\nRun: map-maker-build-native")
+        if missing_libraries and root is not None and shutil.which("cargo") is not None:
+            print("\nRun: map-maker-build-native")
         return 1
     print("\nReady to generate.")
     return 0
@@ -140,6 +173,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     _generate_parser(subparsers)
     _validation_parser(subparsers)
+    _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
     args = parser.parse_args(raw_args)
@@ -153,7 +187,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             validation_config = ValidationConfig.from_file(args.config, output_dir=args.output_dir)
             validation = validate_gallery(validation_config)
-        except (NativeLibraryNotBuiltError, FileNotFoundError, TypeError, ValueError) as exc:
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            TypeError,
+            ValueError,
+        ) as exc:
             print(f"map-maker: {exc}", file=sys.stderr)
             return 2
         print(f"Validation report: {validation.report_path}")
@@ -176,12 +216,39 @@ def main(argv: Sequence[str] | None = None) -> int:
                     )
         return 1
 
+    if args.command == "topology":
+        try:
+            from .pipeline.cubed_sphere import run_cubed_sphere_diagnostic
+
+            net_path, report_path = run_cubed_sphere_diagnostic(
+                face_resolution=args.face_resolution,
+                output_dir=args.output_dir,
+            )
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Cube net: {net_path}")
+        print(f"Topology report: {report_path}")
+        return 0
+
     try:
         from .pipeline.generate import generate_world
 
         config = _config_from_args(args)
         result = generate_world(config, generate_stage_visuals=not args.no_stage_visuals)
-    except (NativeLibraryNotBuiltError, FileNotFoundError, TypeError, ValueError) as exc:
+    except (
+        NativeLibraryAbiError,
+        NativeLibraryNotBuiltError,
+        FileNotFoundError,
+        TypeError,
+        ValueError,
+    ) as exc:
         print(f"map-maker: {exc}", file=sys.stderr)
         return 2
 

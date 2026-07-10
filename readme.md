@@ -24,6 +24,11 @@ The native build is explicit. Importing `map_maker` never invokes Cargo or a
 C++ compiler. To load native libraries built elsewhere, set
 `MAP_MAKER_NATIVE_LIB_DIR` to their containing directory.
 
+Every native library exposes ABI version `1`. `map-maker doctor` verifies that
+ABI and reports the binary SHA-256 fingerprint. Simulation-library fingerprints
+are included in stage cache keys and run manifests, so replacing a native binary
+cannot silently reuse outputs from different code.
+
 The equivalent `pip` workflow is:
 
 ```bash
@@ -80,6 +85,17 @@ passing command establishes deterministic artifacts, distinct seed outputs,
 cache correctness, finite fields, acceptable prototype landmass morphology,
 bounded longitude seams, and bounded plate-boundary relief. It does not replace
 the required human gallery review or claim calibrated geological realism.
+
+Generate the canonical cubed-sphere geometry diagnostic:
+
+```bash
+uv run map-maker topology --face-resolution 96 --output-dir out/topology
+```
+
+This writes a globally continuous XYZ-colored cube net and a geometry report.
+The current geology kernels are intentionally not migrated yet; flattening six
+faces into the provisional two-dimensional kernels would introduce false
+adjacency.
 
 Run the previous procedural generator for comparison:
 

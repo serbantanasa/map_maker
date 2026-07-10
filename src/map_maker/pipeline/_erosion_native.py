@@ -8,7 +8,7 @@ import numpy as np
 import pyarrow as pa
 from cffi import FFI
 
-from .._native import native_library_path
+from .._native import native_library_info, native_library_path
 
 _CDEF = """
 typedef struct {
@@ -84,6 +84,7 @@ def _require_write_array(array: np.ndarray, *, name: str) -> np.ndarray:
 
 _ffi = FFI()
 _ffi.cdef(_CDEF)
+native_library_info("erosion_native")
 _lib = _ffi.dlopen(str(native_library_path("erosion_native")))
 
 

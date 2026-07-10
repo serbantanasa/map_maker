@@ -8,7 +8,12 @@ from collections.abc import Sequence
 
 from ._native import library_filename, workspace_root
 
-NATIVE_LIBRARIES = ("erosion_native", "tectonics_native", "world_age_native")
+NATIVE_LIBRARIES = (
+    "erosion_native",
+    "tectonics_native",
+    "topology_native",
+    "world_age_native",
+)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -11,6 +11,7 @@ from typing import Any, Mapping
 import numpy as np
 from PIL import Image, ImageFilter
 
+from .._native import simulation_native_fingerprints
 from .config import PipelineConfig
 from .execution import ExecutionEngine
 from .models import ArtifactRecord, StageResult
@@ -242,6 +243,7 @@ def generate_world(
         "topology": config.topology,
         "resolution": config.resolution_set.native.to_dict(),
         "elapsed_seconds": elapsed,
+        "native_libraries": simulation_native_fingerprints(),
         "preview": image_path.name,
         "statistics": {
             "land_fraction": float(np.mean(land)),

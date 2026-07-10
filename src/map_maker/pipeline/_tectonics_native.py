@@ -7,7 +7,7 @@ from typing import Any, Dict
 import numpy as np
 from cffi import FFI
 
-from .._native import native_library_path
+from .._native import native_library_info, native_library_path
 
 PLATE_FIELD_COMPONENTS = 6
 
@@ -54,6 +54,7 @@ void tectonics_run(
 
 _ffi = FFI()
 _ffi.cdef(_CDEF)
+native_library_info("tectonics_native")
 _lib = _ffi.dlopen(str(native_library_path("tectonics_native")))
 
 

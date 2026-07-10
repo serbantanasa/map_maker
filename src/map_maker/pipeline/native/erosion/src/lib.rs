@@ -3,6 +3,11 @@ use std::slice;
 
 const PLATE_COMPONENTS: usize = 6;
 
+#[no_mangle]
+pub extern "C" fn erosion_native_abi_version() -> u32 {
+    1
+}
+
 #[repr(C)]
 pub struct IterDiagnostic {
     pub step: i32,
