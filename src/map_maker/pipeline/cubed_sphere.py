@@ -49,6 +49,14 @@ class CubedSphereGrid:
         return FACE_COUNT * self.face_resolution * self.face_resolution
 
     @property
+    def kind(self) -> str:
+        return "cubed_sphere"
+
+    @property
+    def shape(self) -> tuple[int, int, int]:
+        return self.face_shape
+
+    @property
     def face_shape(self) -> tuple[int, int, int]:
         return FACE_COUNT, self.face_resolution, self.face_resolution
 
@@ -70,6 +78,17 @@ class CubedSphereGrid:
 
     def neighbors(self, face: int, row: int, col: int) -> np.ndarray:
         return self.neighbor_indices[face, row, col]
+
+    def cell_area(self, face: int, row: int, col: int) -> float:
+        return float(self.cell_areas[face, row, col])
+
+    @property
+    def lon(self) -> np.ndarray:
+        return self.longitude
+
+    @property
+    def lat(self) -> np.ndarray:
+        return self.latitude
 
     def angular_distance(self, first: int, second: int) -> float:
         face_a, row_a, col_a = self.decode_index(first)

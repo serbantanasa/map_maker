@@ -93,9 +93,9 @@ uv run map-maker topology --face-resolution 96 --output-dir out/topology
 ```
 
 This writes a globally continuous XYZ-colored cube net and a geometry report.
-The current geology kernels are intentionally not migrated yet; flattening six
-faces into the provisional two-dimensional kernels would introduce false
-adjacency.
+The canonical tectonic snapshot now runs directly on cubed-sphere neighbor
+IDs. World-age and erosion remain on the provisional two-dimensional path and
+must not consume flattened six-face fields.
 
 Run the previous procedural generator for comparison:
 
@@ -107,6 +107,9 @@ Render an individual pipeline diagnostic:
 
 ```bash
 uv run map-maker-pipeline --stage tectonics --width 256 --height 128
+
+# Canonical six-face tectonic snapshot
+uv run map-maker-pipeline --stage tectonics --config configs/cubed_sphere_tectonics.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

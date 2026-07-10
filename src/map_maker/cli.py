@@ -98,11 +98,17 @@ def _config_from_args(args: argparse.Namespace) -> "PipelineConfig":
             }
         )
 
-    width = args.width or config.resolution_set.native.width
-    height = args.height or config.resolution_set.native.height
-    if width <= 0 or height <= 0:
-        raise ValueError("width and height must be positive")
-    config.resolution_set = ResolutionSet((GridInfo(height=height, width=width),))
+    if config.topology.lower() == "cubed_sphere":
+        raise ValueError(
+            "generate through erosion has not migrated to cubed_sphere; use "
+            "`map-maker-pipeline --stage tectonics --config <config>`"
+        )
+    else:
+        width = args.width or config.resolution_set.native.width
+        height = args.height or config.resolution_set.native.height
+        if width <= 0 or height <= 0:
+            raise ValueError("width and height must be positive")
+        config.resolution_set = ResolutionSet((GridInfo(height=height, width=width),))
     if args.seed is not None:
         config.rng_seed = args.seed
     if args.run_id:

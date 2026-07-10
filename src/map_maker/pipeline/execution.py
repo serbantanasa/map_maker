@@ -14,6 +14,7 @@ import numpy as np
 from .._native import simulation_native_fingerprints
 from .cache import CacheManager
 from .config import PipelineConfig, ResolutionSet
+from .cubed_sphere import CubedSphereGrid
 from .dataset import CacheCorruptionError, DatasetWriter
 from .logging import RunLogger
 from .memory import MemoryArena
@@ -55,7 +56,7 @@ class PipelineContext:
     def __init__(
         self,
         config: PipelineConfig,
-        topology: Topology,
+        topology: Topology | CubedSphereGrid,
         resolution_set: ResolutionSet,
         arena: MemoryArena,
         rng_pool: RngPool,

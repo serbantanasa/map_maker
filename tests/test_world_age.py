@@ -14,8 +14,10 @@ from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 def _ensure_world_age_registered():
     reg = registry()
     reg.clear()
+    geometry_module = importlib.import_module("map_maker.pipeline.stages.geometry")
     tectonics_module = importlib.import_module("map_maker.pipeline.stages.tectonics")
     world_age_module = importlib.import_module("map_maker.pipeline.stages.world_age")
+    importlib.reload(geometry_module)
     importlib.reload(tectonics_module)
     importlib.reload(world_age_module)
     yield

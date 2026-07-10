@@ -5,7 +5,7 @@ const PLATE_COMPONENTS: usize = 6;
 
 #[no_mangle]
 pub extern "C" fn erosion_native_abi_version() -> u32 {
-    1
+    2
 }
 
 #[repr(C)]

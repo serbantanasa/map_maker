@@ -222,7 +222,7 @@ def test_diagnostic_writes_cube_net_and_report(tmp_path: Path):
     assert report["topology"] == "equiangular_cubed_sphere"
     assert report["cell_count"] == 6 * 16 * 16
     assert report["area_error_from_4pi"] < 1e-12
-    assert report["native_library"]["abi_version"] == 1
+    assert report["native_library"]["abi_version"] == 2
     assert len(report["native_library"]["sha256"]) == 64
 
 

@@ -48,11 +48,12 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
     assert first.manifest_path.exists()
     manifest = json.loads(first.manifest_path.read_text(encoding="utf8"))
     assert manifest["status"] == "complete"
-    assert list(manifest["stages"]) == ["erosion", "tectonics", "world_age"]
+    assert list(manifest["stages"]) == ["erosion", "geometry", "tectonics", "world_age"]
     assert manifest["statistics"]["land_fraction"] > 0.0
     assert set(manifest["native_libraries"]) == {
         "erosion_native",
         "tectonics_native",
+        "topology_native",
         "world_age_native",
     }
     assert all(len(library["sha256"]) == 64 for library in manifest["native_libraries"].values())
@@ -98,6 +99,23 @@ def test_primary_cli_generates_world(tmp_path: Path):
     assert exit_code == 0
     assert (tmp_path / "out" / "cli-test" / "world.png").exists()
     assert (tmp_path / "out" / "cli-test" / "run.json").exists()
+
+
+def test_primary_generate_rejects_unmigrated_cubed_sphere(tmp_path: Path, capsys):
+    config_path = tmp_path / "cubed.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "topology": "cubed_sphere",
+                "resolutions": [{"face_resolution": 16}],
+                "run_id": "cubed-generate",
+                "output_dir": str(tmp_path / "out"),
+            }
+        ),
+        encoding="utf8",
+    )
+    assert main(["generate", "--config", str(config_path)]) == 2
+    assert "has not migrated to cubed_sphere" in capsys.readouterr().err
 
 
 def test_doctor_reports_unbuilt_native_libraries(monkeypatch, capsys):
