@@ -156,7 +156,7 @@ def test_native_fingerprint_change_invalidates_stage_cache(tmp_path: Path, monke
 
     calls = 0
 
-    @stage("native_sensitive")
+    @stage("native_sensitive", native_libraries=("kernel",))
     def native_sensitive(context, deps, config):
         nonlocal calls
         calls += 1
@@ -165,19 +165,47 @@ def test_native_fingerprint_change_invalidates_stage_cache(tmp_path: Path, monke
     monkeypatch.setattr(
         execution,
         "simulation_native_fingerprints",
-        lambda: {"kernel": {"abi_version": 1, "sha256": "a" * 64}},
+        lambda names: {"kernel": {"abi_version": 1, "sha256": "a" * 64}},
     )
     first = ExecutionEngine(_make_config(tmp_path, "fingerprint-a")).run(["native_sensitive"])
     monkeypatch.setattr(
         execution,
         "simulation_native_fingerprints",
-        lambda: {"kernel": {"abi_version": 1, "sha256": "b" * 64}},
+        lambda names: {"kernel": {"abi_version": 1, "sha256": "b" * 64}},
     )
     second = ExecutionEngine(_make_config(tmp_path, "fingerprint-b")).run(["native_sensitive"])
 
     assert calls == 2
     assert first["native_sensitive"].cache_key != second["native_sensitive"].cache_key
     assert not second["native_sensitive"].stats.cache_hit
+
+
+def test_unrelated_native_fingerprint_does_not_invalidate_stage_cache(tmp_path: Path, monkeypatch):
+    import map_maker.pipeline.execution as execution
+
+    calls = 0
+    fingerprints = {
+        "used": {"abi_version": 1, "sha256": "a" * 64},
+        "unrelated": {"abi_version": 1, "sha256": "b" * 64},
+    }
+
+    @stage("scoped_native", native_libraries=("used",))
+    def scoped_native(context, deps, config):
+        nonlocal calls
+        calls += 1
+        return {"value": calls}
+
+    monkeypatch.setattr(
+        execution,
+        "simulation_native_fingerprints",
+        lambda names: {name: fingerprints[name] for name in names},
+    )
+    ExecutionEngine(_make_config(tmp_path, "scoped-a")).run(["scoped_native"])
+    fingerprints["unrelated"] = {"abi_version": 1, "sha256": "c" * 64}
+    second = ExecutionEngine(_make_config(tmp_path, "scoped-b")).run(["scoped_native"])
+
+    assert calls == 1
+    assert second["scoped_native"].stats.cache_hit
 
 
 def test_corrupt_cache_artifact_is_recomputed(tmp_path: Path):

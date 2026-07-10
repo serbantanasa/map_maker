@@ -171,7 +171,7 @@ class ExecutionEngine:
             "stage": descriptor.name,
             "version": descriptor.version,
             "rng_seed": self._context.config.rng_seed,
-            "native_libraries": simulation_native_fingerprints(),
+            "native_libraries": simulation_native_fingerprints(descriptor.native_libraries),
             "config": _serialize_for_hash(stage_config),
             "topology": {
                 "type": self._context.config.topology,

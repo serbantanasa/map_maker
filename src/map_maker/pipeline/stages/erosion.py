@@ -133,6 +133,7 @@ def _log_erosion(context, metadata: Mapping[str, object]) -> None:
         "ErosionMetadata",
     ),
     version="v3",
+    native_libraries=("erosion_native",),
 )
 def erosion_stage(context, deps, config_mapping):
     if isinstance(context.topology, CubedSphereGrid):

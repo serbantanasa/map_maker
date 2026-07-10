@@ -52,6 +52,7 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
     assert manifest["statistics"]["land_fraction"] > 0.0
     assert set(manifest["native_libraries"]) == {
         "erosion_native",
+        "geology_native",
         "tectonics_native",
         "topology_native",
         "world_age_native",
