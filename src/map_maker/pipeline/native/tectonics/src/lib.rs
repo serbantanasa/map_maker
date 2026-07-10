@@ -3,13 +3,106 @@ use rand_chacha::ChaCha8Rng;
 use rayon::prelude::*;
 use rayon::slice::ParallelSliceMut;
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 use std::f32::consts::PI;
+use std::mem::size_of;
 
 const PLATE_COMPONENTS: usize = 6;
+const SPHERICAL_PLATE_COMPONENTS: usize = 7;
+const D4_NEIGHBORS: usize = 4;
 
 #[no_mangle]
 pub extern "C" fn tectonics_native_abi_version() -> u32 {
+    2
+}
+
+#[no_mangle]
+pub extern "C" fn cubed_sphere_tectonics_abi_version() -> u32 {
     1
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SVec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl SVec3 {
+    fn new(x: f64, y: f64, z: f64) -> Self {
+        Self { x, y, z }
+    }
+
+    fn from_f32(values: &[f32]) -> Self {
+        Self::new(values[0] as f64, values[1] as f64, values[2] as f64)
+    }
+
+    fn dot(self, other: Self) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    fn cross(self, other: Self) -> Self {
+        Self::new(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+    }
+
+    fn norm(self) -> f64 {
+        self.dot(self).sqrt()
+    }
+
+    fn normalized(self) -> Self {
+        let norm = self.norm().max(f64::EPSILON);
+        self * (1.0 / norm)
+    }
+}
+
+impl std::ops::Add for SVec3 {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+}
+
+impl std::ops::AddAssign for SVec3 {
+    fn add_assign(&mut self, other: Self) {
+        self.x += other.x;
+        self.y += other.y;
+        self.z += other.z;
+    }
+}
+
+impl std::ops::Sub for SVec3 {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
+    }
+}
+
+impl std::ops::Mul<f64> for SVec3 {
+    type Output = Self;
+
+    fn mul(self, scale: f64) -> Self {
+        Self::new(self.x * scale, self.y * scale, self.z * scale)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct SphericalPlateSeed {
+    position: SVec3,
+    angular_velocity: SVec3,
+}
+
+#[derive(Clone, Copy)]
+struct WarpTerm {
+    axis: SVec3,
+    frequency: f64,
+    phase: f64,
+    amplitude: f64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -856,6 +949,718 @@ fn build_hotspot_map(
     (hotspot, mean, count_high)
 }
 
+fn random_unit_vector(rng: &mut ChaCha8Rng) -> SVec3 {
+    let z = rng.gen_range(-1.0f64..1.0f64);
+    let azimuth = rng.gen_range(0.0f64..std::f64::consts::TAU);
+    let radius = (1.0 - z * z).sqrt();
+    SVec3::new(radius * azimuth.cos(), radius * azimuth.sin(), z)
+}
+
+fn spherical_warp_terms(seed: u64) -> [WarpTerm; 5] {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4A39_B70D_91C8_2E65);
+    std::array::from_fn(|index| WarpTerm {
+        axis: random_unit_vector(&mut rng),
+        frequency: 2.2 + index as f64 * 1.35 + rng.gen_range(-0.2..0.2),
+        phase: rng.gen_range(0.0..std::f64::consts::TAU),
+        amplitude: 0.085 / (1.0 + index as f64 * 0.45),
+    })
+}
+
+fn warp_spherical_direction(direction: SVec3, terms: &[WarpTerm]) -> SVec3 {
+    let mut displacement = SVec3::default();
+    for term in terms {
+        let projection = direction.dot(term.axis);
+        let tangent = term.axis - direction * projection;
+        let wave = (term.frequency * projection + term.phase).sin();
+        displacement += tangent * (term.amplitude * wave);
+    }
+    (direction + displacement).normalized()
+}
+
+fn sample_spherical_plate_seeds(seed: u64, count: usize) -> Vec<SphericalPlateSeed> {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xC13F_A9A9_02A6_328F);
+    let mut seeds = Vec::with_capacity(count);
+    let mut minimum_angle = (4.0 / count.max(1) as f64).sqrt().min(1.2) * 0.62;
+    let mut attempts = 0usize;
+    while seeds.len() < count && attempts < count.max(1) * 8000 {
+        attempts += 1;
+        let position = random_unit_vector(&mut rng);
+        let maximum_dot = minimum_angle.cos();
+        if seeds
+            .iter()
+            .all(|candidate: &SphericalPlateSeed| candidate.position.dot(position) < maximum_dot)
+        {
+            seeds.push(SphericalPlateSeed {
+                position,
+                angular_velocity: SVec3::default(),
+            });
+        }
+        if attempts % (count.max(1) * 256) == 0 {
+            minimum_angle *= 0.9;
+        }
+    }
+    while seeds.len() < count {
+        seeds.push(SphericalPlateSeed {
+            position: random_unit_vector(&mut rng),
+            angular_velocity: SVec3::default(),
+        });
+    }
+    seeds
+}
+
+fn assign_spherical_cells(
+    warped_cells: &[SVec3],
+    seeds: &[SphericalPlateSeed],
+    warp_terms: &[WarpTerm],
+    assignments: &mut [usize],
+) {
+    let warped_seeds: Vec<SVec3> = seeds
+        .iter()
+        .map(|seed| warp_spherical_direction(seed.position, warp_terms))
+        .collect();
+    assignments
+        .par_iter_mut()
+        .zip(warped_cells.par_iter())
+        .for_each(|(assignment, cell)| {
+            let mut best_plate = 0usize;
+            let mut best_score = f64::NEG_INFINITY;
+            for (plate, seed) in warped_seeds.iter().enumerate() {
+                let score = cell.dot(*seed);
+                if score > best_score {
+                    best_score = score;
+                    best_plate = plate;
+                }
+            }
+            *assignment = best_plate;
+        });
+}
+
+fn recentre_spherical_seeds(
+    seeds: &mut [SphericalPlateSeed],
+    cells: &[SVec3],
+    areas: &[f64],
+    assignments: &[usize],
+    rng: &mut ChaCha8Rng,
+) -> Vec<f64> {
+    let mut centroids = vec![SVec3::default(); seeds.len()];
+    let mut plate_areas = vec![0.0f64; seeds.len()];
+    for ((cell, area), plate) in cells.iter().zip(areas.iter()).zip(assignments.iter()) {
+        centroids[*plate] += *cell * *area;
+        plate_areas[*plate] += *area;
+    }
+    for (plate, seed) in seeds.iter_mut().enumerate() {
+        if plate_areas[plate] > 0.0 && centroids[plate].norm() > 1e-12 {
+            seed.position = centroids[plate].normalized();
+        } else {
+            seed.position = random_unit_vector(rng);
+        }
+    }
+    plate_areas
+}
+
+fn spherical_plate_areas(plate_count: usize, areas: &[f64], assignments: &[usize]) -> Vec<f64> {
+    let mut plate_areas = vec![0.0f64; plate_count];
+    for (area, plate) in areas.iter().zip(assignments.iter()) {
+        plate_areas[*plate] += *area;
+    }
+    plate_areas
+}
+
+fn ensure_nonempty_spherical_plates(
+    cells: &[SVec3],
+    warped_cells: &[SVec3],
+    seeds: &mut [SphericalPlateSeed],
+    warp_terms: &[WarpTerm],
+    assignments: &mut [usize],
+) -> bool {
+    for _ in 0..seeds.len() {
+        let mut counts = vec![0usize; seeds.len()];
+        for plate in assignments.iter() {
+            counts[*plate] += 1;
+        }
+        let empty: Vec<usize> = counts
+            .iter()
+            .enumerate()
+            .filter_map(|(plate, count)| (*count == 0).then_some(plate))
+            .collect();
+        if empty.is_empty() {
+            return true;
+        }
+        for empty_plate in empty {
+            let Some((donor, _)) = counts
+                .iter()
+                .enumerate()
+                .filter(|(_, count)| **count > 1)
+                .max_by_key(|(_, count)| **count)
+            else {
+                return false;
+            };
+            let candidate = assignments
+                .iter()
+                .enumerate()
+                .filter(|(_, plate)| **plate == donor)
+                .min_by(|(first, _), (second, _)| {
+                    seeds[donor]
+                        .position
+                        .dot(cells[*first])
+                        .partial_cmp(&seeds[donor].position.dot(cells[*second]))
+                        .unwrap_or(Ordering::Equal)
+                })
+                .map(|(index, _)| index)
+                .expect("donor plate has cells");
+            seeds[empty_plate].position = cells[candidate];
+            counts[donor] -= 1;
+            counts[empty_plate] = 1;
+        }
+        assign_spherical_cells(warped_cells, seeds, warp_terms, assignments);
+    }
+    let mut present = vec![false; seeds.len()];
+    for plate in assignments.iter() {
+        present[*plate] = true;
+    }
+    present.into_iter().all(|value| value)
+}
+
+fn repair_plate_connectivity(
+    assignments: &mut [usize],
+    neighbors: &[i32],
+    plate_count: usize,
+) -> bool {
+    let total = assignments.len();
+    let mut visited = vec![false; total];
+    let mut largest_components: Vec<Vec<usize>> = vec![Vec::new(); plate_count];
+
+    for start in 0..total {
+        if visited[start] {
+            continue;
+        }
+        let plate = assignments[start];
+        let mut component = Vec::new();
+        let mut pending = vec![start];
+        visited[start] = true;
+        while let Some(cell) = pending.pop() {
+            component.push(cell);
+            for &neighbor in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+                let adjacent = neighbor as usize;
+                if !visited[adjacent] && assignments[adjacent] == plate {
+                    visited[adjacent] = true;
+                    pending.push(adjacent);
+                }
+            }
+        }
+        if component.len() > largest_components[plate].len() {
+            largest_components[plate] = component;
+        }
+    }
+    if largest_components.iter().any(Vec::is_empty) {
+        return false;
+    }
+
+    let unassigned = usize::MAX;
+    let mut repaired = vec![unassigned; total];
+    let mut frontier = VecDeque::new();
+    for (plate, component) in largest_components.iter().enumerate() {
+        for &cell in component {
+            repaired[cell] = plate;
+            frontier.push_back(cell);
+        }
+    }
+    while let Some(cell) = frontier.pop_front() {
+        let plate = repaired[cell];
+        for &neighbor in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+            let adjacent = neighbor as usize;
+            if repaired[adjacent] == unassigned {
+                repaired[adjacent] = plate;
+                frontier.push_back(adjacent);
+            }
+        }
+    }
+    if repaired.contains(&unassigned) {
+        return false;
+    }
+    assignments.copy_from_slice(&repaired);
+    true
+}
+
+fn spherical_province_score(cells: &[SVec3], seed: u64) -> Vec<f64> {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xD2B7_4407_B1CE_6E93);
+    let pole = random_unit_vector(&mut rng);
+    let raw_axis = random_unit_vector(&mut rng);
+    let first_axis = (raw_axis - pole * raw_axis.dot(pole)).normalized();
+    let second_axis = pole.cross(first_axis).normalized();
+    let bases = [
+        pole,
+        pole * -1.0,
+        first_axis,
+        first_axis * -1.0,
+        second_axis,
+        second_axis * -1.0,
+    ];
+    let foci: Vec<(SVec3, SVec3, f64)> = bases
+        .iter()
+        .map(|base| {
+            let raw_tangent = random_unit_vector(&mut rng);
+            let tangent = (raw_tangent - *base * raw_tangent.dot(*base)).normalized();
+            let elongation = rng.gen_range(0.16..0.46);
+            (
+                (*base + tangent * elongation).normalized(),
+                (*base - tangent * elongation).normalized(),
+                rng.gen_range(-0.055..0.055),
+            )
+        })
+        .collect();
+    let detail_terms: Vec<(SVec3, f64, f64, f64)> = (0..18)
+        .map(|index| {
+            let octave = index / 3;
+            let frequency = 2.6 * 1.68f64.powi(octave);
+            let weight = 1.0 / 1.35f64.powi(octave);
+            (
+                random_unit_vector(&mut rng),
+                frequency + rng.gen_range(-0.18..0.18),
+                rng.gen_range(0.0..std::f64::consts::TAU),
+                weight,
+            )
+        })
+        .collect();
+    let detail_weight: f64 = detail_terms.iter().map(|term| term.3).sum();
+    let warp_terms = spherical_warp_terms(seed ^ 0x6E5A_17C9_B42D_308F);
+    cells
+        .par_iter()
+        .map(|cell| {
+            let warped = warp_spherical_direction(*cell, &warp_terms);
+            let mut best_craton = f64::NEG_INFINITY;
+            let mut second_craton = f64::NEG_INFINITY;
+            for (first, second, bias) in &foci {
+                let score = warped.dot(*first).max(warped.dot(*second)) + *bias;
+                if score > best_craton {
+                    second_craton = best_craton;
+                    best_craton = score;
+                } else if score > second_craton {
+                    second_craton = score;
+                }
+            }
+            let detail: f64 = detail_terms
+                .iter()
+                .map(|(axis, frequency, phase, weight)| {
+                    (warped.dot(*axis) * *frequency + *phase).sin() * *weight
+                })
+                .sum();
+            best_craton + (best_craton - second_craton) * 0.5 + detail / detail_weight * 0.22
+        })
+        .collect()
+}
+
+fn build_spherical_crust_provinces(
+    cells: &[SVec3],
+    areas: &[f64],
+    target_fraction: f32,
+    seed: u64,
+) -> (Vec<bool>, Vec<f32>, Vec<f32>, f64) {
+    let score = spherical_province_score(cells, seed);
+    let mut ranked: Vec<usize> = (0..cells.len()).collect();
+    ranked.sort_by(|a, b| score[*b].partial_cmp(&score[*a]).unwrap_or(Ordering::Equal));
+    let total_area: f64 = areas.iter().sum();
+    let target_area = total_area * target_fraction.clamp(0.0, 1.0) as f64;
+    let mut continental = vec![false; cells.len()];
+    let mut continental_area = 0.0f64;
+    for index in ranked {
+        if continental_area >= target_area {
+            break;
+        }
+        continental[index] = true;
+        continental_area += areas[index];
+    }
+
+    let score_min = score.iter().copied().fold(f64::INFINITY, f64::min);
+    let score_max = score.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let score_range = (score_max - score_min).max(1e-12);
+    let mut thickness = vec![0.0f32; cells.len()];
+    let mut density = vec![0.0f32; cells.len()];
+    for index in 0..cells.len() {
+        let normalized = ((score[index] - score_min) / score_range).clamp(0.0, 1.0) as f32;
+        if continental[index] {
+            thickness[index] = 27.0 + normalized * 16.0;
+            density[index] = 2.86 - normalized * 0.19;
+        } else {
+            thickness[index] = 5.5 + normalized * 5.0;
+            density[index] = 3.36 - normalized * 0.13;
+        }
+    }
+    (
+        continental,
+        thickness,
+        density,
+        continental_area / total_area.max(f64::EPSILON),
+    )
+}
+
+fn assign_spherical_angular_velocities(
+    seeds: &mut [SphericalPlateSeed],
+    plate_areas: &[f64],
+    velocity_scale: f32,
+    drift_bias: f32,
+    seed: u64,
+) {
+    let mut weighted_mean = SVec3::default();
+    let mut total_area = 0.0f64;
+    for (index, (plate, area)) in seeds.iter_mut().zip(plate_areas.iter()).enumerate() {
+        let stream = (index as u64 + 1).wrapping_mul(0x8CB9_2BA7_2F3D_8DD7);
+        let mut rng = ChaCha8Rng::seed_from_u64(seed ^ stream);
+        let axis = random_unit_vector(&mut rng);
+        let magnitude = velocity_scale.max(1e-3) as f64 * rng.gen_range(0.45..1.0);
+        plate.angular_velocity = axis * magnitude;
+        plate.angular_velocity.z += drift_bias as f64 * plate.position.z;
+        weighted_mean += plate.angular_velocity * *area;
+        total_area += *area;
+    }
+    if total_area > 0.0 {
+        weighted_mean = weighted_mean * (1.0 / total_area);
+        for plate in seeds {
+            plate.angular_velocity = plate.angular_velocity - weighted_mean;
+        }
+    }
+}
+
+fn diffuse_graph_field(field: &mut [f32], neighbors: &[i32], passes: usize) {
+    let mut scratch = field.to_vec();
+    for _ in 0..passes {
+        scratch.copy_from_slice(field);
+        for (index, value) in field.iter_mut().enumerate() {
+            let adjacent = &neighbors[index * D4_NEIGHBORS..(index + 1) * D4_NEIGHBORS];
+            let mean = adjacent
+                .iter()
+                .map(|neighbor| scratch[*neighbor as usize])
+                .sum::<f32>()
+                / D4_NEIGHBORS as f32;
+            *value = scratch[index] * 0.45 + mean * 0.55;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_spherical_boundaries(
+    cells: &[SVec3],
+    neighbors: &[i32],
+    assignments: &[usize],
+    velocities: &[SVec3],
+    continental: &[bool],
+    thickness: &[f32],
+    subduction_bias: f32,
+) -> BoundaryData {
+    let total = cells.len();
+    let mut convergence = vec![0.0f32; total];
+    let mut divergence = vec![0.0f32; total];
+    let mut shear = vec![0.0f32; total];
+    let mut subduction = vec![0.0f32; total];
+    let mut counts = vec![0.0f32; total];
+
+    for index in 0..total {
+        for &neighbor in &neighbors[index * D4_NEIGHBORS..(index + 1) * D4_NEIGHBORS] {
+            let other = neighbor as usize;
+            if other <= index || assignments[index] == assignments[other] {
+                continue;
+            }
+            let first = cells[index];
+            let second = cells[other];
+            let cosine = first.dot(second).clamp(-1.0, 1.0);
+            let first_toward_second = (second - first * cosine).normalized();
+            let second_toward_first = (first - second * cosine).normalized();
+            let closing_rate = velocities[index].dot(first_toward_second)
+                + velocities[other].dot(second_toward_first);
+            let boundary_tangent = first.cross(second).normalized();
+            let shear_rate = (velocities[index].dot(boundary_tangent)
+                - velocities[other].dot(boundary_tangent))
+            .abs() as f32;
+
+            counts[index] += 1.0;
+            counts[other] += 1.0;
+            shear[index] += shear_rate;
+            shear[other] += shear_rate;
+            if closing_rate > 0.0 {
+                let rate = closing_rate as f32;
+                convergence[index] += rate;
+                convergence[other] += rate;
+                let first_type = if continental[index] {
+                    PlateType::Continental
+                } else {
+                    PlateType::Oceanic
+                };
+                let second_type = if continental[other] {
+                    PlateType::Continental
+                } else {
+                    PlateType::Oceanic
+                };
+                subduction[index] += compute_subduction_probability(
+                    first_type,
+                    second_type,
+                    rate,
+                    thickness[index],
+                    thickness[other],
+                    subduction_bias,
+                );
+                subduction[other] += compute_subduction_probability(
+                    second_type,
+                    first_type,
+                    rate,
+                    thickness[other],
+                    thickness[index],
+                    subduction_bias,
+                );
+            } else if closing_rate < 0.0 {
+                let rate = (-closing_rate) as f32;
+                divergence[index] += rate;
+                divergence[other] += rate;
+            }
+        }
+    }
+
+    for index in 0..total {
+        if counts[index] > 0.0 {
+            let inverse = 1.0 / counts[index];
+            convergence[index] *= inverse;
+            divergence[index] *= inverse;
+            shear[index] *= inverse;
+            subduction[index] = (subduction[index] * inverse).clamp(0.0, 1.0);
+        }
+    }
+    diffuse_graph_field(&mut convergence, neighbors, 3);
+    diffuse_graph_field(&mut divergence, neighbors, 3);
+    diffuse_graph_field(&mut shear, neighbors, 3);
+    diffuse_graph_field(&mut subduction, neighbors, 2);
+
+    BoundaryData {
+        convergence_sum: convergence.iter().map(|value| *value as f64).sum(),
+        divergence_sum: divergence.iter().map(|value| *value as f64).sum(),
+        shear_sum: shear.iter().map(|value| *value as f64).sum(),
+        subduction_sum: subduction.iter().map(|value| *value as f64).sum(),
+        convergence,
+        divergence,
+        shear,
+        subduction,
+    }
+}
+
+fn valid_ffi_len<T>(len: usize) -> bool {
+    len.checked_mul(size_of::<T>())
+        .is_some_and(|bytes| bytes <= isize::MAX as usize)
+}
+
+#[no_mangle]
+/// Generate a seam-free kinematic plate snapshot on canonical cubed-sphere cells.
+///
+/// Plate components are global plate ID, continental-crust flag, crustal
+/// thickness, density, and the three components of a global tangent velocity.
+///
+/// # Safety
+///
+/// Input pointers must reference non-overlapping buffers sized from
+/// `cell_count`: three `f32` values per XYZ vector, one `f64` area per cell,
+/// and four `i32` D4 neighbors per cell. Output pointers must reference seven
+/// `f32` values per plate cell and one `f32` per scalar field. Output buffers
+/// must not alias inputs or each other. `stats_out` may be null.
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn tectonics_run_cubed_sphere(
+    cell_count: i32,
+    seed: u64,
+    num_plates: i32,
+    continental_fraction_target: f32,
+    velocity_scale: f32,
+    drift_bias: f32,
+    hotspot_density: f32,
+    subduction_bias: f32,
+    lloyd_iterations: i32,
+    xyz_ptr: *const f32,
+    area_ptr: *const f64,
+    neighbors_ptr: *const i32,
+    plate_ptr: *mut f32,
+    convergence_ptr: *mut f32,
+    divergence_ptr: *mut f32,
+    shear_ptr: *mut f32,
+    subduction_ptr: *mut f32,
+    hotspot_ptr: *mut f32,
+    stats_out: *mut TectonicsStats,
+) -> i32 {
+    if cell_count <= 0
+        || num_plates < 2
+        || num_plates > cell_count
+        || num_plates > 4096
+        || num_plates as i64 * 4 > cell_count as i64
+        || !continental_fraction_target.is_finite()
+        || !velocity_scale.is_finite()
+        || !drift_bias.is_finite()
+        || !hotspot_density.is_finite()
+        || !subduction_bias.is_finite()
+        || xyz_ptr.is_null()
+        || area_ptr.is_null()
+        || neighbors_ptr.is_null()
+        || plate_ptr.is_null()
+        || convergence_ptr.is_null()
+        || divergence_ptr.is_null()
+        || shear_ptr.is_null()
+        || subduction_ptr.is_null()
+        || hotspot_ptr.is_null()
+    {
+        return 1;
+    }
+    let total = cell_count as usize;
+    let Some(xyz_len) = total.checked_mul(3) else {
+        return 2;
+    };
+    let Some(neighbor_len) = total.checked_mul(D4_NEIGHBORS) else {
+        return 2;
+    };
+    let Some(plate_len) = total.checked_mul(SPHERICAL_PLATE_COMPONENTS) else {
+        return 2;
+    };
+    if !valid_ffi_len::<f32>(xyz_len)
+        || !valid_ffi_len::<f64>(total)
+        || !valid_ffi_len::<i32>(neighbor_len)
+        || !valid_ffi_len::<f32>(plate_len)
+        || !valid_ffi_len::<f32>(total)
+    {
+        return 2;
+    }
+
+    let xyz = std::slice::from_raw_parts(xyz_ptr, xyz_len);
+    let areas = std::slice::from_raw_parts(area_ptr, total);
+    let neighbors = std::slice::from_raw_parts(neighbors_ptr, neighbor_len);
+    let plate_field = std::slice::from_raw_parts_mut(plate_ptr, plate_len);
+    let convergence_field = std::slice::from_raw_parts_mut(convergence_ptr, total);
+    let divergence_field = std::slice::from_raw_parts_mut(divergence_ptr, total);
+    let shear_field = std::slice::from_raw_parts_mut(shear_ptr, total);
+    let subduction_field = std::slice::from_raw_parts_mut(subduction_ptr, total);
+    let hotspot_field = std::slice::from_raw_parts_mut(hotspot_ptr, total);
+
+    let mut cells = Vec::with_capacity(total);
+    for (index, vector) in xyz.chunks_exact(3).enumerate() {
+        let cell = SVec3::from_f32(vector);
+        let norm = cell.norm();
+        if !norm.is_finite()
+            || !(0.99..=1.01).contains(&norm)
+            || !areas[index].is_finite()
+            || areas[index] <= 0.0
+        {
+            return 3;
+        }
+        cells.push(cell.normalized());
+    }
+    for (index, adjacent) in neighbors.chunks_exact(D4_NEIGHBORS).enumerate() {
+        let mut unique = [adjacent[0], adjacent[1], adjacent[2], adjacent[3]];
+        unique.sort_unstable();
+        if unique.windows(2).any(|pair| pair[0] == pair[1])
+            || adjacent.iter().any(|neighbor| {
+                *neighbor < 0 || *neighbor as usize >= total || *neighbor as usize == index
+            })
+        {
+            return 4;
+        }
+    }
+
+    let plate_count = num_plates as usize;
+    let warp_terms = spherical_warp_terms(seed);
+    let warped_cells: Vec<SVec3> = cells
+        .par_iter()
+        .map(|cell| warp_spherical_direction(*cell, &warp_terms))
+        .collect();
+    let mut seeds = sample_spherical_plate_seeds(seed, plate_count);
+    let mut assignments = vec![0usize; total];
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17F_98C3_5D21_2F4B);
+    for _ in 0..lloyd_iterations.max(0) as usize {
+        assign_spherical_cells(&warped_cells, &seeds, &warp_terms, &mut assignments);
+        recentre_spherical_seeds(&mut seeds, &cells, areas, &assignments, &mut rng);
+    }
+    assign_spherical_cells(&warped_cells, &seeds, &warp_terms, &mut assignments);
+    if !ensure_nonempty_spherical_plates(
+        &cells,
+        &warped_cells,
+        &mut seeds,
+        &warp_terms,
+        &mut assignments,
+    ) {
+        return 5;
+    }
+    if !repair_plate_connectivity(&mut assignments, neighbors, plate_count) {
+        return 5;
+    }
+    let plate_areas = spherical_plate_areas(plate_count, areas, &assignments);
+    assign_spherical_angular_velocities(&mut seeds, &plate_areas, velocity_scale, drift_bias, seed);
+
+    let velocities: Vec<SVec3> = cells
+        .par_iter()
+        .zip(assignments.par_iter())
+        .map(|(cell, plate)| seeds[*plate].angular_velocity.cross(*cell))
+        .collect();
+    let (continental, thickness, density, continental_fraction) =
+        build_spherical_crust_provinces(&cells, areas, continental_fraction_target, seed);
+    let boundary = compute_spherical_boundaries(
+        &cells,
+        neighbors,
+        &assignments,
+        &velocities,
+        &continental,
+        &thickness,
+        subduction_bias,
+    );
+    let (hotspot, hotspot_mean, hotspot_count) = build_hotspot_map(
+        &boundary.shear,
+        &boundary.convergence,
+        &boundary.divergence,
+        &boundary.subduction,
+        hotspot_density,
+        seed,
+    );
+
+    plate_field
+        .par_chunks_mut(SPHERICAL_PLATE_COMPONENTS)
+        .enumerate()
+        .for_each(|(index, output)| {
+            output[0] = assignments[index] as f32;
+            output[1] = f32::from(continental[index]);
+            output[2] = thickness[index];
+            output[3] = density[index];
+            output[4] = velocities[index].x as f32;
+            output[5] = velocities[index].y as f32;
+            output[6] = velocities[index].z as f32;
+        });
+    convergence_field.copy_from_slice(&boundary.convergence);
+    divergence_field.copy_from_slice(&boundary.divergence);
+    shear_field.copy_from_slice(&boundary.shear);
+    subduction_field.copy_from_slice(&boundary.subduction);
+    hotspot_field.copy_from_slice(&hotspot);
+
+    if !stats_out.is_null() {
+        let total_area: f64 = areas.iter().sum();
+        let mut speed_sum = 0.0f64;
+        let mut speed_sq_sum = 0.0f64;
+        for (velocity, area) in velocities.iter().zip(areas.iter()) {
+            let speed = velocity.norm();
+            speed_sum += speed * *area;
+            speed_sq_sum += speed * speed * *area;
+        }
+        let velocity_mean = speed_sum / total_area;
+        let velocity_std = (speed_sq_sum / total_area - velocity_mean * velocity_mean)
+            .max(0.0)
+            .sqrt();
+        *stats_out = TectonicsStats {
+            plate_count: num_plates,
+            continental_fraction,
+            velocity_mean,
+            velocity_std,
+            hotspot_mean,
+            boundary_metric_mean: (boundary.convergence_sum
+                + boundary.divergence_sum
+                + boundary.shear_sum)
+                / total as f64,
+            convergence_sum: boundary.convergence_sum,
+            divergence_sum: boundary.divergence_sum,
+            shear_sum: boundary.shear_sum,
+            subduction_mean: boundary.subduction_sum / total as f64,
+            hotspot_count,
+        };
+    }
+    0
+}
+
 #[no_mangle]
 /// Generate plate assignments and instantaneous boundary fields.
 ///
@@ -1183,5 +1988,102 @@ mod tests {
             .iter()
             .flatten()
             .all(|component| component.is_finite()));
+    }
+
+    #[test]
+    fn spherical_warp_is_deterministic_unit_length_and_nontrivial() {
+        let direction = SVec3::new(0.3, -0.4, 0.866_025_403_8).normalized();
+        let terms = spherical_warp_terms(42);
+        let first = warp_spherical_direction(direction, &terms);
+        let second = warp_spherical_direction(direction, &terms);
+        assert!((first.norm() - 1.0).abs() < 1e-12);
+        assert!((first - second).norm() < 1e-15);
+        assert!((first - direction).norm() > 1e-4);
+    }
+
+    #[test]
+    fn spherical_plate_rotation_has_zero_area_weighted_mean() {
+        let mut seeds = sample_spherical_plate_seeds(19, 24);
+        let areas: Vec<f64> = (0..seeds.len()).map(|index| index as f64 + 1.0).collect();
+        assign_spherical_angular_velocities(&mut seeds, &areas, 1.0, 0.2, 19);
+        let total_area: f64 = areas.iter().sum();
+        let mean = seeds
+            .iter()
+            .zip(areas.iter())
+            .fold(SVec3::default(), |sum, (plate, area)| {
+                sum + plate.angular_velocity * *area
+            })
+            * (1.0 / total_area);
+        assert!(mean.norm() < 1e-12);
+    }
+
+    #[test]
+    fn spherical_drift_bias_tracks_seed_latitude() {
+        let mut seeds = sample_spherical_plate_seeds(23, 32);
+        let areas = vec![1.0f64; seeds.len()];
+        assign_spherical_angular_velocities(&mut seeds, &areas, 0.001, 8.0, 23);
+        let covariance: f64 = seeds
+            .iter()
+            .map(|plate| plate.position.z * plate.angular_velocity.z)
+            .sum::<f64>()
+            / seeds.len() as f64;
+        assert!(covariance > 0.5);
+    }
+
+    #[test]
+    fn connectivity_repair_absorbs_isolated_fragments() {
+        let width = 4usize;
+        let height = 4usize;
+        let mut neighbors = vec![0i32; width * height * D4_NEIGHBORS];
+        for row in 0..height {
+            for col in 0..width {
+                let index = row * width + col;
+                neighbors[index * 4] = (((row + height - 1) % height) * width + col) as i32;
+                neighbors[index * 4 + 1] = (((row + 1) % height) * width + col) as i32;
+                neighbors[index * 4 + 2] = (row * width + (col + width - 1) % width) as i32;
+                neighbors[index * 4 + 3] = (row * width + (col + 1) % width) as i32;
+            }
+        }
+        let mut assignments = vec![1usize; width * height];
+        assignments[0] = 0;
+        assignments[1] = 0;
+        assignments[width] = 0;
+        assignments[width + 1] = 0;
+        assignments[2 * width + 2] = 0;
+        assert!(repair_plate_connectivity(&mut assignments, &neighbors, 2));
+
+        for plate in 0..2 {
+            let members: Vec<usize> = assignments
+                .iter()
+                .enumerate()
+                .filter_map(|(index, owner)| (*owner == plate).then_some(index))
+                .collect();
+            let mut visited = vec![false; assignments.len()];
+            let mut pending = vec![members[0]];
+            visited[members[0]] = true;
+            while let Some(cell) = pending.pop() {
+                for &neighbor in &neighbors[cell * 4..cell * 4 + 4] {
+                    let adjacent = neighbor as usize;
+                    if assignments[adjacent] == plate && !visited[adjacent] {
+                        visited[adjacent] = true;
+                        pending.push(adjacent);
+                    }
+                }
+            }
+            assert!(members.iter().all(|index| visited[*index]));
+        }
+    }
+
+    #[test]
+    fn spherical_crust_provinces_are_independent_and_area_targeted() {
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
+        let cells: Vec<SVec3> = (0..4096).map(|_| random_unit_vector(&mut rng)).collect();
+        let areas = vec![4.0 * std::f64::consts::PI / cells.len() as f64; cells.len()];
+        let first = build_spherical_crust_provinces(&cells, &areas, 0.35, 88);
+        let second = build_spherical_crust_provinces(&cells, &areas, 0.35, 88);
+        assert_eq!(first.0, second.0);
+        assert!((first.3 - 0.35).abs() <= 1.0 / cells.len() as f64);
+        assert!(first.1.iter().all(|value| (5.5..=43.0).contains(value)));
+        assert!(first.2.iter().all(|value| (2.66..=3.37).contains(value)));
     }
 }

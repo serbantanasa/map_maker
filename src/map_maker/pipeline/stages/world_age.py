@@ -97,6 +97,10 @@ def _log_world_age(
 )
 def world_age_stage(context, deps, config_mapping):
     config = WorldAgeConfig.from_mapping(config_mapping)
+    if len(context.topology.shape) != 2:
+        raise NotImplementedError(
+            "world_age has not yet migrated to cubed_sphere; run through tectonics only"
+        )
     height, width = context.topology.shape
 
     tectonics_result = deps["tectonics"]

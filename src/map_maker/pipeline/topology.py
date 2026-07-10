@@ -10,6 +10,7 @@ import numpy as np
 
 from ._topology_native import TopologyKind, compute_cell_areas, compute_neighbors
 from .config import GridInfo
+from .cubed_sphere import CubedSphereGrid
 
 NEIGHBOR_OFFSETS = np.array(
     [
@@ -166,6 +167,10 @@ class Topology:
     def cell_areas(self) -> np.ndarray:
         return self._cell_area.copy()
 
+    @property
+    def neighbor_indices(self) -> np.ndarray:
+        return self._neighbor_indices[..., :4].copy()
+
 
 class SphereTopology(Topology):
     def __init__(self, grid: GridInfo) -> None:
@@ -182,8 +187,12 @@ class TorusTopology(Topology):
         super().__init__(grid, "torus")
 
 
-def load_topology(name: str, grid: GridInfo) -> Topology:
+def load_topology(name: str, grid: GridInfo) -> Topology | CubedSphereGrid:
     key = name.lower()
+    if key == "cubed_sphere":
+        if grid.face_resolution is None:
+            raise ValueError("cubed_sphere topology requires face_resolution")
+        return CubedSphereGrid.create(grid.face_resolution)
     if key == "sphere":
         return SphereTopology(grid)
     if key == "cylinder":

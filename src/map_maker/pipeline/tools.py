@@ -158,6 +158,7 @@ def run_tectonics_visualizer(
     *,
     width: int = 256,
     height: int = 128,
+    face_resolution: int | None = None,
     output_dir: Path | str = Path("out"),
     cache_dir: Path | str | None = None,
     log_dir: Path | str | None = None,
@@ -178,52 +179,51 @@ def run_tectonics_visualizer(
 ) -> Tuple[Path, float]:
     cache_dir = cache_dir or Path("cache")
     log_dir = log_dir or Path("logs")
-    run_id = run_id or f"tectonics_{topology}_{height}x{width}"
+    if topology == "cubed_sphere":
+        resolution = face_resolution or width
+        resolution_entry = {"face_resolution": resolution}
+        resolution_label = f"face-{resolution}"
+    else:
+        resolution_entry = {"height": height, "width": width}
+        resolution_label = f"{height}x{width}"
+    run_id = run_id or f"tectonics_{topology}_{resolution_label}"
+    tectonics_config = {
+        "num_plates": num_plates,
+        "continental_fraction": continental_fraction,
+        "lloyd_iterations": lloyd_iterations,
+        "velocity_scale": velocity_scale,
+        "drift_bias": drift_bias,
+        "hotspot_density": hotspot_density,
+        "subduction_bias": subduction_bias,
+    }
+    if topology != "cubed_sphere":
+        tectonics_config.update(
+            {
+                "time_steps": time_steps,
+                "time_step": time_step,
+                "wrap_x": wrap_x,
+                "wrap_y": wrap_y,
+            }
+        )
 
     config = PipelineConfig.from_mapping(
         {
             "topology": topology,
-            "resolutions": [{"height": height, "width": width}],
+            "resolutions": [resolution_entry],
             "output_dir": str(output_dir),
             "cache_dir": str(cache_dir),
             "log_dir": str(log_dir),
             "run_id": run_id,
             "rng_seed": rng_seed,
-            "stage_overrides": {
-                "tectonics": {
-                    "num_plates": num_plates,
-                    "continental_fraction": continental_fraction,
-                    "lloyd_iterations": lloyd_iterations,
-                    "velocity_scale": velocity_scale,
-                    "drift_bias": drift_bias,
-                    "hotspot_density": hotspot_density,
-                    "subduction_bias": subduction_bias,
-                    "time_steps": time_steps,
-                    "time_step": time_step,
-                    "wrap_x": wrap_x,
-                    "wrap_y": wrap_y,
-                },
-            },
+            "stage_overrides": {"tectonics": tectonics_config},
         }
     )
 
     stage_name = _register_tectonics_stage()
     engine = ExecutionEngine(config, generate_visuals=generate_visuals)
     start = time.perf_counter()
-    results = engine.run([stage_name])
+    engine.run([stage_name])
     elapsed_ms = (time.perf_counter() - start) * 1000.0
-
-    stage_result = results[stage_name]
-    plate_record = stage_result.artifact_records.get("PlateField")
-    if plate_record and plate_record.value is not None:
-        plate_data = _to_array(plate_record.value)
-        continental = plate_data[..., 1] >= 0.5
-        land_img = np.zeros((*continental.shape, 3), dtype=np.uint8)
-        land_img[continental] = (204, 177, 111)
-        land_img[~continental] = (34, 87, 182)
-        land_path = (config.run_visual_dir() / stage_name) / "land_ocean.png"
-        land_path.parent.mkdir(parents=True, exist_ok=True)
-        Image.fromarray(land_img, mode="RGB").save(land_path)
 
     return config.run_visual_dir() / stage_name, elapsed_ms
 
@@ -231,9 +231,13 @@ def run_tectonics_visualizer(
 def main(args: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Produce pipeline stage visualization PNGs.")
     parser.add_argument("--stage", choices=["topology", "tectonics"], default="topology")
-    parser.add_argument("--topology", default="sphere", choices=["sphere", "cylinder", "torus"])
+    parser.add_argument("--config", type=Path, default=None)
+    parser.add_argument(
+        "--topology", default="sphere", choices=["sphere", "cylinder", "torus", "cubed_sphere"]
+    )
     parser.add_argument("--width", type=int, default=256)
     parser.add_argument("--height", type=int, default=128)
+    parser.add_argument("--face-resolution", type=int, default=None)
     parser.add_argument("--output-dir", type=Path, default=Path("out"))
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--log-dir", type=Path, default=Path("logs"))
@@ -248,17 +252,62 @@ def main(args: Iterable[str] | None = None) -> int:
     parser.add_argument("--tectonics-drift", type=float, default=0.1)
     parser.add_argument("--tectonics-hotspot-density", type=float, default=0.03)
     parser.add_argument("--tectonics-subduction-bias", type=float, default=0.5)
-    parser.add_argument("--tectonics-steps", type=int, default=24)
-    parser.add_argument("--tectonics-dt", type=float, default=0.5)
+    parser.add_argument("--tectonics-steps", type=int, default=None)
+    parser.add_argument("--tectonics-dt", type=float, default=None)
     parser.add_argument("--tectonics-wrap-x", dest="tectonics_wrap_x", action="store_true")
     parser.add_argument("--no-tectonics-wrap-x", dest="tectonics_wrap_x", action="store_false")
     parser.add_argument("--tectonics-wrap-y", dest="tectonics_wrap_y", action="store_true")
     parser.add_argument("--no-tectonics-wrap-y", dest="tectonics_wrap_y", action="store_false")
     parser.add_argument("--tectonics-rng-seed", type=int, default=0)
-    parser.set_defaults(tectonics_wrap_x=True, tectonics_wrap_y=False)
+    parser.set_defaults(tectonics_wrap_x=None, tectonics_wrap_y=None)
     parsed = parser.parse_args(list(args) if args is not None else None)
 
+    rectangular_controls = {
+        "--tectonics-steps": parsed.tectonics_steps,
+        "--tectonics-dt": parsed.tectonics_dt,
+        "--tectonics-wrap-x/--no-tectonics-wrap-x": parsed.tectonics_wrap_x,
+        "--tectonics-wrap-y/--no-tectonics-wrap-y": parsed.tectonics_wrap_y,
+    }
+
+    if parsed.config is not None:
+        config = PipelineConfig.from_file(parsed.config)
+        invalid_controls = [
+            name
+            for name, value in rectangular_controls.items()
+            if value is not None
+            and parsed.stage == "tectonics"
+            and config.topology.lower() == "cubed_sphere"
+        ]
+        if invalid_controls:
+            parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
+        stage_name = "geometry" if parsed.stage == "topology" else _register_tectonics_stage()
+        started = time.perf_counter()
+        ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run([stage_name])
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        visuals_dir = config.run_visual_dir() / stage_name
+        print(
+            f"{stage_name.title()} visuals written to {visuals_dir} (elapsed {elapsed_ms:.2f} ms)"
+        )
+        return 0
+
+    invalid_controls = [
+        name
+        for name, value in rectangular_controls.items()
+        if value is not None and parsed.stage == "tectonics" and parsed.topology == "cubed_sphere"
+    ]
+    if invalid_controls:
+        parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
+
     if parsed.stage == "topology":
+        if parsed.topology == "cubed_sphere":
+            from .cubed_sphere import run_cubed_sphere_diagnostic
+
+            resolution = parsed.face_resolution or parsed.width
+            net_path, _ = run_cubed_sphere_diagnostic(
+                face_resolution=resolution, output_dir=parsed.output_dir
+            )
+            print(f"Topology diagnostic written to {net_path}")
+            return 0
         visuals_dir, elapsed_ms = run_topology_visualizer(
             topology=parsed.topology,
             width=parsed.width,
@@ -275,6 +324,7 @@ def main(args: Iterable[str] | None = None) -> int:
             topology=parsed.topology,
             width=parsed.width,
             height=parsed.height,
+            face_resolution=parsed.face_resolution,
             output_dir=parsed.output_dir,
             cache_dir=parsed.cache_dir,
             log_dir=parsed.log_dir,
@@ -286,10 +336,10 @@ def main(args: Iterable[str] | None = None) -> int:
             drift_bias=parsed.tectonics_drift,
             hotspot_density=parsed.tectonics_hotspot_density,
             subduction_bias=parsed.tectonics_subduction_bias,
-            time_steps=parsed.tectonics_steps,
-            time_step=parsed.tectonics_dt,
-            wrap_x=parsed.tectonics_wrap_x,
-            wrap_y=parsed.tectonics_wrap_y,
+            time_steps=24 if parsed.tectonics_steps is None else parsed.tectonics_steps,
+            time_step=0.5 if parsed.tectonics_dt is None else parsed.tectonics_dt,
+            wrap_x=True if parsed.tectonics_wrap_x is None else parsed.tectonics_wrap_x,
+            wrap_y=False if parsed.tectonics_wrap_y is None else parsed.tectonics_wrap_y,
             rng_seed=parsed.tectonics_rng_seed,
             generate_visuals=not parsed.skip_visuals,
         )

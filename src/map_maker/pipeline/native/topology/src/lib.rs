@@ -6,7 +6,7 @@ const D4_NEIGHBORS: usize = 4;
 
 #[no_mangle]
 pub extern "C" fn topology_native_abi_version() -> u32 {
-    1
+    2
 }
 
 #[no_mangle]

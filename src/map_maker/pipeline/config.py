@@ -19,9 +19,18 @@ class GridInfo:
     height: int
     width: int
     scale_factor: float = 1.0
+    face_resolution: int | None = None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"height": self.height, "width": self.width, "scale_factor": self.scale_factor}
+        result: Dict[str, Any] = {
+            "height": self.height,
+            "width": self.width,
+            "scale_factor": self.scale_factor,
+        }
+        if self.face_resolution is not None:
+            result["face_resolution"] = self.face_resolution
+            result["face_count"] = 6
+        return result
 
 
 @dataclass(frozen=True)
@@ -69,16 +78,39 @@ class PipelineConfig:
             raise ValueError("Pipeline config requires at least one resolution entry")
         levels = []
         for entry in resolutions:
-            height = entry.get("height")
-            width = entry.get("width")
-            if height is None or width is None:
-                raise ValueError("Resolution entries must include 'height' and 'width'")
+            face_resolution = entry.get("face_resolution")
+            if face_resolution is not None:
+                face_resolution = int(face_resolution)
+                if face_resolution <= 0:
+                    raise ValueError("face_resolution must be positive")
+                height = entry.get("height", face_resolution)
+                width = entry.get("width", face_resolution)
+                if int(height) != face_resolution or int(width) != face_resolution:
+                    raise ValueError("cubed-sphere height and width must match face_resolution")
+            else:
+                height = entry.get("height")
+                width = entry.get("width")
+                if height is None or width is None:
+                    raise ValueError(
+                        "Resolution entries must include height/width or face_resolution"
+                    )
             level = GridInfo(
                 height=int(height),
                 width=int(width),
                 scale_factor=float(entry.get("scale_factor", 1.0)),
+                face_resolution=face_resolution,
             )
             levels.append(level)
+
+        topology_key = str(topology).lower()
+        if topology_key == "cubed_sphere" and any(
+            level.face_resolution is None for level in levels
+        ):
+            raise ValueError("cubed_sphere resolutions require face_resolution")
+        if topology_key != "cubed_sphere" and any(
+            level.face_resolution is not None for level in levels
+        ):
+            raise ValueError("face_resolution is only valid with cubed_sphere topology")
 
         resolution_set = ResolutionSet(tuple(levels))
 

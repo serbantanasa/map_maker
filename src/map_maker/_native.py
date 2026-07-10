@@ -9,8 +9,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-NATIVE_ABI_VERSION = 1
-SIMULATION_NATIVE_LIBRARIES = ("erosion_native", "tectonics_native", "world_age_native")
+NATIVE_ABI_VERSION = 2
+SIMULATION_NATIVE_LIBRARIES = (
+    "erosion_native",
+    "tectonics_native",
+    "topology_native",
+    "world_age_native",
+)
 
 
 class NativeLibraryNotBuiltError(ImportError):
