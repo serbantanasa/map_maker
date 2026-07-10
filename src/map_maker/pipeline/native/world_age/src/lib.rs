@@ -1,15 +1,26 @@
 use rand::prelude::*;
 use rand_chacha::ChaCha8Rng;
-use std::collections::VecDeque;
+use std::cmp::Ordering;
+use std::collections::{BinaryHeap, VecDeque};
 use std::f32;
 use std::mem;
 use std::slice;
 
 const DEFAULT_PLATE_COMPONENTS: usize = 6;
+const SPHERICAL_PLATE_COMPONENTS: usize = 7;
+const D4_NEIGHBORS: usize = 4;
+const SHEAR_SMOOTHING_ANGULAR_SCALE: f32 = 0.02;
+const MARGIN_EFOLD_ANGULAR_SCALE: f32 = 0.075;
+const MAX_DIFFUSION_PASSES: usize = 256;
 
 #[no_mangle]
 pub extern "C" fn world_age_native_abi_version() -> u32 {
     2
+}
+
+#[no_mangle]
+pub extern "C" fn cubed_sphere_world_age_abi_version() -> u32 {
+    1
 }
 
 #[repr(C)]
@@ -23,6 +34,19 @@ pub struct HotspotEvent {
 #[repr(C)]
 pub struct HotspotEventArray {
     pub data: *mut HotspotEvent,
+    pub len: usize,
+}
+
+#[repr(C)]
+pub struct SphericalHotspotEvent {
+    pub global_cell_id: i32,
+    pub strength: f32,
+    pub plume_factor: f32,
+}
+
+#[repr(C)]
+pub struct SphericalHotspotEventArray {
+    pub data: *mut SphericalHotspotEvent,
     pub len: usize,
 }
 
@@ -52,7 +76,7 @@ fn clamp_unit(value: f32) -> f32 {
 
 fn compute_decay_factor(world_age: f32, half_life: f32) -> f32 {
     let half_life = if half_life <= 0.0 { 1.0 } else { half_life };
-    (-world_age / half_life).exp()
+    (-f32::consts::LN_2 * world_age / half_life).exp()
 }
 
 fn sample_poisson(lambda: f64, rng: &mut ChaCha8Rng) -> usize {
@@ -90,7 +114,23 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut f32, len: usize) -> &'a mut [f32] {
 /// have been released previously.
 pub unsafe extern "C" fn world_age_free_events(array: HotspotEventArray) {
     if !array.data.is_null() && array.len > 0 {
-        let _ = Vec::from_raw_parts(array.data, array.len, array.len);
+        let slice = std::ptr::slice_from_raw_parts_mut(array.data, array.len);
+        drop(Box::from_raw(slice));
+    }
+}
+
+#[no_mangle]
+/// Release spherical hotspot events allocated by
+/// [`world_age_run_cubed_sphere`].
+///
+/// # Safety
+///
+/// `array` must come from one successful spherical world-age call and must not
+/// have been released previously.
+pub unsafe extern "C" fn world_age_free_spherical_events(array: SphericalHotspotEventArray) {
+    if !array.data.is_null() && array.len > 0 {
+        let slice = std::ptr::slice_from_raw_parts_mut(array.data, array.len);
+        drop(Box::from_raw(slice));
     }
 }
 
@@ -515,10 +555,9 @@ pub unsafe extern "C" fn world_age_run(
         (*events_out).data = std::ptr::null_mut();
         (*events_out).len = 0;
         if event_len > 0 {
-            if let Some(mut owned) = events_opt.take() {
-                let ptr = owned.as_mut_ptr();
-                mem::forget(owned);
-                (*events_out).data = ptr;
+            if let Some(owned) = events_opt.take() {
+                let boxed = owned.into_boxed_slice();
+                (*events_out).data = Box::into_raw(boxed) as *mut HotspotEvent;
                 (*events_out).len = event_len;
             }
         }
@@ -555,4 +594,583 @@ pub unsafe extern "C" fn world_age_run(
     }
 
     0
+}
+
+fn valid_ffi_len<T>(len: usize) -> bool {
+    len.checked_mul(mem::size_of::<T>())
+        .is_some_and(|bytes| bytes <= isize::MAX as usize)
+}
+
+fn diffuse_d4(field: &mut [f32], neighbors: &[i32], areas: &[f64], angular_scale: f32) {
+    let target_variance = angular_scale * angular_scale;
+    let min_area = areas.iter().copied().fold(f64::INFINITY, f64::min) as f32;
+    let max_diffusion_time = target_variance / min_area.max(f32::MIN_POSITIVE);
+    let passes = ((max_diffusion_time / 0.5).ceil() as usize).clamp(1, MAX_DIFFUSION_PASSES);
+    let mut scratch = field.to_vec();
+    for _ in 0..passes {
+        scratch.copy_from_slice(field);
+        for (cell, value) in field.iter_mut().enumerate() {
+            let adjacent = &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS];
+            let mean = adjacent
+                .iter()
+                .map(|neighbor| scratch[*neighbor as usize])
+                .sum::<f32>()
+                / D4_NEIGHBORS as f32;
+            let blend = (target_variance / areas[cell] as f32 / passes as f32).clamp(0.0, 0.5);
+            *value = scratch[cell] * (1.0 - blend) + mean * blend;
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DistanceEntry {
+    distance: f32,
+    cell: usize,
+}
+
+impl Eq for DistanceEntry {}
+
+impl Ord for DistanceEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .distance
+            .total_cmp(&self.distance)
+            .then_with(|| other.cell.cmp(&self.cell))
+    }
+}
+
+impl PartialOrd for DistanceEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+fn margin_distances(continental: &[bool], neighbors: &[i32], areas: &[f64]) -> Vec<f32> {
+    let mut distance = vec![f32::INFINITY; continental.len()];
+    let mut queue = BinaryHeap::new();
+    for cell in 0..continental.len() {
+        let adjacent = &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS];
+        if adjacent
+            .iter()
+            .any(|neighbor| continental[*neighbor as usize] != continental[cell])
+        {
+            distance[cell] = 0.0;
+            queue.push(DistanceEntry {
+                distance: 0.0,
+                cell,
+            });
+        }
+    }
+    while let Some(entry) = queue.pop() {
+        if entry.distance > distance[entry.cell] {
+            continue;
+        }
+        let cell_scale = (areas[entry.cell] as f32).sqrt();
+        for &neighbor in &neighbors[entry.cell * D4_NEIGHBORS..(entry.cell + 1) * D4_NEIGHBORS] {
+            let adjacent = neighbor as usize;
+            let edge_scale = 0.5 * (cell_scale + (areas[adjacent] as f32).sqrt());
+            let candidate = entry.distance + edge_scale;
+            if candidate < distance[adjacent] {
+                distance[adjacent] = candidate;
+                queue.push(DistanceEntry {
+                    distance: candidate,
+                    cell: adjacent,
+                });
+            }
+        }
+    }
+    distance
+}
+
+fn weighted_sample_index(weights: &[f64], total_weight: f64, rng: &mut ChaCha8Rng) -> usize {
+    let target = rng.gen::<f64>() * total_weight;
+    let mut cumulative = 0.0f64;
+    for (index, weight) in weights.iter().enumerate() {
+        cumulative += *weight;
+        if cumulative >= target {
+            return index;
+        }
+    }
+    weights.len().saturating_sub(1)
+}
+
+#[no_mangle]
+/// Initialize age-conditioned crustal state on canonical cubed-sphere cells.
+///
+/// The proto-ocean output classifies oceanic crust and is not a final water or
+/// sea-level solution. Coastal exposure is continental-margin proximity.
+///
+/// # Safety
+///
+/// Inputs and outputs must be aligned, correctly sized, non-overlapping
+/// buffers. Areas contain one positive `f64` per cell; neighbors contain four
+/// valid global IDs per cell; the plate field has seven `f32` components per
+/// cell; scalar fields contain one `f32` per cell. Event and stats pointers may
+/// be null, though a null event pointer discards generated events.
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn world_age_run_cubed_sphere(
+    cell_count: i32,
+    seed: u64,
+    world_age: f32,
+    thermal_decay_half_life: f32,
+    hotspot_scale: f32,
+    isostasy_factor: f32,
+    radiogenic_heat_scale: f32,
+    plate_components: i32,
+    area_ptr: *const f64,
+    neighbors_ptr: *const i32,
+    plate_field_ptr: *const f32,
+    convergence_ptr: *const f32,
+    divergence_ptr: *const f32,
+    subduction_ptr: *const f32,
+    shear_ptr: *const f32,
+    hotspot_ptr: *const f32,
+    crust_out_ptr: *mut f32,
+    isostasy_out_ptr: *mut f32,
+    uplift_out_ptr: *mut f32,
+    subsidence_out_ptr: *mut f32,
+    compression_out_ptr: *mut f32,
+    extension_out_ptr: *mut f32,
+    shear_out_ptr: *mut f32,
+    margin_proximity_out_ptr: *mut f32,
+    lithosphere_stiffness_out_ptr: *mut f32,
+    proto_ocean_mask_ptr: *mut f32,
+    events_out: *mut SphericalHotspotEventArray,
+    stats_out: *mut WorldAgeStats,
+) -> i32 {
+    if cell_count <= 0
+        || plate_components < SPHERICAL_PLATE_COMPONENTS as i32
+        || !world_age.is_finite()
+        || world_age < 0.0
+        || !thermal_decay_half_life.is_finite()
+        || thermal_decay_half_life <= 0.0
+        || !hotspot_scale.is_finite()
+        || hotspot_scale < 0.0
+        || !isostasy_factor.is_finite()
+        || !radiogenic_heat_scale.is_finite()
+        || radiogenic_heat_scale <= 0.0
+        || area_ptr.is_null()
+        || neighbors_ptr.is_null()
+        || plate_field_ptr.is_null()
+        || convergence_ptr.is_null()
+        || divergence_ptr.is_null()
+        || subduction_ptr.is_null()
+        || shear_ptr.is_null()
+        || hotspot_ptr.is_null()
+        || crust_out_ptr.is_null()
+        || isostasy_out_ptr.is_null()
+        || uplift_out_ptr.is_null()
+        || subsidence_out_ptr.is_null()
+        || compression_out_ptr.is_null()
+        || extension_out_ptr.is_null()
+        || shear_out_ptr.is_null()
+        || margin_proximity_out_ptr.is_null()
+        || lithosphere_stiffness_out_ptr.is_null()
+        || proto_ocean_mask_ptr.is_null()
+    {
+        return 1;
+    }
+    let total = cell_count as usize;
+    let components = plate_components as usize;
+    let Some(plate_len) = total.checked_mul(components) else {
+        return 2;
+    };
+    let Some(neighbor_len) = total.checked_mul(D4_NEIGHBORS) else {
+        return 2;
+    };
+    if !valid_ffi_len::<f64>(total)
+        || !valid_ffi_len::<i32>(neighbor_len)
+        || !valid_ffi_len::<f32>(plate_len)
+        || !valid_ffi_len::<f32>(total)
+    {
+        return 2;
+    }
+
+    let areas = slice::from_raw_parts(area_ptr, total);
+    let neighbors = slice::from_raw_parts(neighbors_ptr, neighbor_len);
+    let plate_field = slice::from_raw_parts(plate_field_ptr, plate_len);
+    let convergence = slice::from_raw_parts(convergence_ptr, total);
+    let divergence = slice::from_raw_parts(divergence_ptr, total);
+    let subduction = slice::from_raw_parts(subduction_ptr, total);
+    let shear = slice::from_raw_parts(shear_ptr, total);
+    let hotspot = slice::from_raw_parts(hotspot_ptr, total);
+    let crust_out = slice::from_raw_parts_mut(crust_out_ptr, total);
+    let isostasy_out = slice::from_raw_parts_mut(isostasy_out_ptr, total);
+    let uplift_out = slice::from_raw_parts_mut(uplift_out_ptr, total);
+    let subsidence_out = slice::from_raw_parts_mut(subsidence_out_ptr, total);
+    let compression_out = slice::from_raw_parts_mut(compression_out_ptr, total);
+    let extension_out = slice::from_raw_parts_mut(extension_out_ptr, total);
+    let shear_out = slice::from_raw_parts_mut(shear_out_ptr, total);
+    let margin_out = slice::from_raw_parts_mut(margin_proximity_out_ptr, total);
+    let stiffness_out = slice::from_raw_parts_mut(lithosphere_stiffness_out_ptr, total);
+    let proto_ocean_out = slice::from_raw_parts_mut(proto_ocean_mask_ptr, total);
+
+    let mut total_area = 0.0f64;
+    for cell in 0..total {
+        let area = areas[cell];
+        let base = cell * components;
+        if !area.is_finite()
+            || area <= 0.0
+            || plate_field[base..base + SPHERICAL_PLATE_COMPONENTS]
+                .iter()
+                .any(|value| !value.is_finite())
+            || [
+                convergence[cell],
+                divergence[cell],
+                subduction[cell],
+                shear[cell],
+                hotspot[cell],
+            ]
+            .iter()
+            .any(|value| !value.is_finite())
+        {
+            return 3;
+        }
+        let mut unique = [
+            neighbors[cell * 4],
+            neighbors[cell * 4 + 1],
+            neighbors[cell * 4 + 2],
+            neighbors[cell * 4 + 3],
+        ];
+        unique.sort_unstable();
+        if unique.windows(2).any(|pair| pair[0] == pair[1])
+            || unique
+                .iter()
+                .any(|neighbor| *neighbor < 0 || *neighbor as usize >= total)
+        {
+            return 4;
+        }
+        total_area += area;
+    }
+    if !total_area.is_finite() || total_area <= 0.0 {
+        return 3;
+    }
+
+    let residual_heat = compute_decay_factor(world_age, thermal_decay_half_life);
+    let heat_scale = radiogenic_heat_scale.clamp(0.1, 4.0);
+    let convective_heat = ((0.28 + 0.72 * residual_heat) * heat_scale).clamp(0.05, 2.5);
+    let cooling = (1.0 - residual_heat).clamp(0.0, 1.0);
+    let mut continental = vec![false; total];
+    let mut buoyancy = vec![0.0f32; total];
+    let mut shear_smoothed = vec![0.0f32; total];
+    let mut thickness_sum = 0.0f64;
+    let mut thickness_sq_sum = 0.0f64;
+    let mut buoyancy_sum = 0.0f64;
+    let mut speed_sum = 0.0f64;
+    let mut ocean_area = 0.0f64;
+    let mantle_density = 3.30f32;
+
+    for cell in 0..total {
+        let base = cell * components;
+        continental[cell] = plate_field[base + 1] >= 0.5;
+        let base_thickness = plate_field[base + 2].max(0.1);
+        let density = plate_field[base + 3].clamp(2.4, 3.5);
+        let thickness_factor = if continental[cell] {
+            0.98 + 0.08 * convective_heat
+        } else {
+            0.84 + 0.22 * convective_heat
+        };
+        let thickness = (base_thickness * thickness_factor).max(0.5);
+        crust_out[cell] = thickness;
+        let root = thickness * (mantle_density - density).max(-0.2) / mantle_density;
+        buoyancy[cell] = root * isostasy_factor;
+        shear_smoothed[cell] = (shear[cell].abs() + 0.45 * subduction[cell].max(0.0))
+            * (0.65 + 0.35 * convective_heat);
+
+        let area = areas[cell];
+        thickness_sum += thickness as f64 * area;
+        thickness_sq_sum += thickness as f64 * thickness as f64 * area;
+        buoyancy_sum += buoyancy[cell] as f64 * area;
+        let vx = plate_field[base + 4] as f64;
+        let vy = plate_field[base + 5] as f64;
+        let vz = plate_field[base + 6] as f64;
+        speed_sum += (vx * vx + vy * vy + vz * vz).sqrt() * area;
+        if !continental[cell] {
+            proto_ocean_out[cell] = 1.0;
+            ocean_area += area;
+        } else {
+            proto_ocean_out[cell] = 0.0;
+        }
+    }
+
+    let mean_thickness = (thickness_sum / total_area) as f32;
+    let thickness_variance =
+        (thickness_sq_sum / total_area - mean_thickness as f64 * mean_thickness as f64).max(0.0);
+    let mean_buoyancy = (buoyancy_sum / total_area) as f32;
+    let mut uplift_sum = 0.0f64;
+    let mut subsidence_sum = 0.0f64;
+    let mut uplift_sq_sum = 0.0f64;
+    let mut subsidence_sq_sum = 0.0f64;
+
+    for cell in 0..total {
+        isostasy_out[cell] = buoyancy[cell] - mean_buoyancy;
+        let conv = convergence[cell].max(0.0);
+        let div = divergence[cell].max(0.0);
+        let subd = subduction[cell].clamp(0.0, 1.0);
+        let hot = hotspot[cell].clamp(0.0, 1.0);
+        compression_out[cell] = (0.55 * conv + 0.7 * subd).clamp(0.0, 1.0);
+        extension_out[cell] = (div * (0.8 + 0.35 * convective_heat) - 0.2 * conv).clamp(0.0, 1.0);
+        let stiffness_base = if continental[cell] { 0.58 } else { 0.36 };
+        stiffness_out[cell] = (stiffness_base
+            + 0.24 * cooling
+            + 0.12 * (crust_out[cell] / mean_thickness.max(0.1) - 1.0))
+            .clamp(0.0, 1.0);
+        let uplift = conv * (0.8 + 0.45 * convective_heat)
+            + subd * (0.45 + 0.2 * convective_heat)
+            + hot * 0.22 * convective_heat;
+        let oceanic_cooling = if continental[cell] {
+            0.0
+        } else {
+            0.08 * cooling
+        };
+        let subsidence = div * (0.7 + 0.25 * convective_heat) + oceanic_cooling + hot * 0.025;
+        uplift_out[cell] = uplift;
+        subsidence_out[cell] = subsidence;
+        let area = areas[cell];
+        uplift_sum += uplift as f64 * area;
+        subsidence_sum += subsidence as f64 * area;
+        uplift_sq_sum += uplift as f64 * uplift as f64 * area;
+        subsidence_sq_sum += subsidence as f64 * subsidence as f64 * area;
+    }
+
+    diffuse_d4(
+        &mut shear_smoothed,
+        neighbors,
+        areas,
+        SHEAR_SMOOTHING_ANGULAR_SCALE,
+    );
+    let max_shear = shear_smoothed
+        .iter()
+        .copied()
+        .fold(0.0f32, f32::max)
+        .max(1e-6);
+    for (output, value) in shear_out.iter_mut().zip(shear_smoothed.iter()) {
+        *output = (*value / max_shear).clamp(0.0, 1.0);
+    }
+
+    let distances = margin_distances(&continental, neighbors, areas);
+    for cell in 0..total {
+        margin_out[cell] = if distances[cell].is_finite() {
+            (-distances[cell] / MARGIN_EFOLD_ANGULAR_SCALE).exp()
+        } else {
+            0.0
+        };
+    }
+
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xC1A0_1D2C_A5E2_5319);
+    let event_weights: Vec<f64> = hotspot
+        .iter()
+        .zip(areas.iter())
+        .map(|(value, area)| value.clamp(0.0, 1.0) as f64 * *area)
+        .collect();
+    let total_event_weight: f64 = event_weights.iter().sum();
+    let mean_hotspot = total_event_weight / total_area;
+    let expected_events =
+        hotspot_scale as f64 * (4.0 + 28.0 * convective_heat as f64) * (0.5 + 2.0 * mean_hotspot);
+    let event_count = if total_event_weight > 0.0 {
+        sample_poisson(expected_events, &mut rng)
+    } else {
+        0
+    };
+    let mut events = Vec::with_capacity(event_count);
+    for _ in 0..event_count {
+        let cell = weighted_sample_index(&event_weights, total_event_weight, &mut rng);
+        events.push(SphericalHotspotEvent {
+            global_cell_id: cell as i32,
+            strength: (hotspot[cell].clamp(0.0, 1.0) * (0.7 + 0.6 * convective_heat)).min(2.0),
+            plume_factor: clamp_unit(convective_heat + rng.gen::<f32>() * 0.2),
+        });
+    }
+
+    let uplift_mean = (uplift_sum / total_area) as f32;
+    let subsidence_mean = (subsidence_sum / total_area) as f32;
+    let uplift_std = (uplift_sq_sum / total_area - uplift_mean as f64 * uplift_mean as f64)
+        .max(0.0)
+        .sqrt() as f32;
+    let subsidence_std = (subsidence_sq_sum / total_area
+        - subsidence_mean as f64 * subsidence_mean as f64)
+        .max(0.0)
+        .sqrt() as f32;
+    let mut uplift_sigma_area = [0.0f64; 3];
+    let mut subsidence_sigma_area = [0.0f64; 3];
+    for cell in 0..total {
+        let uplift_z = (uplift_out[cell] - uplift_mean) / uplift_std.max(1e-6);
+        let subsidence_z = (subsidence_out[cell] - subsidence_mean) / subsidence_std.max(1e-6);
+        for (index, threshold) in [1.0f32, 2.0, 3.0].iter().enumerate() {
+            if uplift_z >= *threshold {
+                uplift_sigma_area[index] += areas[cell];
+            }
+            if subsidence_z >= *threshold {
+                subsidence_sigma_area[index] += areas[cell];
+            }
+        }
+    }
+
+    let event_len = events.len();
+    if !events_out.is_null() {
+        (*events_out).data = std::ptr::null_mut();
+        (*events_out).len = 0;
+        if event_len > 0 {
+            let boxed = events.into_boxed_slice();
+            (*events_out).data = Box::into_raw(boxed) as *mut SphericalHotspotEvent;
+            (*events_out).len = event_len;
+        }
+    }
+    if !stats_out.is_null() {
+        (*stats_out) = WorldAgeStats {
+            convective_vigor: (speed_sum / total_area) as f32 * convective_heat,
+            mean_crust_thickness: mean_thickness,
+            std_crust_thickness: thickness_variance.sqrt() as f32,
+            mean_isostatic_offset: (isostasy_out
+                .iter()
+                .zip(areas.iter())
+                .map(|(value, area)| *value as f64 * *area)
+                .sum::<f64>()
+                / total_area) as f32,
+            hotspot_count: event_len.min(i32::MAX as usize) as i32,
+            uplift_mean,
+            subsidence_mean,
+            thermal_decay_factor: residual_heat,
+            water_fraction: (ocean_area / total_area) as f32,
+            uplift_sigma_gt1: (uplift_sigma_area[0] / total_area) as f32,
+            uplift_sigma_gt2: (uplift_sigma_area[1] / total_area) as f32,
+            uplift_sigma_gt3: (uplift_sigma_area[2] / total_area) as f32,
+            subsidence_sigma_gt1: (subsidence_sigma_area[0] / total_area) as f32,
+            subsidence_sigma_gt2: (subsidence_sigma_area[1] / total_area) as f32,
+            subsidence_sigma_gt3: (subsidence_sigma_area[2] / total_area) as f32,
+            hotspot_density: event_len as f32 / total_area as f32,
+        };
+    }
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cyclic_d4_neighbors(cell_count: usize) -> Vec<i32> {
+        let mut neighbors = Vec::with_capacity(cell_count * D4_NEIGHBORS);
+        for cell in 0..cell_count {
+            for offset in 1..=D4_NEIGHBORS {
+                neighbors.push(((cell + offset) % cell_count) as i32);
+            }
+        }
+        neighbors
+    }
+
+    #[test]
+    fn margin_distances_cross_graph_boundaries() {
+        let continental = [true, true, true, false, false, false];
+        let neighbors = cyclic_d4_neighbors(continental.len());
+        let areas = [0.1f64; 6];
+        let distances = margin_distances(&continental, &neighbors, &areas);
+
+        assert_eq!(distances.len(), continental.len());
+        assert!(distances.iter().all(|distance| *distance == 0.0));
+    }
+
+    #[test]
+    fn spherical_kernel_closes_area_weighted_isostasy_and_owns_events() {
+        let cell_count = 6usize;
+        let areas = [0.7f64, 1.1, 1.4, 2.0, 2.3, 3.0];
+        let neighbors = cyclic_d4_neighbors(cell_count);
+        let mut plate_field = vec![0.0f32; cell_count * SPHERICAL_PLATE_COMPONENTS];
+        for cell in 0..cell_count {
+            let base = cell * SPHERICAL_PLATE_COMPONENTS;
+            let continental = cell < 3;
+            plate_field[base] = cell as f32;
+            plate_field[base + 1] = if continental { 1.0 } else { 0.0 };
+            plate_field[base + 2] = if continental { 35.0 } else { 7.0 };
+            plate_field[base + 3] = if continental { 2.75 } else { 3.0 };
+            plate_field[base + 4] = 0.02 * cell as f32;
+            plate_field[base + 5] = 0.01;
+            plate_field[base + 6] = -0.01;
+        }
+        let convergence = vec![0.2f32; cell_count];
+        let divergence = vec![0.1f32; cell_count];
+        let subduction = vec![0.15f32; cell_count];
+        let shear = vec![0.08f32; cell_count];
+        let hotspot = vec![1.0f32; cell_count];
+        let mut outputs = vec![vec![0.0f32; cell_count]; 10];
+        let mut events = SphericalHotspotEventArray {
+            data: std::ptr::null_mut(),
+            len: 0,
+        };
+        let mut stats = WorldAgeStats {
+            convective_vigor: 0.0,
+            mean_crust_thickness: 0.0,
+            std_crust_thickness: 0.0,
+            mean_isostatic_offset: 0.0,
+            hotspot_count: 0,
+            uplift_mean: 0.0,
+            subsidence_mean: 0.0,
+            thermal_decay_factor: 0.0,
+            water_fraction: 0.0,
+            uplift_sigma_gt1: 0.0,
+            uplift_sigma_gt2: 0.0,
+            uplift_sigma_gt3: 0.0,
+            subsidence_sigma_gt1: 0.0,
+            subsidence_sigma_gt2: 0.0,
+            subsidence_sigma_gt3: 0.0,
+            hotspot_density: 0.0,
+        };
+
+        let result = unsafe {
+            world_age_run_cubed_sphere(
+                cell_count as i32,
+                17,
+                4.1,
+                1.8,
+                20.0,
+                0.6,
+                1.0,
+                SPHERICAL_PLATE_COMPONENTS as i32,
+                areas.as_ptr(),
+                neighbors.as_ptr(),
+                plate_field.as_ptr(),
+                convergence.as_ptr(),
+                divergence.as_ptr(),
+                subduction.as_ptr(),
+                shear.as_ptr(),
+                hotspot.as_ptr(),
+                outputs[0].as_mut_ptr(),
+                outputs[1].as_mut_ptr(),
+                outputs[2].as_mut_ptr(),
+                outputs[3].as_mut_ptr(),
+                outputs[4].as_mut_ptr(),
+                outputs[5].as_mut_ptr(),
+                outputs[6].as_mut_ptr(),
+                outputs[7].as_mut_ptr(),
+                outputs[8].as_mut_ptr(),
+                outputs[9].as_mut_ptr(),
+                &mut events,
+                &mut stats,
+            )
+        };
+
+        assert_eq!(result, 0);
+        assert!(outputs.iter().flatten().all(|value| value.is_finite()));
+        let total_area: f64 = areas.iter().sum();
+        let weighted_offset = outputs[1]
+            .iter()
+            .zip(areas.iter())
+            .map(|(value, area)| *value as f64 * *area)
+            .sum::<f64>()
+            / total_area;
+        assert!(weighted_offset.abs() < 1e-6);
+        assert!(stats.mean_isostatic_offset.abs() < 1e-6);
+        assert_eq!(events.len, stats.hotspot_count as usize);
+        assert!(events.len > 0);
+        let generated = unsafe { slice::from_raw_parts(events.data, events.len) };
+        assert!(generated
+            .iter()
+            .all(|event| (0..cell_count as i32).contains(&event.global_cell_id)));
+        unsafe { world_age_free_spherical_events(events) };
+    }
+
+    #[test]
+    fn residual_heat_decreases_with_age() {
+        assert!((compute_decay_factor(1.8, 1.8) - 0.5).abs() < 1e-6);
+        assert!(compute_decay_factor(4.5, 1.8) < compute_decay_factor(1.0, 1.8));
+    }
 }

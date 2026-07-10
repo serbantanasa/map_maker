@@ -124,3 +124,21 @@ def test_erosion_determinism(tmp_path: Path):
     diag1 = res1.artifact_records["ErosionDiagnostics"].value
     diag2 = res2.artifact_records["ErosionDiagnostics"].value
     assert diag1.equals(diag2)
+
+
+def test_erosion_explicitly_rejects_unmigrated_cubed_sphere(tmp_path: Path):
+    config = PipelineConfig.from_mapping(
+        {
+            "topology": "cubed_sphere",
+            "resolutions": [{"face_resolution": 8}],
+            "output_dir": str(tmp_path / "out"),
+            "cache_dir": str(tmp_path / "cache"),
+            "log_dir": str(tmp_path / "logs"),
+            "run_id": "erosion-cubed-rejection",
+            "stage_overrides": {
+                "tectonics": {"num_plates": 8, "lloyd_iterations": 2},
+            },
+        }
+    )
+    with pytest.raises(NotImplementedError, match="has not migrated to cubed_sphere"):
+        ExecutionEngine(config).run(["erosion"])
