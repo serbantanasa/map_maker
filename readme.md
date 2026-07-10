@@ -24,8 +24,8 @@ The native build is explicit. Importing `map_maker` never invokes Cargo or a
 C++ compiler. To load native libraries built elsewhere, set
 `MAP_MAKER_NATIVE_LIB_DIR` to their containing directory.
 
-Every native library currently exposes ABI version `2`. `map-maker doctor` verifies that
-ABI and reports the binary SHA-256 fingerprint. Simulation-library fingerprints
+Every native library currently exposes ABI version `2`. `map-maker doctor`
+verifies that ABI and reports the binary SHA-256 fingerprint. Simulation-library fingerprints
 are included in stage cache keys and run manifests, so replacing a native binary
 cannot silently reuse outputs from different code.
 
@@ -69,10 +69,12 @@ uv run map-maker generate --width 1024 --height 512 --seed 8675309
 
 Rerunning the same configuration reuses the stage cache. The current executable
 stack includes tectonics, crust/world-age fields, erosion/sedimentation, dataset
-persistence, diagnostics, and final cartography. Cubed-sphere topology,
-geological event history, routed hydrology, climate, soils, biomes, and regional
-refinement remain implementation milestones; the current output is a functional
-prototype rather than an atlas-grade world.
+persistence, diagnostics, and final cartography. The canonical cubed-sphere path
+now reaches connected geological province and boundary-segment initialization.
+Explicit geological event history, spherical elevation/erosion, routed
+hydrology, climate, soils, biomes, and regional refinement remain implementation
+milestones; the current output is a functional prototype rather than an
+atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -93,9 +95,10 @@ uv run map-maker topology --face-resolution 96 --output-dir out/topology
 ```
 
 This writes a globally continuous XYZ-colored cube net and a geometry report.
-The canonical tectonic snapshot and age-conditioned crust state now run directly
-on cubed-sphere neighbor IDs. Erosion remains on the provisional two-dimensional
-path and explicitly rejects six-face fields.
+The canonical tectonic snapshot, age-conditioned crust state, and connected
+geological provinces now run directly on cubed-sphere neighbor IDs. Erosion
+remains on the provisional two-dimensional path and explicitly rejects six-face
+fields.
 
 Run the previous procedural generator for comparison:
 
@@ -113,6 +116,9 @@ uv run map-maker-pipeline --stage tectonics --config configs/cubed_sphere_tecton
 
 # Canonical age-conditioned crust state
 uv run map-maker-pipeline --stage world_age --config configs/cubed_sphere_crust_state.yaml
+
+# Canonical connected geological provinces and boundary segments
+uv run map-maker-pipeline --stage geology --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

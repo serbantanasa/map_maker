@@ -131,8 +131,8 @@ The cube net is a topology diagnostic, not an atlas projection.
 
 ## Migration Boundary
 
-The current tectonics, world-age, and erosion kernels still consume a
-provisional two-dimensional grid. They must not be switched to cubed sphere by
-flattening the six faces, because that would create false adjacency between face
-rows. Migration requires those kernels to consume global IDs and topology-owned
-neighbor tables or face-aware halo buffers.
+The canonical tectonics, world-age, and geology kernels consume global IDs,
+exact spherical areas, and topology-owned D4 neighbors. Erosion remains on the
+provisional two-dimensional grid and explicitly rejects cubed-sphere input. It
+must not be migrated by flattening the six faces, because that would create
+false adjacency between face rows.

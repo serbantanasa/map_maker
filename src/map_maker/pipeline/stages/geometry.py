@@ -63,6 +63,7 @@ def _geometry_visualizer(
         "TopologyMetadata",
     ),
     version="v1",
+    native_libraries=("topology_native",),
     visualizer=_geometry_visualizer,
 )
 def geometry_stage(context, deps, config):

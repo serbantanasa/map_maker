@@ -193,6 +193,7 @@ def _tectonics_visualizer(
         "TectonicsMetadata",
     ),
     version="v5",
+    native_libraries=("tectonics_native",),
     visualizer=_tectonics_visualizer,
 )
 def tectonics_stage(context, deps, config_mapping):

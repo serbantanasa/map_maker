@@ -10,6 +10,7 @@ from ._native import library_filename, workspace_root
 
 NATIVE_LIBRARIES = (
     "erosion_native",
+    "geology_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

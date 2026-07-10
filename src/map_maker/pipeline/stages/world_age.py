@@ -177,6 +177,7 @@ def _world_age_visualizer(
         "WorldAgeMetadata",
     ),
     version="v2",
+    native_libraries=("world_age_native",),
     visualizer=_world_age_visualizer,
 )
 def world_age_stage(context, deps, config_mapping):

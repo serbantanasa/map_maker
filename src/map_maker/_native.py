@@ -7,11 +7,12 @@ import hashlib
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 NATIVE_ABI_VERSION = 2
 SIMULATION_NATIVE_LIBRARIES = (
     "erosion_native",
+    "geology_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",
@@ -120,9 +121,12 @@ def native_library_info(name: str) -> dict[str, Any]:
     return _native_library_info_cached(name, str(path), stat.st_size, stat.st_mtime_ns)
 
 
-def simulation_native_fingerprints() -> dict[str, dict[str, Any]]:
+def simulation_native_fingerprints(
+    names: Iterable[str] | None = None,
+) -> dict[str, dict[str, Any]]:
     fingerprints: dict[str, dict[str, Any]] = {}
-    for name in sorted(SIMULATION_NATIVE_LIBRARIES):
+    selected = SIMULATION_NATIVE_LIBRARIES if names is None else tuple(names)
+    for name in sorted(selected):
         info = native_library_info(name)
         fingerprints[name] = {
             "abi_version": info["abi_version"],

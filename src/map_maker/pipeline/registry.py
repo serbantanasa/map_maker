@@ -27,6 +27,7 @@ class StageDescriptor:
     outputs: tuple[str, ...]
     callable: StageCallable
     version: str = "v1"
+    native_libraries: tuple[str, ...] = ()
     visualizer: Optional[StageVisualizer] = None
     description: Optional[str] = None
 
@@ -67,6 +68,7 @@ def stage(
     outputs: Iterable[str] | None = None,
     *,
     version: str = "v1",
+    native_libraries: Iterable[str] | None = None,
     visualizer: StageVisualizer | None = None,
     description: str | None = None,
 ) -> Callable[[StageCallable], StageCallable]:
@@ -79,6 +81,7 @@ def stage(
             outputs=tuple(outputs or ()),
             callable=func,
             version=version,
+            native_libraries=tuple(native_libraries or ()),
             visualizer=visualizer or getattr(func, "visualizer", None),
             description=description or getattr(func, "__doc__", None),
         )
