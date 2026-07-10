@@ -16,6 +16,10 @@ from .memory import ArrayHandle, GridHandle, MemoryArena, VectorHandle
 from .models import ArtifactRecord, StageResult
 
 
+class CacheCorruptionError(RuntimeError):
+    """Raised when a cached artifact does not match its recorded checksum."""
+
+
 def _hash_bytes(data: bytes) -> str:
     hasher = hashlib.blake2b()
     hasher.update(data)
@@ -195,7 +199,15 @@ class DatasetWriter:
 
     def _load_value(self, record: ArtifactRecord, arena: MemoryArena) -> Any:
         if record.kind in {"grid", "vector", "array", "ndarray"}:
+            if not record.dataset_path.is_file():
+                raise CacheCorruptionError(f"Cached artifact is missing: {record.dataset_path}")
             array = np.load(record.dataset_path, allow_pickle=False)
+            checksum = _hash_bytes(array.tobytes())
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
             shape = tuple(record.metadata.get("shape", array.shape))
             if record.kind == "grid" or (record.kind == "ndarray" and len(shape) == 2):
                 grid_shape = tuple(int(dim) for dim in shape)[:2]
@@ -222,8 +234,22 @@ class DatasetWriter:
                 return handle
             return array.reshape(shape)
         if record.kind == "json":
-            return json.loads(record.dataset_path.read_text(encoding="utf8"))
+            encoded = record.dataset_path.read_bytes()
+            checksum = _hash_bytes(encoded)
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
+            return json.loads(encoded.decode("utf8"))
         if record.kind == "arrow":
+            encoded = record.dataset_path.read_bytes()
+            checksum = _hash_bytes(encoded)
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
             table = feather.read_table(record.dataset_path)
             return table
         return np.load(record.dataset_path, allow_pickle=False)

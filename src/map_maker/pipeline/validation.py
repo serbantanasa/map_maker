@@ -366,6 +366,9 @@ def validate_gallery(config: ValidationConfig) -> ValidationResult:
         cache_replay_passed = all(
             stage.stats is not None and stage.stats.cache_hit for stage in replay.stages.values()
         ) and image_checksum == _image_checksum(replay.image_path)
+        cache_replay_passed = cache_replay_passed and _artifact_checksums(
+            result
+        ) == _artifact_checksums(replay)
         generated[seed] = result
         worlds.append(
             WorldValidation(

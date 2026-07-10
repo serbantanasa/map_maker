@@ -24,6 +24,11 @@ The native build is explicit. Importing `map_maker` never invokes Cargo or a
 C++ compiler. To load native libraries built elsewhere, set
 `MAP_MAKER_NATIVE_LIB_DIR` to their containing directory.
 
+Every native library exposes ABI version `1`. `map-maker doctor` verifies that
+ABI and reports the binary SHA-256 fingerprint. Simulation-library fingerprints
+are included in stage cache keys and run manifests, so replacing a native binary
+cannot silently reuse outputs from different code.
+
 The equivalent `pip` workflow is:
 
 ```bash

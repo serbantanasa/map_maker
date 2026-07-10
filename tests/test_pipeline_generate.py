@@ -50,6 +50,12 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
     assert manifest["status"] == "complete"
     assert list(manifest["stages"]) == ["erosion", "tectonics", "world_age"]
     assert manifest["statistics"]["land_fraction"] > 0.0
+    assert set(manifest["native_libraries"]) == {
+        "erosion_native",
+        "tectonics_native",
+        "world_age_native",
+    }
+    assert all(len(library["sha256"]) == 64 for library in manifest["native_libraries"].values())
     assert (first.run_dir / "datasets" / "erosion" / "ElevationRaw.npy").exists()
     assert not any(stage.stats.cache_hit for stage in first.stages.values() if stage.stats)
     assert all(stage.stats.cache_hit for stage in second.stages.values() if stage.stats)
@@ -101,3 +107,22 @@ def test_doctor_reports_unbuilt_native_libraries(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Native tectonics_native: MISSING" in output
     assert "Run: map-maker-build-native" in output
+
+
+def test_doctor_accepts_external_libraries_without_cargo_or_workspace(monkeypatch, capsys):
+    import map_maker.cli as cli
+
+    monkeypatch.setattr(cli, "workspace_root", lambda: None)
+    monkeypatch.setattr(cli.shutil, "which", lambda command: None)
+    monkeypatch.setattr(
+        cli,
+        "native_library_info",
+        lambda name: {
+            "path": f"/external/{name}",
+            "abi_version": 1,
+            "sha256": "a" * 64,
+        },
+    )
+
+    assert main(["doctor"]) == 0
+    assert "Ready to generate" in capsys.readouterr().out

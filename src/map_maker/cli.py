@@ -9,7 +9,12 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ._native import NativeLibraryNotBuiltError, native_library_path, workspace_root
+from ._native import (
+    NativeLibraryAbiError,
+    NativeLibraryNotBuiltError,
+    native_library_info,
+    workspace_root,
+)
 from .native_build import NATIVE_LIBRARIES
 
 if TYPE_CHECKING:
@@ -103,27 +108,36 @@ def _config_from_args(args: argparse.Namespace) -> "PipelineConfig":
 
 def _doctor() -> int:
     failures: list[str] = []
+    missing_libraries = False
     root = workspace_root()
     print(f"Python: {sys.version.split()[0]}")
     print(f"Cargo: {shutil.which('cargo') or 'MISSING'}")
     print(f"Workspace: {root or 'MISSING'}")
-    if shutil.which("cargo") is None:
-        failures.append("Cargo is not available on PATH")
-    if root is None:
-        failures.append("the map_maker Cargo workspace could not be located")
     for library in NATIVE_LIBRARIES:
         try:
-            path = native_library_path(library)
+            info = native_library_info(library)
         except NativeLibraryNotBuiltError:
             print(f"Native {library}: MISSING")
             failures.append(f"native library {library} has not been built")
+            missing_libraries = True
+        except NativeLibraryAbiError as exc:
+            print(f"Native {library}: INCOMPATIBLE")
+            failures.append(str(exc))
         else:
-            print(f"Native {library}: {path}")
+            print(
+                f"Native {library}: {info['path']} "
+                f"(ABI {info['abi_version']}, sha256 {info['sha256'][:12]})"
+            )
+    if missing_libraries and shutil.which("cargo") is None:
+        failures.append("Cargo is required to build missing native libraries")
+    if missing_libraries and root is None:
+        failures.append("a source workspace is required to build missing native libraries")
     if failures:
         print("\nNot ready:")
         for failure in failures:
             print(f"  - {failure}")
-        print("\nRun: map-maker-build-native")
+        if missing_libraries and root is not None and shutil.which("cargo") is not None:
+            print("\nRun: map-maker-build-native")
         return 1
     print("\nReady to generate.")
     return 0
@@ -153,7 +167,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
             validation_config = ValidationConfig.from_file(args.config, output_dir=args.output_dir)
             validation = validate_gallery(validation_config)
-        except (NativeLibraryNotBuiltError, FileNotFoundError, TypeError, ValueError) as exc:
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            TypeError,
+            ValueError,
+        ) as exc:
             print(f"map-maker: {exc}", file=sys.stderr)
             return 2
         print(f"Validation report: {validation.report_path}")
@@ -181,7 +201,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         config = _config_from_args(args)
         result = generate_world(config, generate_stage_visuals=not args.no_stage_visuals)
-    except (NativeLibraryNotBuiltError, FileNotFoundError, TypeError, ValueError) as exc:
+    except (
+        NativeLibraryAbiError,
+        NativeLibraryNotBuiltError,
+        FileNotFoundError,
+        TypeError,
+        ValueError,
+    ) as exc:
         print(f"map-maker: {exc}", file=sys.stderr)
         return 2
 

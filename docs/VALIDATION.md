@@ -33,7 +33,9 @@ still requires human review of `gallery.png`.
 
 `cache_replay`
 : An immediate replay of every seed must restore every stage from cache while
-  preserving the preview checksum.
+  preserving every artifact checksum and the preview checksum. Artifact content
+  is verified while hydrating cache entries; corrupt entries are invalidated and
+  recomputed rather than returned as hits.
 
 ## Per-World Gates
 
