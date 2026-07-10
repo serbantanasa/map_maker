@@ -32,7 +32,9 @@ class TectonicsConfig:
             return cls()
         return cls(
             num_plates=int(mapping.get("num_plates", cls.num_plates)),
-            continental_fraction=float(mapping.get("continental_fraction", cls.continental_fraction)),
+            continental_fraction=float(
+                mapping.get("continental_fraction", cls.continental_fraction)
+            ),
             lloyd_iterations=int(mapping.get("lloyd_iterations", cls.lloyd_iterations)),
             velocity_scale=float(mapping.get("velocity_scale", cls.velocity_scale)),
             drift_bias=float(mapping.get("drift_bias", cls.drift_bias)),
@@ -53,7 +55,9 @@ def _artifact_array(record) -> Optional[np.ndarray]:
     return np.asarray(record.value)
 
 
-def _tectonics_visualizer(result, request: VisualizationRequest) -> Optional[list[VisualizationResult]]:
+def _tectonics_visualizer(
+    result, request: VisualizationRequest
+) -> Optional[list[VisualizationResult]]:
     plate_record = result.artifact_records.get("PlateField")
     if not plate_record or plate_record.value is None:
         return None
@@ -96,11 +100,14 @@ def _tectonics_visualizer(result, request: VisualizationRequest) -> Optional[lis
     subduction = _artifact_array(result.artifact_records.get("BoundarySubduction"))
 
     if convergence is not None and divergence is not None and subduction is not None:
-        conv_norm = (convergence.clip(min=0.0) / (float(convergence.max()) + 1e-6)).astype(np.float32)
+        conv_norm = (convergence.clip(min=0.0) / (float(convergence.max()) + 1e-6)).astype(
+            np.float32
+        )
         div_norm = (divergence.clip(min=0.0) / (float(divergence.max()) + 1e-6)).astype(np.float32)
         sub_norm = (subduction.clip(min=0.0) / (float(subduction.max()) + 1e-6)).astype(np.float32)
         boundary = np.zeros((height, width, 3), dtype=np.float32)
         boundary[..., 0] = sub_norm * 255.0  # subduction → red
+        boundary[..., 1] = conv_norm * 255.0  # convergence → green
         boundary[..., 2] = div_norm * 255.0  # abduction/divergence → blue
         shear = _artifact_array(result.artifact_records.get("BoundaryShear"))
         if shear is not None and shear.max() > 0:
@@ -109,7 +116,11 @@ def _tectonics_visualizer(result, request: VisualizationRequest) -> Optional[lis
         boundary_img = boundary.clip(0.0, 255.0).astype(np.uint8)
         boundary_path = request.output_dir / "boundaries.png"
         Image.fromarray(boundary_img, mode="RGB").save(boundary_path)
-        results.append(VisualizationResult(path=boundary_path, artifact_name="BoundaryVisualization", metadata={}))
+        results.append(
+            VisualizationResult(
+                path=boundary_path, artifact_name="BoundaryVisualization", metadata={}
+            )
+        )
 
     hotspot = _artifact_array(result.artifact_records.get("HotspotMap"))
     if hotspot is not None and hotspot.max() > 0:
@@ -123,7 +134,9 @@ def _tectonics_visualizer(result, request: VisualizationRequest) -> Optional[lis
         hot_img = hot_img.clip(0.0, 255.0).astype(np.uint8)
         hotspot_path = request.output_dir / "hotspots.png"
         Image.fromarray(hot_img, mode="RGB").save(hotspot_path)
-        results.append(VisualizationResult(path=hotspot_path, artifact_name="HotspotMap", metadata={}))
+        results.append(
+            VisualizationResult(path=hotspot_path, artifact_name="HotspotMap", metadata={})
+        )
 
     return results
 
@@ -139,6 +152,7 @@ def _tectonics_visualizer(result, request: VisualizationRequest) -> Optional[lis
         "HotspotMap",
         "TectonicsMetadata",
     ),
+    version="v4",
     visualizer=_tectonics_visualizer,
 )
 def tectonics_stage(context, deps, config_mapping):
@@ -153,11 +167,19 @@ def tectonics_stage(context, deps, config_mapping):
         (height, width, PLATE_FIELD_COMPONENTS),
         dtype=np.float32,
     )
-    convergence_handle = context.arena.allocate_grid("tectonics_convergence", (height, width), dtype=np.float32)
-    divergence_handle = context.arena.allocate_grid("tectonics_divergence", (height, width), dtype=np.float32)
+    convergence_handle = context.arena.allocate_grid(
+        "tectonics_convergence", (height, width), dtype=np.float32
+    )
+    divergence_handle = context.arena.allocate_grid(
+        "tectonics_divergence", (height, width), dtype=np.float32
+    )
     shear_handle = context.arena.allocate_grid("tectonics_shear", (height, width), dtype=np.float32)
-    subduction_handle = context.arena.allocate_grid("tectonics_subduction", (height, width), dtype=np.float32)
-    hotspot_handle = context.arena.allocate_grid("tectonics_hotspot", (height, width), dtype=np.float32)
+    subduction_handle = context.arena.allocate_grid(
+        "tectonics_subduction", (height, width), dtype=np.float32
+    )
+    hotspot_handle = context.arena.allocate_grid(
+        "tectonics_hotspot", (height, width), dtype=np.float32
+    )
 
     plate_view = plate_handle.mutable_view()
     convergence_view = convergence_handle.mutable_view()

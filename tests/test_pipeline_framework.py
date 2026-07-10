@@ -123,6 +123,34 @@ def test_execution_engine_caches_and_logs(tmp_path: Path):
     assert summary1 == summary2
 
 
+def test_requesting_terminal_stage_runs_dependency_closure(tmp_path: Path):
+    calls: list[str] = []
+
+    @stage("foundation")
+    def foundation(context, deps, config):
+        calls.append("foundation")
+        return {"value": 2}
+
+    @stage("middle", inputs=("foundation",))
+    def middle(context, deps, config):
+        calls.append("middle")
+        value = deps["foundation"].artifact_records["value"].value
+        return {"value": value + 3}
+
+    @stage("terminal", inputs=("middle",))
+    def terminal(context, deps, config):
+        calls.append("terminal")
+        value = deps["middle"].artifact_records["value"].value
+        return {"value": value * 2}
+
+    config = _make_config(tmp_path, "dependency-closure")
+    results = ExecutionEngine(config).run(["terminal"])
+
+    assert calls == ["foundation", "middle", "terminal"]
+    assert list(results) == ["foundation", "middle", "terminal"]
+    assert results["terminal"].artifact_records["value"].value == 10
+
+
 def test_cycle_detection(tmp_path: Path):
     reg = registry()
     reg.clear()

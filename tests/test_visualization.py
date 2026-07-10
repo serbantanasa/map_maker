@@ -35,7 +35,7 @@ def test_visual_manager_emits_png(tmp_path: Path):
         checksum="dummy",
         dataset_path=tmp_path / "coords.npy",
         cache_path=tmp_path / "coords.npy",
-        metadata={}
+        metadata={},
     )
     artifact.value = arr
     stage_result.register_artifact(artifact)
@@ -44,4 +44,3 @@ def test_visual_manager_emits_png(tmp_path: Path):
     assert outputs, "Visualizer should produce at least one output"
     assert outputs[0].path.exists()
     assert outputs[0].path.suffix == ".png"
-

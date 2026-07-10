@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Mapping, MutableMapping
 import uuid
 
 import yaml
@@ -90,7 +90,9 @@ class PipelineConfig:
 
         overrides = mapping.get("stage_overrides", {})
         if not isinstance(overrides, MutableMapping):
-            raise TypeError("stage_overrides must be a mapping of stage names to configuration dicts")
+            raise TypeError(
+                "stage_overrides must be a mapping of stage names to configuration dicts"
+            )
         stage_overrides: Dict[str, Mapping[str, Any]] = {}
         for key, value in overrides.items():
             if not isinstance(value, Mapping):
@@ -98,7 +100,16 @@ class PipelineConfig:
             stage_overrides[str(key)] = dict(value)
 
         extra = dict(mapping)
-        for consumed in ("topology", "resolutions", "run_id", "rng_seed", "output_dir", "cache_dir", "log_dir", "stage_overrides"):
+        for consumed in (
+            "topology",
+            "resolutions",
+            "run_id",
+            "rng_seed",
+            "output_dir",
+            "cache_dir",
+            "log_dir",
+            "stage_overrides",
+        ):
             extra.pop(consumed, None)
 
         return cls(
@@ -153,4 +164,3 @@ class PipelineConfig:
 def load_config(source: Path | str) -> PipelineConfig:
     """Convenience helper for CLI consumers."""
     return PipelineConfig.from_file(source)
-

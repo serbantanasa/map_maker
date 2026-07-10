@@ -69,7 +69,9 @@ class DatasetWriter:
             return self._write_json(stage_dir, cache_dir, name, value)
         raise TypeError(f"Unsupported artifact type for '{name}': {type(value)!r}")
 
-    def _write_grid(self, stage_dir: Path, cache_dir: Path, name: str, handle: GridHandle) -> ArtifactRecord:
+    def _write_grid(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: GridHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -88,7 +90,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_vector(self, stage_dir: Path, cache_dir: Path, name: str, handle: VectorHandle) -> ArtifactRecord:
+    def _write_vector(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: VectorHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -107,7 +111,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_array(self, stage_dir: Path, cache_dir: Path, name: str, handle: ArrayHandle) -> ArtifactRecord:
+    def _write_array(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: ArrayHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -126,7 +132,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_ndarray(self, stage_dir: Path, cache_dir: Path, name: str, array: np.ndarray) -> ArtifactRecord:
+    def _write_ndarray(
+        self, stage_dir: Path, cache_dir: Path, name: str, array: np.ndarray
+    ) -> ArtifactRecord:
         filename = f"{name}.npy"
         cache_path = cache_dir / filename
         np.save(cache_path, array, allow_pickle=False)
@@ -144,7 +152,9 @@ class DatasetWriter:
             value=array,
         )
 
-    def _write_arrow_table(self, stage_dir: Path, cache_dir: Path, name: str, table: pa.Table) -> ArtifactRecord:
+    def _write_arrow_table(
+        self, stage_dir: Path, cache_dir: Path, name: str, table: pa.Table
+    ) -> ArtifactRecord:
         filename = f"{name}.arrow"
         cache_path = cache_dir / filename
         feather.write_feather(table, cache_path)
@@ -163,7 +173,9 @@ class DatasetWriter:
             value=table,
         )
 
-    def _write_json(self, stage_dir: Path, cache_dir: Path, name: str, value: Any) -> ArtifactRecord:
+    def _write_json(
+        self, stage_dir: Path, cache_dir: Path, name: str, value: Any
+    ) -> ArtifactRecord:
         filename = f"{name}.json"
         cache_path = cache_dir / filename
         encoded = json.dumps(value, sort_keys=True).encode("utf8")

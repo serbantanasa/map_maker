@@ -143,23 +143,43 @@ def erosion_stage(context, deps, config_mapping):
     plate_field = _artifact_array(tectonics.artifact_records.get("PlateField"), name="PlateField")
 
     crust = _artifact_array(world_age.artifact_records.get("CrustThickness"), name="CrustThickness")
-    isostasy = _artifact_array(world_age.artifact_records.get("IsostaticOffset"), name="IsostaticOffset")
+    isostasy = _artifact_array(
+        world_age.artifact_records.get("IsostaticOffset"), name="IsostaticOffset"
+    )
     uplift = _artifact_array(world_age.artifact_records.get("UpliftRate"), name="UpliftRate")
-    subsidence = _artifact_array(world_age.artifact_records.get("SubsidenceRate"), name="SubsidenceRate")
-    compression = _artifact_array(world_age.artifact_records.get("TectonicCompression"), name="TectonicCompression")
-    extension = _artifact_array(world_age.artifact_records.get("TectonicExtension"), name="TectonicExtension")
+    subsidence = _artifact_array(
+        world_age.artifact_records.get("SubsidenceRate"), name="SubsidenceRate"
+    )
+    compression = _artifact_array(
+        world_age.artifact_records.get("TectonicCompression"), name="TectonicCompression"
+    )
+    extension = _artifact_array(
+        world_age.artifact_records.get("TectonicExtension"), name="TectonicExtension"
+    )
     shear = _artifact_array(world_age.artifact_records.get("ShearMagnitude"), name="ShearMagnitude")
-    coastal_exposure = _artifact_array(world_age.artifact_records.get("CoastalExposure"), name="CoastalExposure")
-    lithosphere = _artifact_array(world_age.artifact_records.get("LithosphereStiffness"), name="LithosphereStiffness")
-    base_ocean = _artifact_array(world_age.artifact_records.get("BaseOceanMask"), name="BaseOceanMask")
+    coastal_exposure = _artifact_array(
+        world_age.artifact_records.get("CoastalExposure"), name="CoastalExposure"
+    )
+    lithosphere = _artifact_array(
+        world_age.artifact_records.get("LithosphereStiffness"), name="LithosphereStiffness"
+    )
+    base_ocean = _artifact_array(
+        world_age.artifact_records.get("BaseOceanMask"), name="BaseOceanMask"
+    )
 
     hotspot_record = world_age.artifact_records.get("HotspotEvents")
     hotspot_table = _ensure_hotspot_table(hotspot_record.value if hotspot_record else None)
     hotspot_grid = _hotspot_grid(hotspot_table, height, width)
 
-    elevation_handle = context.arena.allocate_grid("erosion_elevation_raw", (height, width), dtype=np.float32)
-    sediment_handle = context.arena.allocate_grid("erosion_sediment_depth", (height, width), dtype=np.float32)
-    incision_handle = context.arena.allocate_grid("erosion_river_incision", (height, width), dtype=np.float32)
+    elevation_handle = context.arena.allocate_grid(
+        "erosion_elevation_raw", (height, width), dtype=np.float32
+    )
+    sediment_handle = context.arena.allocate_grid(
+        "erosion_sediment_depth", (height, width), dtype=np.float32
+    )
+    incision_handle = context.arena.allocate_grid(
+        "erosion_river_incision", (height, width), dtype=np.float32
+    )
 
     elevation_view = elevation_handle.mutable_view()
     sediment_view = sediment_handle.mutable_view()

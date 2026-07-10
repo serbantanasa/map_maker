@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import numpy as np
 import pyarrow as pa
 from cffi import FFI
+
+from .._native import native_library_path
 
 HOTSPOT_EVENT_DTYPE = np.dtype(
     [
@@ -87,45 +85,6 @@ void world_age_free_events(HotspotEventArray array);
 """
 
 
-def _library_name() -> str:
-    if sys.platform.startswith("win"):
-        return "world_age_native.dll"
-    if sys.platform == "darwin":
-        return "libworld_age_native.dylib"
-    return "libworld_age_native.so"
-
-
-def _crate_dir() -> Path:
-    return Path(__file__).resolve().parent / "native" / "world_age"
-
-
-def _library_path() -> Path:
-    return _crate_dir() / "target" / "release" / _library_name()
-
-
-def _needs_rebuild(library_path: Path, crate_dir: Path) -> bool:
-    if not library_path.exists():
-        return True
-    lib_mtime = library_path.stat().st_mtime
-    candidates = [crate_dir / "Cargo.toml"]
-    candidates.extend(crate_dir.rglob("*.rs"))
-    return any(path.stat().st_mtime > lib_mtime for path in candidates if path.exists())
-
-
-def _build_library() -> Path:
-    crate = _crate_dir()
-    library = _library_path()
-    if _needs_rebuild(library, crate):
-        env = {**os.environ}
-        subprocess.run(
-            ["cargo", "build", "--release"],
-            cwd=str(crate),
-            check=True,
-            env=env,
-        )
-    return library
-
-
 def _as_read_array(array: np.ndarray, *, name: str) -> np.ndarray:
     arr = np.array(array, copy=False)
     if arr.dtype != np.float32:
@@ -148,7 +107,7 @@ def _as_write_array(array: np.ndarray, *, name: str) -> np.ndarray:
 
 _ffi = FFI()
 _ffi.cdef(_CDEF)
-_lib = _ffi.dlopen(str(_build_library()))
+_lib = _ffi.dlopen(str(native_library_path("world_age_native")))
 
 
 def _events_to_arrow(event_struct: Any, *, free_after: bool = True) -> pa.Table:
@@ -211,7 +170,9 @@ def run_world_age_kernels(
         raise ValueError(f"plate_field must be 3D (H, W, C); got shape {plate_arr.shape}")
     expected_grid = (int(height), int(width))
     if tuple(int(dim) for dim in plate_arr.shape[:2]) != expected_grid:
-        raise ValueError(f"plate_field expected leading shape {expected_grid}, got {plate_arr.shape}")
+        raise ValueError(
+            f"plate_field expected leading shape {expected_grid}, got {plate_arr.shape}"
+        )
     convergence_arr = _as_read_array(convergence_field, name="convergence_field")
     divergence_arr = _as_read_array(divergence_field, name="divergence_field")
     subduction_arr = _as_read_array(subduction_field, name="subduction_field")
@@ -267,9 +228,15 @@ def run_world_age_kernels(
         float(radiogenic_heat_scale),
         int(plate_arr.shape[2] if plate_arr.ndim == 3 else 1),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", plate_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", convergence_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", divergence_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", subduction_arr, require_writable=False)),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", convergence_arr, require_writable=False)
+        ),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", divergence_arr, require_writable=False)
+        ),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", subduction_arr, require_writable=False)
+        ),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", shear_arr, require_writable=False)),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", hotspot_arr, require_writable=False)),
         _ffi.cast("float*", _ffi.from_buffer("float[]", crust_arr)),

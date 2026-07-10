@@ -88,7 +88,9 @@ fn poisson_sample(
 ) -> Vec<PlateSeed> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x6C8E_9CF5_1234_5678);
     let total_cells = (height * width).max(1);
-    let mut min_dist_sq = (((total_cells as f32) / (count.max(1) as f32)).sqrt() * 0.75).powi(2).max(4.0);
+    let mut min_dist_sq = (((total_cells as f32) / (count.max(1) as f32)).sqrt() * 0.75)
+        .powi(2)
+        .max(4.0);
     let mut seeds: Vec<PlateSeed> = Vec::with_capacity(count);
     let mut attempts: usize = 0;
     let width_f = width as f32;
@@ -132,6 +134,7 @@ fn assign_cells_into(
     width: usize,
     wrap_x: bool,
     wrap_y: bool,
+    warp_seed: u64,
 ) {
     let width_f = width as f32;
     let height_f = height as f32;
@@ -140,14 +143,17 @@ fn assign_cells_into(
         .enumerate()
         .for_each(|(row, row_assign)| {
             let y = row as f32 + 0.5;
-            for col in 0..width {
+            for (col, assignment) in row_assign.iter_mut().enumerate() {
                 let x = col as f32 + 0.5;
+                let warped_cell = warp_position([x, y], width_f, height_f, warp_seed);
                 let mut best_idx = 0usize;
                 let mut best_dist = f32::MAX;
                 for (seed_idx, seed) in seeds.iter().enumerate() {
+                    let warped_seed_position =
+                        warp_position(seed.position, width_f, height_f, warp_seed);
                     let dist = wrap_distance_sq(
-                        [x, y],
-                        seed.position,
+                        warped_cell,
+                        warped_seed_position,
                         width_f,
                         height_f,
                         wrap_x,
@@ -158,7 +164,7 @@ fn assign_cells_into(
                         best_idx = seed_idx;
                     }
                 }
-                row_assign[col] = best_idx;
+                *assignment = best_idx;
             }
         });
 }
@@ -238,13 +244,129 @@ fn classify_plate_types(accum: &[PlateAccum], target_fraction: f32) -> Vec<Plate
         remaining_area -= accum[idx].count;
     }
 
-    if !types.iter().any(|t| *t == PlateType::Oceanic) {
+    if !types.contains(&PlateType::Oceanic) {
         if let Some(&idx) = indices.last() {
             types[idx] = PlateType::Oceanic;
         }
     }
 
     types
+}
+
+fn smoothstep(value: f32) -> f32 {
+    value * value * (3.0 - 2.0 * value)
+}
+
+fn value_noise(
+    height: usize,
+    width: usize,
+    lattice_rows: usize,
+    lattice_cols: usize,
+    seed: u64,
+    wrap_x: bool,
+) -> Vec<f32> {
+    let rows = lattice_rows.max(2).min(height.max(2));
+    let cols = lattice_cols.max(2).min(width.max(2));
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let lattice: Vec<f32> = (0..rows * cols)
+        .map(|_| rng.gen::<f32>() * 2.0 - 1.0)
+        .collect();
+    let mut output = vec![0.0f32; height * width];
+
+    for row in 0..height {
+        let y = if height > 1 {
+            row as f32 * (rows - 1) as f32 / (height - 1) as f32
+        } else {
+            0.0
+        };
+        let y0 = (y.floor() as usize).min(rows - 1);
+        let y1 = (y0 + 1).min(rows - 1);
+        let fy = smoothstep(y - y0 as f32);
+        for col in 0..width {
+            let x = col as f32 * cols as f32 / width.max(1) as f32;
+            let x_floor = x.floor();
+            let x0 = (x_floor as usize).min(cols - 1);
+            let x1 = if x0 + 1 < cols {
+                x0 + 1
+            } else if wrap_x {
+                0
+            } else {
+                x0
+            };
+            let fx = smoothstep(x - x_floor);
+            let top = lattice[y0 * cols + x0] * (1.0 - fx) + lattice[y0 * cols + x1] * fx;
+            let bottom = lattice[y1 * cols + x0] * (1.0 - fx) + lattice[y1 * cols + x1] * fx;
+            output[row * width + col] = top * (1.0 - fy) + bottom * fy;
+        }
+    }
+    output
+}
+
+fn build_crust_provinces(
+    height: usize,
+    width: usize,
+    target_fraction: f32,
+    seed: u64,
+    wrap_x: bool,
+) -> (Vec<bool>, Vec<f32>, Vec<f32>) {
+    let total = height * width;
+    if total == 0 {
+        return (Vec::new(), Vec::new(), Vec::new());
+    }
+
+    let octave_specs = [
+        (4usize, 8usize, 0.52f32),
+        (8, 16, 0.27),
+        (16, 32, 0.14),
+        (32, 64, 0.07),
+    ];
+    let mut score = vec![0.0f32; total];
+    for (octave, (rows, cols, weight)) in octave_specs.iter().enumerate() {
+        let noise = value_noise(
+            height,
+            width,
+            *rows,
+            *cols,
+            seed ^ (octave as u64 + 1).wrapping_mul(0xD6E8_FEB8_6659_FD93),
+            wrap_x,
+        );
+        for (value, contribution) in score.iter_mut().zip(noise.iter()) {
+            *value += contribution * weight;
+        }
+    }
+
+    let land_count = if total == 1 {
+        usize::from(target_fraction >= 0.5)
+    } else {
+        ((target_fraction.clamp(0.0, 1.0) * total as f32).round() as usize).clamp(1, total - 1)
+    };
+    let mut ranked: Vec<usize> = (0..total).collect();
+    ranked.sort_by(|a, b| score[*b].partial_cmp(&score[*a]).unwrap_or(Ordering::Equal));
+    let mut continental = vec![false; total];
+    for &idx in ranked.iter().take(land_count) {
+        continental[idx] = true;
+    }
+
+    let (score_min, score_max) = score
+        .iter()
+        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), value| {
+            (low.min(*value), high.max(*value))
+        });
+    let score_range = (score_max - score_min).max(1e-6);
+    let mut thickness = vec![0.0f32; total];
+    let mut density = vec![0.0f32; total];
+    for idx in 0..total {
+        let normalized = ((score[idx] - score_min) / score_range).clamp(0.0, 1.0);
+        if continental[idx] {
+            thickness[idx] = 29.0 + normalized * 13.0;
+            density[idx] = 2.84 - normalized * 0.16;
+        } else {
+            thickness[idx] = 6.0 + normalized * 4.0;
+            density[idx] = 3.34 - normalized * 0.10;
+        }
+    }
+
+    (continental, thickness, density)
 }
 
 fn compute_plate_velocities(
@@ -257,7 +379,8 @@ fn compute_plate_velocities(
 ) -> Vec<[f32; 2]> {
     let mut velocities = vec![[0.0f32; 2]; seeds.len()];
     for (idx, seed) in seeds.iter().enumerate() {
-        let mut rng = ChaCha8Rng::seed_from_u64(base_seed ^ ((idx as u64 + 1) * 0x9E37_79B9_7F4A_7C15));
+        let mut rng =
+            ChaCha8Rng::seed_from_u64(base_seed ^ ((idx as u64 + 1) * 0x9E37_79B9_7F4A_7C15));
         let angle = rng.gen::<f32>() * 2.0 * PI;
         let magnitude = velocity_scale.max(1e-3) * (0.45 + rng.gen::<f32>() * 0.55);
         let random_component = [angle.cos() * magnitude, angle.sin() * magnitude];
@@ -295,6 +418,7 @@ fn compute_plate_velocities(
     velocities
 }
 
+#[allow(clippy::too_many_arguments)]
 fn smooth_cell_velocities(
     vel_u: &mut [f32],
     vel_v: &mut [f32],
@@ -349,9 +473,11 @@ fn smooth_cell_velocities(
                 } else {
                     idx
                 };
-                let lap_u = (scratch_u[left] + scratch_u[right] + scratch_u[up] + scratch_u[down]) * 0.25
+                let lap_u = (scratch_u[left] + scratch_u[right] + scratch_u[up] + scratch_u[down])
+                    * 0.25
                     - scratch_u[idx];
-                let lap_v = (scratch_v[left] + scratch_v[right] + scratch_v[up] + scratch_v[down]) * 0.25
+                let lap_v = (scratch_v[left] + scratch_v[right] + scratch_v[up] + scratch_v[down])
+                    * 0.25
                     - scratch_v[idx];
                 vel_u[idx] = scratch_u[idx] + smoothing * lap_u;
                 vel_v[idx] = scratch_v[idx] + smoothing * lap_v;
@@ -366,6 +492,20 @@ fn smooth_cell_velocities(
             vel_v.iter_mut().for_each(|v| *v -= avg_v as f32);
         }
     }
+}
+
+fn warp_position(position: [f32; 2], width: f32, height: f32, seed: u64) -> [f32; 2] {
+    let folded_seed = (seed ^ (seed >> 32)) & 0xffff;
+    let phase = folded_seed as f32 / u16::MAX as f32 * 2.0 * PI;
+    let u = position[0] / width.max(1.0) * 2.0 * PI;
+    let v = position[1] / height.max(1.0) * PI;
+    let dx = width
+        * (0.020 * (2.0 * v + 0.65 * (3.0 * u + phase).sin()).sin()
+            + 0.007 * (5.0 * v - 2.0 * u + phase).sin());
+    let dy = height
+        * (0.030 * (2.0 * u + 0.55 * (2.0 * v - phase).sin()).sin()
+            + 0.009 * (5.0 * u + v - phase).sin());
+    [(position[0] + dx).rem_euclid(width), position[1] + dy]
 }
 
 fn compute_subduction_probability(
@@ -389,6 +529,7 @@ fn compute_subduction_probability(
     (prob * (0.6 + 0.4 * thickness_factor)).clamp(0.0, 1.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn compute_boundary_fields(
     assignments: &[usize],
     plate_types: &[PlateType],
@@ -576,6 +717,86 @@ fn compute_boundary_fields(
     }
 }
 
+fn diffuse_field(
+    field: &mut [f32],
+    width: usize,
+    height: usize,
+    wrap_x: bool,
+    wrap_y: bool,
+    passes: usize,
+) {
+    let mut scratch = field.to_vec();
+    for _ in 0..passes {
+        scratch.copy_from_slice(field);
+        for row in 0..height {
+            for col in 0..width {
+                let idx = row * width + col;
+                let left = if col > 0 {
+                    idx - 1
+                } else if wrap_x {
+                    row * width + width - 1
+                } else {
+                    idx
+                };
+                let right = if col + 1 < width {
+                    idx + 1
+                } else if wrap_x {
+                    row * width
+                } else {
+                    idx
+                };
+                let north = if row > 0 {
+                    idx - width
+                } else if wrap_y {
+                    (height - 1) * width + col
+                } else {
+                    idx
+                };
+                let south = if row + 1 < height {
+                    idx + width
+                } else if wrap_y {
+                    col
+                } else {
+                    idx
+                };
+                let neighbor_mean =
+                    (scratch[left] + scratch[right] + scratch[north] + scratch[south]) * 0.25;
+                field[idx] = scratch[idx] * 0.3 + neighbor_mean * 0.7;
+            }
+        }
+    }
+}
+
+fn condition_boundary_fields(
+    boundary: &mut BoundaryData,
+    width: usize,
+    height: usize,
+    wrap_x: bool,
+    wrap_y: bool,
+    seed: u64,
+) {
+    let segmentation = value_noise(height, width, 12, 24, seed ^ 0x3C6E_F372_FE94_F82B, wrap_x);
+    for field in [
+        &mut boundary.convergence,
+        &mut boundary.divergence,
+        &mut boundary.shear,
+        &mut boundary.subduction,
+    ] {
+        for (value, segment) in field.iter_mut().zip(segmentation.iter()) {
+            let normalized = ((*segment + 1.0) * 0.5).clamp(0.0, 1.0);
+            let activation = ((normalized - 0.38) / 0.62).clamp(0.0, 1.0);
+            let along_strike = 1.65 * smoothstep(activation);
+            *value *= along_strike;
+        }
+        diffuse_field(field, width, height, wrap_x, wrap_y, 12);
+    }
+
+    boundary.convergence_sum = boundary.convergence.iter().map(|value| *value as f64).sum();
+    boundary.divergence_sum = boundary.divergence.iter().map(|value| *value as f64).sum();
+    boundary.shear_sum = boundary.shear.iter().map(|value| *value as f64).sum();
+    boundary.subduction_sum = boundary.subduction.iter().map(|value| *value as f64).sum();
+}
+
 fn build_hotspot_map(
     shear: &[f32],
     convergence: &[f32],
@@ -631,6 +852,13 @@ fn build_hotspot_map(
 }
 
 #[no_mangle]
+/// Generate plate assignments and instantaneous boundary fields.
+///
+/// # Safety
+///
+/// Every output pointer must reference an aligned writable buffer of the
+/// length implied by `height` and `width`. Output buffers must not alias one
+/// another. `stats_out` may be null; all field pointers must be valid.
 pub unsafe extern "C" fn tectonics_run(
     height: i32,
     width: i32,
@@ -681,7 +909,15 @@ pub unsafe extern "C" fn tectonics_run(
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xA17F_98C3_5D21_2F4B);
 
     for _ in 0..lloyd_iters {
-        assign_cells_into(&seeds, &mut assignments, height, width, wrap_x, wrap_y);
+        assign_cells_into(
+            &seeds,
+            &mut assignments,
+            height,
+            width,
+            wrap_x,
+            wrap_y,
+            seed,
+        );
         recentre_seeds(
             &mut seeds,
             &assignments,
@@ -693,7 +929,15 @@ pub unsafe extern "C" fn tectonics_run(
         );
     }
 
-    assign_cells_into(&seeds, &mut assignments, height, width, wrap_x, wrap_y);
+    assign_cells_into(
+        &seeds,
+        &mut assignments,
+        height,
+        width,
+        wrap_x,
+        wrap_y,
+        seed,
+    );
     let accum = recentre_seeds(
         &mut seeds,
         &assignments,
@@ -710,23 +954,29 @@ pub unsafe extern "C" fn tectonics_run(
         seed.plate_type = *plate_type;
     }
 
-    let thickness: Vec<f32> = plate_types
+    let plate_thickness: Vec<f32> = plate_types
         .iter()
-        .map(|t| if *t == PlateType::Continental { 35.0 } else { 8.0 })
+        .map(|t| {
+            if *t == PlateType::Continental {
+                35.0
+            } else {
+                8.0
+            }
+        })
         .collect();
-    let density: Vec<f32> = plate_types
+    let plate_density: Vec<f32> = plate_types
         .iter()
-        .map(|t| if *t == PlateType::Continental { 2.8 } else { 3.3 })
+        .map(|t| {
+            if *t == PlateType::Continental {
+                2.8
+            } else {
+                3.3
+            }
+        })
         .collect();
 
-    let plate_velocities = compute_plate_velocities(
-        &seeds,
-        &counts,
-        velocity_scale,
-        drift_bias,
-        seed,
-        height,
-    );
+    let plate_velocities =
+        compute_plate_velocities(&seeds, &counts, velocity_scale, drift_bias, seed, height);
 
     let mut cell_vel_u = vec![0.0f32; total];
     let mut cell_vel_v = vec![0.0f32; total];
@@ -746,11 +996,11 @@ pub unsafe extern "C" fn tectonics_run(
         dt,
     );
 
-    let boundary = compute_boundary_fields(
+    let mut boundary = compute_boundary_fields(
         &assignments,
         &plate_types,
-        &thickness,
-        &density,
+        &plate_thickness,
+        &plate_density,
         &cell_vel_u,
         &cell_vel_v,
         width,
@@ -759,6 +1009,10 @@ pub unsafe extern "C" fn tectonics_run(
         wrap_y,
         subduction_bias,
     );
+    condition_boundary_fields(&mut boundary, width, height, wrap_x, wrap_y, seed);
+
+    let (continental_crust, crust_thickness, crust_density) =
+        build_crust_provinces(height, width, continental_fraction_target, seed, wrap_x);
 
     let (hotspot, hotspot_mean, hotspot_count) = build_hotspot_map(
         &boundary.shear,
@@ -775,13 +1029,9 @@ pub unsafe extern "C" fn tectonics_run(
         .for_each(|(idx, chunk)| {
             let plate = assignments[idx];
             chunk[0] = plate as f32;
-            chunk[1] = if plate_types[plate] == PlateType::Continental {
-                1.0
-            } else {
-                0.0
-            };
-            chunk[2] = thickness[plate];
-            chunk[3] = density[plate];
+            chunk[1] = if continental_crust[idx] { 1.0 } else { 0.0 };
+            chunk[2] = crust_thickness[idx];
+            chunk[3] = crust_density[idx];
             chunk[4] = cell_vel_u[idx];
             chunk[5] = cell_vel_v[idx];
         });
@@ -812,14 +1062,13 @@ pub unsafe extern "C" fn tectonics_run(
         0.0
     };
 
-    let continental_cells: f64 = assignments
+    let continental_cells: f64 = continental_crust
         .iter()
-        .map(|&plate| if plate_types[plate] == PlateType::Continental { 1.0 } else { 0.0 })
+        .map(|&is_continental| if is_continental { 1.0 } else { 0.0 })
         .sum();
     let continental_fraction = continental_cells / total_f64;
 
-    let boundary_total =
-        boundary.convergence_sum + boundary.divergence_sum + boundary.shear_sum;
+    let boundary_total = boundary.convergence_sum + boundary.divergence_sum + boundary.shear_sum;
     let boundary_metric_mean = if total > 0 {
         boundary_total / total_f64
     } else {
@@ -845,5 +1094,72 @@ pub unsafe extern "C" fn tectonics_run(
             subduction_mean,
             hotspot_count,
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crust_provinces_are_deterministic_and_match_target_fraction() {
+        let height = 32;
+        let width = 64;
+        let first = build_crust_provinces(height, width, 0.35, 1234, true);
+        let second = build_crust_provinces(height, width, 0.35, 1234, true);
+
+        assert_eq!(first, second);
+        let land_count = first.0.iter().filter(|&&value| value).count();
+        assert_eq!(
+            land_count,
+            (0.35 * (height * width) as f32).round() as usize
+        );
+        assert!(first.1.iter().all(|value| (6.0..=42.0).contains(value)));
+        assert!(first.2.iter().all(|value| (2.67..=3.35).contains(value)));
+    }
+
+    #[test]
+    fn crust_provinces_do_not_copy_plate_boundaries() {
+        let height = 24;
+        let width = 48;
+        let assignments: Vec<usize> = (0..height * width).map(|idx| idx % 2).collect();
+        let (continental, _, _) = build_crust_provinces(height, width, 0.4, 9876, true);
+
+        let continental_on_each_plate = [0usize, 1usize].map(|plate| {
+            continental
+                .iter()
+                .zip(assignments.iter())
+                .filter(|(is_land, owner)| **is_land && **owner == plate)
+                .count()
+        });
+        assert!(continental_on_each_plate.iter().all(|&count| count > 0));
+    }
+
+    #[test]
+    fn plate_warp_is_periodic_and_curves_interior_coordinates() {
+        let width = 512.0;
+        let height = 256.0;
+        let seed = 42;
+        let seam_a = warp_position([0.0, 100.0], width, height, seed);
+        let seam_b = warp_position([width, 100.0], width, height, seed);
+        let interior = [180.0, 90.0];
+        let warped = warp_position(interior, width, height, seed);
+
+        assert!((seam_a[0] - seam_b[0]).abs() < 1e-4);
+        assert!((seam_a[1] - seam_b[1]).abs() < 1e-4);
+        assert!((warped[0] - interior[0]).abs() > 0.5 || (warped[1] - interior[1]).abs() > 0.5);
+    }
+
+    #[test]
+    fn boundary_diffusion_spreads_without_losing_signal() {
+        let mut field = vec![0.0f32; 9 * 9];
+        field[4 * 9 + 4] = 1.0;
+        diffuse_field(&mut field, 9, 9, true, true, 3);
+
+        let sum: f32 = field.iter().sum();
+        let nonzero = field.iter().filter(|&&value| value > 0.0).count();
+        assert!((sum - 1.0).abs() < 1e-5);
+        assert!(nonzero > 5);
+        assert!(field[4 * 9 + 4] < 1.0);
     }
 }

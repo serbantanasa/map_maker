@@ -55,9 +55,6 @@ def test_majority_river_cells_drain_to_ocean() -> None:
                 return False
 
     total = int(rivers.sum())
-    draining = sum(
-        drains(int(y), int(x))
-        for y, x in zip(*np.where(rivers), strict=False)
-    )
+    draining = sum(drains(int(y), int(x)) for y, x in zip(*np.where(rivers), strict=False))
     assert total > 0
     assert draining / total >= 0.5

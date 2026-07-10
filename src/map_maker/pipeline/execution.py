@@ -7,8 +7,7 @@ import json
 import time
 from contextlib import contextmanager
 from graphlib import TopologicalSorter
-from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Iterable, Iterator, Mapping
 
 import numpy as np
 
@@ -27,7 +26,10 @@ def _serialize_for_hash(data: Any) -> Any:
     if isinstance(data, (str, int, float, bool)) or data is None:
         return data
     if isinstance(data, Mapping):
-        return {str(k): _serialize_for_hash(v) for k, v in sorted(data.items(), key=lambda item: str(item[0]))}
+        return {
+            str(k): _serialize_for_hash(v)
+            for k, v in sorted(data.items(), key=lambda item: str(item[0]))
+        }
     if isinstance(data, Iterable) and not isinstance(data, (bytes, bytearray)):
         return [_serialize_for_hash(item) for item in data]
     return repr(data)
@@ -133,11 +135,19 @@ class ExecutionEngine:
     def _dependency_graph(self, stages: Iterable[str]) -> Dict[str, set[str]]:
         descriptors = registry().descriptors()
         graph: Dict[str, set[str]] = {}
-        for stage_name in stages:
+
+        def add_stage(stage_name: str) -> None:
+            if stage_name in graph:
+                return
             if stage_name not in descriptors:
                 raise KeyError(f"Stage '{stage_name}' not registered")
             descriptor = descriptors[stage_name]
             graph[stage_name] = set(descriptor.inputs)
+            for dependency in descriptor.inputs:
+                add_stage(dependency)
+
+        for stage_name in stages:
+            add_stage(stage_name)
         return graph
 
     def _topological_order(self, stages: Iterable[str]) -> list[str]:
@@ -147,7 +157,7 @@ class ExecutionEngine:
             order = list(sorter.static_order())
         except Exception as exc:  # pragma: no cover - TopologicalSorter raises CycleError
             raise ValueError(f"Invalid stage graph: {exc}") from exc
-        return [stage for stage in order if stage in graph]
+        return order
 
     def _compute_cache_key(
         self,
@@ -158,11 +168,14 @@ class ExecutionEngine:
         payload = {
             "stage": descriptor.name,
             "version": descriptor.version,
+            "rng_seed": self._context.config.rng_seed,
             "config": _serialize_for_hash(stage_config),
             "topology": {
                 "type": self._context.config.topology,
                 "shape": self._context.topology.shape,
-                "resolutions": [level.to_dict() for level in self._context.config.resolution_set.levels],
+                "resolutions": [
+                    level.to_dict() for level in self._context.config.resolution_set.levels
+                ],
             },
             "deps": {
                 name: {
@@ -181,59 +194,60 @@ class ExecutionEngine:
         order = self._topological_order(selected)
         results: Dict[str, StageResult] = {}
 
-        for stage_name in order:
-            descriptor = descriptors[stage_name]
-            dependencies = {name: results[name] for name in descriptor.inputs}
-            stage_config = self._context.config.stage_config(stage_name)
-            cache_key = self._compute_cache_key(descriptor, stage_config, dependencies)
-            cache_dir = self._context.cache_manager.cache_dir(stage_name, cache_key)
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            self._context.set_current_stage(stage_name)
-            self._logger.log_stage_start(stage_name, cache_key)
+        try:
+            for stage_name in order:
+                descriptor = descriptors[stage_name]
+                dependencies = {name: results[name] for name in descriptor.inputs}
+                stage_config = self._context.config.stage_config(stage_name)
+                cache_key = self._compute_cache_key(descriptor, stage_config, dependencies)
+                cache_dir = self._context.cache_manager.cache_dir(stage_name, cache_key)
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                self._context.set_current_stage(stage_name)
+                self._logger.log_stage_start(stage_name, cache_key)
 
-            cached = self._context.cache_manager.load(stage_name, cache_key)
-            if cached:
-                cached.set_cache_key(cache_key)
-                self._dataset_writer.hydrate_from_cache(cached, self._arena)
+                cached = self._context.cache_manager.load(stage_name, cache_key)
+                if cached:
+                    cached.set_cache_key(cache_key)
+                    self._dataset_writer.hydrate_from_cache(cached, self._arena)
+                    if self._visuals:
+                        if descriptor.visualizer:
+                            self._visuals.emit_custom(cached, descriptor.visualizer)
+                        else:
+                            self._visuals.emit(cached)
+                    self._logger.log_stage_end(cached)
+                    results[stage_name] = cached
+                    self._context.set_current_stage(None)
+                    continue
+
+                start_ns = time.perf_counter_ns()
+                start_cpu = time.process_time_ns()
+                output = descriptor.callable(self._context, dependencies, stage_config)
+                result = StageResult.from_output(stage_name, descriptor.inputs, output)
+                result.set_cache_key(cache_key)
+                self._dataset_writer.persist(result, cache_dir)
+                end_ns = time.perf_counter_ns()
+                end_cpu = time.process_time_ns()
+                memory_bytes = self._arena.stats()["bytes_allocated"]
+                stats = StageStats(
+                    start_ns=start_ns,
+                    end_ns=end_ns,
+                    duration_ns=end_ns - start_ns,
+                    cpu_time_ns=end_cpu - start_cpu,
+                    memory_bytes=memory_bytes,
+                    cache_hit=False,
+                )
+                result.record_stats(stats)
+                self._context.cache_manager.store(result)
                 if self._visuals:
                     if descriptor.visualizer:
-                        self._visuals.emit_custom(cached, descriptor.visualizer)
+                        self._visuals.emit_custom(result, descriptor.visualizer)
                     else:
-                        self._visuals.emit(cached)
-                self._logger.log_stage_end(cached)
-                results[stage_name] = cached
-                self._context.set_current_stage(None)
-                continue
-
-            start_ns = time.perf_counter_ns()
-            start_cpu = time.process_time_ns()
-            output = descriptor.callable(self._context, dependencies, stage_config)
-            result = StageResult.from_output(stage_name, descriptor.inputs, output)
-            result.set_cache_key(cache_key)
-            self._dataset_writer.persist(result, cache_dir)
-            end_ns = time.perf_counter_ns()
-            end_cpu = time.process_time_ns()
-            memory_bytes = self._arena.stats()["bytes_allocated"]
-            stats = StageStats(
-                start_ns=start_ns,
-                end_ns=end_ns,
-                duration_ns=end_ns - start_ns,
-                cpu_time_ns=end_cpu - start_cpu,
-                memory_bytes=memory_bytes,
-                cache_hit=False,
-            )
-            result.record_stats(stats)
-            self._context.cache_manager.store(result)
-            if self._visuals:
-                if descriptor.visualizer:
-                    self._visuals.emit_custom(result, descriptor.visualizer)
-                else:
-                    self._visuals.emit(result)
-            self._logger.log_stage_end(result)
-            results[stage_name] = result
+                        self._visuals.emit(result)
+                self._logger.log_stage_end(result)
+                results[stage_name] = result
+        finally:
             self._context.set_current_stage(None)
-
-        self._logger.close()
+            self._logger.close()
         return results
 
 

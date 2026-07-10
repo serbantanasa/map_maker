@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional
 
 
 @dataclass
@@ -137,7 +137,9 @@ class StageResult:
             "metadata": self.metadata,
             "cache_key": self.cache_key,
             "stats": self.stats.to_dict(),
-            "artifacts": [record.to_manifest(base_dir) for record in self.artifact_records.values()],
+            "artifacts": [
+                record.to_manifest(base_dir) for record in self.artifact_records.values()
+            ],
         }
 
 

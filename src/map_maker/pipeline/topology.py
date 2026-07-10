@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Iterable, Tuple
+from typing import Tuple
 
 import numpy as np
 
@@ -41,7 +41,9 @@ class Topology:
         self.kind = kind
 
         self._cell_area = compute_cell_areas(kind, grid.height, grid.width)
-        self._neighbor_indices, self._neighbor_weights = compute_neighbors(kind, grid.height, grid.width)
+        self._neighbor_indices, self._neighbor_weights = compute_neighbors(
+            kind, grid.height, grid.width
+        )
 
         self._wrap_rows = kind == "torus"
         self._wrap_cols = True
@@ -50,7 +52,9 @@ class Topology:
         self._xyz = self._compute_xyz(kind)
 
     @staticmethod
-    def _compute_lon_lat(kind: TopologyKind, height: int, width: int) -> tuple[np.ndarray, np.ndarray]:
+    def _compute_lon_lat(
+        kind: TopologyKind, height: int, width: int
+    ) -> tuple[np.ndarray, np.ndarray]:
         j = (np.arange(width, dtype=np.float64) + 0.5) / width
         i = (np.arange(height, dtype=np.float64) + 0.5) / height
         lon = (j - 0.5) * (2.0 * math.pi)

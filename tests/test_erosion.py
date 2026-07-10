@@ -70,7 +70,12 @@ def test_erosion_outputs(tmp_path: Path):
 
     diagnostics_record = erosion_result.artifact_records["ErosionDiagnostics"].value
     assert isinstance(diagnostics_record, pa.Table)
-    assert set(diagnostics_record.column_names) == {"step", "mean_elevation", "mass_removed", "mass_deposited"}
+    assert set(diagnostics_record.column_names) == {
+        "step",
+        "mean_elevation",
+        "mass_removed",
+        "mass_deposited",
+    }
 
     metadata = erosion_result.artifact_records["ErosionMetadata"].value
     assert isinstance(metadata, dict)
@@ -90,7 +95,12 @@ def test_erosion_outputs(tmp_path: Path):
 
 def test_erosion_determinism(tmp_path: Path):
     overrides = {
-        "erosion": {"erosion_steps": 5, "dt": 0.7, "stream_power_k": 0.018, "sediment_capacity": 0.028}
+        "erosion": {
+            "erosion_steps": 5,
+            "dt": 0.7,
+            "stream_power_k": 0.018,
+            "sediment_capacity": 0.028,
+        }
     }
     config1 = _make_config(tmp_path, "erosion-det-a", overrides=overrides)
     config2 = _make_config(tmp_path, "erosion-det-b", overrides=overrides)

@@ -4,6 +4,7 @@
 # Bytecode
 __pycache__/
 *.py[cod]
+*.egg-info/
 
 # Test and type caches
 .pytest_cache/
@@ -13,10 +14,13 @@ __pycache__/
 .DS_Store
 
 # Native build artifacts
+/target/
 src/map_maker/pipeline/native/**/target/
 src/map_maker/pipeline/native/**/Cargo.lock
 
 # Generated artifacts
+/build/
+/dist/
 out/
 cache/
 logs/

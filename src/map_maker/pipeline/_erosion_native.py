@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any, Dict, Tuple
 
 import numpy as np
 import pyarrow as pa
 from cffi import FFI
+
+from .._native import native_library_path
 
 _CDEF = """
 typedef struct {
@@ -68,45 +66,6 @@ void erosion_free_diagnostics(IterDiagnosticArray array);
 """
 
 
-def _library_name() -> str:
-    if sys.platform.startswith("win"):
-        return "erosion_native.dll"
-    if sys.platform == "darwin":
-        return "liberosion_native.dylib"
-    return "liberosion_native.so"
-
-
-def _crate_dir() -> Path:
-    return Path(__file__).resolve().parent / "native" / "erosion"
-
-
-def _library_path() -> Path:
-    return _crate_dir() / "target" / "release" / _library_name()
-
-
-def _needs_rebuild(library_path: Path, crate_dir: Path) -> bool:
-    if not library_path.exists():
-        return True
-    lib_mtime = library_path.stat().st_mtime
-    candidates = [crate_dir / "Cargo.toml"]
-    candidates.extend(crate_dir.rglob("*.rs"))
-    return any(path.stat().st_mtime > lib_mtime for path in candidates if path.exists())
-
-
-def _build_library() -> Path:
-    crate = _crate_dir()
-    library = _library_path()
-    if _needs_rebuild(library, crate):
-        env = {**os.environ}
-        subprocess.run(
-            ["cargo", "build", "--release"],
-            cwd=str(crate),
-            check=True,
-            env=env,
-        )
-    return library
-
-
 def _require_float32(array: np.ndarray, *, name: str) -> np.ndarray:
     arr = np.array(array, copy=False)
     if arr.dtype != np.float32:
@@ -125,7 +84,7 @@ def _require_write_array(array: np.ndarray, *, name: str) -> np.ndarray:
 
 _ffi = FFI()
 _ffi.cdef(_CDEF)
-_lib = _ffi.dlopen(str(_build_library()))
+_lib = _ffi.dlopen(str(native_library_path("erosion_native")))
 
 
 def _diagnostics_to_arrow(diag_struct: Any, *, free_after: bool = True) -> pa.Table:
@@ -142,12 +101,14 @@ def _diagnostics_to_arrow(diag_struct: Any, *, free_after: bool = True) -> pa.Ta
             }
         )
     buffer = _ffi.buffer(diag_struct.data, length * _ffi.sizeof("IterDiagnostic"))
-    dtype = np.dtype([
-        ("step", np.int32),
-        ("mean_elevation", np.float32),
-        ("mass_removed", np.float32),
-        ("mass_deposited", np.float32),
-    ])
+    dtype = np.dtype(
+        [
+            ("step", np.int32),
+            ("mean_elevation", np.float32),
+            ("mass_removed", np.float32),
+            ("mass_deposited", np.float32),
+        ]
+    )
     diagnostics = np.frombuffer(buffer, dtype=dtype, count=length).copy()
     if free_after:
         _lib.erosion_free_diagnostics(diag_struct)
@@ -191,7 +152,9 @@ def run_erosion_kernels(
         raise ValueError(f"plate_field must be 3D (H, W, C); got {plate_arr.shape}")
     expected_grid = (int(height), int(width))
     if tuple(int(dim) for dim in plate_arr.shape[:2]) != expected_grid:
-        raise ValueError(f"plate_field expected leading shape {expected_grid}, got {plate_arr.shape}")
+        raise ValueError(
+            f"plate_field expected leading shape {expected_grid}, got {plate_arr.shape}"
+        )
 
     def _require_grid(arr: np.ndarray, name: str) -> np.ndarray:
         arr32 = _require_float32(arr, name=name)
@@ -229,14 +192,24 @@ def run_erosion_kernels(
         int(plate_arr.shape[2]),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", plate_arr, require_writable=False)),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", crust_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", isostasy_arr, require_writable=False)),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", isostasy_arr, require_writable=False)
+        ),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", uplift_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", subsidence_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", compression_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", extension_arr, require_writable=False)),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", subsidence_arr, require_writable=False)
+        ),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", compression_arr, require_writable=False)
+        ),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", extension_arr, require_writable=False)
+        ),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", shear_arr, require_writable=False)),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", coastal_arr, require_writable=False)),
-        _ffi.cast("const float*", _ffi.from_buffer("float[]", lithosphere_arr, require_writable=False)),
+        _ffi.cast(
+            "const float*", _ffi.from_buffer("float[]", lithosphere_arr, require_writable=False)
+        ),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", ocean_arr, require_writable=False)),
         _ffi.cast("const float*", _ffi.from_buffer("float[]", hotspot_arr, require_writable=False)),
         _ffi.cast("float*", _ffi.from_buffer("float[]", elevation_arr)),

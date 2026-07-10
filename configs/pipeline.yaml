@@ -1,0 +1,21 @@
+topology: sphere
+resolutions:
+  - width: 512
+    height: 256
+rng_seed: 42
+run_id: world-42-512x256
+output_dir: out
+cache_dir: out/cache
+log_dir: out/logs
+stage_overrides:
+  tectonics:
+    num_plates: 24
+    continental_fraction: 0.35
+    lloyd_iterations: 4
+    time_steps: 32
+    time_step: 1.0
+  world_age:
+    world_age: 4.1
+  erosion:
+    steps: 12
+    dt: 0.8

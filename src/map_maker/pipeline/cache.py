@@ -57,4 +57,3 @@ class CacheManager:
         manifest_path = directory / "manifest.json"
         manifest = stage_result.to_manifest(directory)
         manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf8")
-

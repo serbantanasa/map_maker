@@ -6,14 +6,16 @@ from dataclasses import dataclass
 import hashlib
 import threading
 import uuid
-from typing import Any, Iterable, Optional, Tuple
+from typing import Any, Tuple
 
 import numpy as np
 
 DEFAULT_ALIGNMENT = 64
 
 
-def _aligned_empty(shape: Tuple[int, ...], dtype: np.dtype, alignment: int) -> tuple[np.ndarray, np.ndarray]:
+def _aligned_empty(
+    shape: Tuple[int, ...], dtype: np.dtype, alignment: int
+) -> tuple[np.ndarray, np.ndarray]:
     """Allocate an aligned ndarray and return both the view and owning buffer."""
     dtype = np.dtype(dtype)
     size = int(np.prod(shape, dtype=np.int64)) * dtype.itemsize
@@ -47,17 +49,23 @@ class MemoryArena:
         self._lock = threading.Lock()
         self._bytes_allocated = 0
 
-    def allocate_grid(self, name: str, shape: Tuple[int, int], dtype: np.dtype = np.float32) -> "GridHandle":
+    def allocate_grid(
+        self, name: str, shape: Tuple[int, int], dtype: np.dtype = np.float32
+    ) -> "GridHandle":
         if len(shape) != 2:
             raise ValueError("Grid allocations must be 2D")
         return self._allocate(name=name, shape=shape, dtype=dtype, handle_cls=GridHandle)
 
-    def allocate_array(self, name: str, shape: Tuple[int, ...], dtype: np.dtype = np.float32) -> "ArrayHandle":
+    def allocate_array(
+        self, name: str, shape: Tuple[int, ...], dtype: np.dtype = np.float32
+    ) -> "ArrayHandle":
         if len(shape) == 0:
             raise ValueError("Array allocations must have positive rank")
         return self._allocate(name=name, shape=shape, dtype=dtype, handle_cls=ArrayHandle)
 
-    def allocate_vector(self, name: str, length: int, dtype: np.dtype = np.float32) -> "VectorHandle":
+    def allocate_vector(
+        self, name: str, length: int, dtype: np.dtype = np.float32
+    ) -> "VectorHandle":
         return self._allocate(name=name, shape=(length,), dtype=dtype, handle_cls=VectorHandle)
 
     def _allocate(

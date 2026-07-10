@@ -5,12 +5,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 import math
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional
 
 import numpy as np
 from PIL import Image
 
 from .models import ArtifactRecord, StageResult
+
+if TYPE_CHECKING:
+    from .registry import StageVisualizer
 
 
 @dataclass(frozen=True)
@@ -43,14 +46,21 @@ class VisualManager:
             artifacts=list(stage_result.artifact_records.values()),
         )
 
-    def emit(self, stage_result: StageResult, default_artifact: Optional[str] = None) -> list[VisualizationResult]:
+    def emit(
+        self, stage_result: StageResult, default_artifact: Optional[str] = None
+    ) -> list[VisualizationResult]:
         request = self.make_request(stage_result)
         artifacts = request.artifacts
         if not artifacts:
             return []
         results: list[VisualizationResult] = []
         chosen = (
-            [next((artifact for artifact in artifacts if artifact.name == default_artifact), artifacts[0])]
+            [
+                next(
+                    (artifact for artifact in artifacts if artifact.name == default_artifact),
+                    artifacts[0],
+                )
+            ]
             if default_artifact
             else [artifacts[0]]
         )
