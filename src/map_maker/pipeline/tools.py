@@ -43,7 +43,9 @@ def _normalize(array: np.ndarray) -> np.ndarray:
     return (normalized * 255.0).astype(np.uint8)
 
 
-def _topology_visualizer(stage_result, request: VisualizationRequest) -> Optional[VisualizationResult]:
+def _topology_visualizer(
+    stage_result, request: VisualizationRequest
+) -> Optional[VisualizationResult]:
     lon_record = stage_result.artifact_records.get("longitude")
     lat_record = stage_result.artifact_records.get("latitude")
     xyz_record = stage_result.artifact_records.get("xyz_coords")
@@ -58,7 +60,7 @@ def _topology_visualizer(stage_result, request: VisualizationRequest) -> Optiona
     lat_png = (lat_img * 255.0).astype(np.uint8)
 
     phase = 0.6 * np.pi  # ~30% offset
-    checker = (((np.sin(4 * lon + phase) > 0) ^ (np.sin(4 * lat + phase) > 0)).astype(np.uint8) * 255)
+    checker = ((np.sin(4 * lon + phase) > 0) ^ (np.sin(4 * lat + phase) > 0)).astype(np.uint8) * 255
 
     results: list[VisualizationResult] = []
     lon_path = request.output_dir / "lon_gradient.png"
@@ -92,7 +94,9 @@ def _register_topology_stage() -> str:
     if stage_name in reg:
         return stage_name
 
-    @stage(stage_name, outputs=("xyz_coords", "longitude", "latitude"), visualizer=_topology_visualizer)
+    @stage(
+        stage_name, outputs=("xyz_coords", "longitude", "latitude"), visualizer=_topology_visualizer
+    )
     def topology_stage(context, deps, config):
         topo = context.topology
         return {
@@ -234,7 +238,9 @@ def main(args: Iterable[str] | None = None) -> int:
     parser.add_argument("--cache-dir", type=Path, default=Path("cache"))
     parser.add_argument("--log-dir", type=Path, default=Path("logs"))
     parser.add_argument("--run-id", type=str, default=None)
-    parser.add_argument("--skip-visuals", action="store_true", help="Disable PNG generation (for debugging).")
+    parser.add_argument(
+        "--skip-visuals", action="store_true", help="Disable PNG generation (for debugging)."
+    )
     parser.add_argument("--tectonics-plates", type=int, default=24)
     parser.add_argument("--tectonics-continental-fraction", type=float, default=0.35)
     parser.add_argument("--tectonics-lloyd", type=int, default=4)

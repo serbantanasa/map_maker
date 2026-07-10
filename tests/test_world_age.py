@@ -66,12 +66,20 @@ def test_world_age_outputs_and_metadata(tmp_path: Path):
     crust = np.array(world_age_res.artifact_records["CrustThickness"].value.array(), copy=False)
     offset = np.array(world_age_res.artifact_records["IsostaticOffset"].value.array(), copy=False)
     uplift = np.array(world_age_res.artifact_records["UpliftRate"].value.array(), copy=False)
-    subsidence = np.array(world_age_res.artifact_records["SubsidenceRate"].value.array(), copy=False)
-    compression = np.array(world_age_res.artifact_records["TectonicCompression"].value.array(), copy=False)
-    extension = np.array(world_age_res.artifact_records["TectonicExtension"].value.array(), copy=False)
+    subsidence = np.array(
+        world_age_res.artifact_records["SubsidenceRate"].value.array(), copy=False
+    )
+    compression = np.array(
+        world_age_res.artifact_records["TectonicCompression"].value.array(), copy=False
+    )
+    extension = np.array(
+        world_age_res.artifact_records["TectonicExtension"].value.array(), copy=False
+    )
     shear = np.array(world_age_res.artifact_records["ShearMagnitude"].value.array(), copy=False)
     coastal = np.array(world_age_res.artifact_records["CoastalExposure"].value.array(), copy=False)
-    lithosphere = np.array(world_age_res.artifact_records["LithosphereStiffness"].value.array(), copy=False)
+    lithosphere = np.array(
+        world_age_res.artifact_records["LithosphereStiffness"].value.array(), copy=False
+    )
     ocean_mask = np.array(world_age_res.artifact_records["BaseOceanMask"].value.array(), copy=False)
 
     assert crust.shape == (64, 128)
@@ -141,8 +149,12 @@ def test_world_age_determinism(tmp_path: Path):
     res1 = engine1.run(["tectonics", "world_age"])
     res2 = engine2.run(["tectonics", "world_age"])
 
-    crust1 = np.array(res1["world_age"].artifact_records["CrustThickness"].value.array(), copy=False)
-    crust2 = np.array(res2["world_age"].artifact_records["CrustThickness"].value.array(), copy=False)
+    crust1 = np.array(
+        res1["world_age"].artifact_records["CrustThickness"].value.array(), copy=False
+    )
+    crust2 = np.array(
+        res2["world_age"].artifact_records["CrustThickness"].value.array(), copy=False
+    )
     uplift1 = np.array(res1["world_age"].artifact_records["UpliftRate"].value.array(), copy=False)
     uplift2 = np.array(res2["world_age"].artifact_records["UpliftRate"].value.array(), copy=False)
     assert np.allclose(crust1, crust2)
@@ -195,7 +207,9 @@ def test_world_age_age_dependence(tmp_path: Path):
         },
     }
 
-    young_config = _make_config(tmp_path, "world-age-young", rng_seed=4242, overrides=young_overrides)
+    young_config = _make_config(
+        tmp_path, "world-age-young", rng_seed=4242, overrides=young_overrides
+    )
     old_config = _make_config(tmp_path, "world-age-old", rng_seed=4242, overrides=old_overrides)
 
     young_engine = ExecutionEngine(young_config)
@@ -204,15 +218,25 @@ def test_world_age_age_dependence(tmp_path: Path):
     young_results = young_engine.run(["tectonics", "world_age"])
     old_results = old_engine.run(["tectonics", "world_age"])
 
-    plate = np.array(young_results["tectonics"].artifact_records["PlateField"].value.array(), copy=False)
+    plate = np.array(
+        young_results["tectonics"].artifact_records["PlateField"].value.array(), copy=False
+    )
     oceanic_mask = plate[..., 1] < 0.5
 
-    crust_young = np.array(young_results["world_age"].artifact_records["CrustThickness"].value.array(), copy=False)
-    crust_old = np.array(old_results["world_age"].artifact_records["CrustThickness"].value.array(), copy=False)
+    crust_young = np.array(
+        young_results["world_age"].artifact_records["CrustThickness"].value.array(), copy=False
+    )
+    crust_old = np.array(
+        old_results["world_age"].artifact_records["CrustThickness"].value.array(), copy=False
+    )
     assert crust_old[oceanic_mask].mean() < crust_young[oceanic_mask].mean()
 
-    coastal_young = np.array(young_results["world_age"].artifact_records["CoastalExposure"].value.array(), copy=False)
-    coastal_old = np.array(old_results["world_age"].artifact_records["CoastalExposure"].value.array(), copy=False)
+    coastal_young = np.array(
+        young_results["world_age"].artifact_records["CoastalExposure"].value.array(), copy=False
+    )
+    coastal_old = np.array(
+        old_results["world_age"].artifact_records["CoastalExposure"].value.array(), copy=False
+    )
     assert coastal_young.shape == coastal_old.shape
 
     events_young = young_results["world_age"].artifact_records["HotspotEvents"].value

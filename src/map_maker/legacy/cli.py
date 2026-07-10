@@ -5,6 +5,7 @@ Command-line entry point for map generation."""
 from __future__ import annotations
 
 import argparse
+from collections.abc import Sequence
 import json
 import time
 from pathlib import Path
@@ -27,7 +28,7 @@ def load_config(path: str | None) -> Dict[str, Any]:
     return data
 
 
-def main() -> None:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser("map_maker")
     parser.add_argument("--width", type=int, default=512)
     parser.add_argument("--height", type=int, default=512)
@@ -59,7 +60,7 @@ def main() -> None:
         default=None,
         help="Override number of tectonic plates (default uses config or 12)",
     )
-    args = parser.parse_args()
+    args = parser.parse_args(list(argv) if argv is not None else None)
 
     config = load_config(args.config)
 
@@ -113,9 +114,8 @@ def main() -> None:
     if args.tectonics_out:
         extras.append(f"tectonics sidecar {Path(args.tectonics_out)}")
     extras_str = f" ({', '.join(extras)})" if extras else ""
-    print(
-        f"Wrote {out_path} and {out_path.with_suffix('.json')}{extras_str} in {elapsed:.2f}s"
-    )
+    print(f"Wrote {out_path} and {out_path.with_suffix('.json')}{extras_str} in {elapsed:.2f}s")
+    return 0
 
 
 if __name__ == "__main__":

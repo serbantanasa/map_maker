@@ -1,0 +1,18 @@
+format_version: 1
+base_config: pipeline.yaml
+output_dir: ../out/validation
+seeds:
+  - 42
+  - 101
+  - 202
+  - 303
+  - 404
+  - 505
+provisional_thresholds:
+  min_land_fraction: 0.20
+  max_land_fraction: 0.55
+  min_land_components: 2
+  max_largest_landmass_fraction: 0.98
+  min_mixed_plate_fraction: 0.40
+  max_longitude_seam_ratio: 2.0
+  max_plate_boundary_relief_ratio: 3.0

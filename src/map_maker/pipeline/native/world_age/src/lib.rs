@@ -7,6 +7,11 @@ use std::slice;
 
 const DEFAULT_PLATE_COMPONENTS: usize = 6;
 
+#[no_mangle]
+pub extern "C" fn world_age_native_abi_version() -> u32 {
+    1
+}
+
 #[repr(C)]
 pub struct HotspotEvent {
     pub row: i32,
@@ -42,7 +47,7 @@ pub struct WorldAgeStats {
 }
 
 fn clamp_unit(value: f32) -> f32 {
-    value.max(0.0).min(1.0)
+    value.clamp(0.0, 1.0)
 }
 
 fn compute_decay_factor(world_age: f32, half_life: f32) -> f32 {
@@ -77,6 +82,12 @@ unsafe fn slice_from_raw_mut<'a>(ptr: *mut f32, len: usize) -> &'a mut [f32] {
 }
 
 #[no_mangle]
+/// Release hotspot events allocated by [`world_age_run`].
+///
+/// # Safety
+///
+/// `array` must be returned by a successful `world_age_run` call and must not
+/// have been released previously.
 pub unsafe extern "C" fn world_age_free_events(array: HotspotEventArray) {
     if !array.data.is_null() && array.len > 0 {
         let _ = Vec::from_raw_parts(array.data, array.len, array.len);
@@ -84,6 +95,13 @@ pub unsafe extern "C" fn world_age_free_events(array: HotspotEventArray) {
 }
 
 #[no_mangle]
+/// Compute age-dependent crustal and tectonic fields.
+///
+/// # Safety
+///
+/// Every non-null input and output pointer must reference an aligned buffer of
+/// the length implied by `height`, `width`, and `plate_components`. Output
+/// buffers must be writable and must not alias inputs or one another.
 pub unsafe extern "C" fn world_age_run(
     height: i32,
     width: i32,
@@ -184,7 +202,7 @@ pub unsafe extern "C" fn world_age_run(
     let mut sum_thickness_sq = 0.0f64;
     let mut sum_velocity = 0.0f64;
 
-    for idx in 0..total {
+    for (idx, adjusted) in adjusted_thickness.iter_mut().enumerate() {
         let base_index = idx * plate_components_usize;
         let is_continental = plate_field[base_index + 1] >= 0.5;
         let base_thickness = plate_field[base_index + 2].max(0.1);
@@ -201,7 +219,7 @@ pub unsafe extern "C" fn world_age_run(
             (base_thickness * (oceanic_emplacement - heat_bias)).max(1.0)
         };
 
-        adjusted_thickness[idx] = thickness;
+        *adjusted = thickness;
         sum_thickness += thickness as f64;
         sum_thickness_sq += (thickness as f64) * (thickness as f64);
         sum_velocity += speed;
@@ -270,8 +288,12 @@ pub unsafe extern "C" fn world_age_run(
             max_shear_val = shear_val;
         }
 
-        let uplift = conv * (1.0 + 0.65 * thermal_drive) + subd * (0.35 + 0.25 * heat_scale) + hotspot_strength * 0.25 * heat_scale;
-        let subsidence = div * (0.6 + 0.4 * thermal_drive) + deviation.max(0.0) * 0.18 * (1.0 - thermal_drive) + hotspot_strength * 0.05;
+        let uplift = conv * (1.0 + 0.65 * thermal_drive)
+            + subd * (0.35 + 0.25 * heat_scale)
+            + hotspot_strength * 0.25 * heat_scale;
+        let subsidence = div * (0.6 + 0.4 * thermal_drive)
+            + deviation.max(0.0) * 0.18 * (1.0 - thermal_drive)
+            + hotspot_strength * 0.05;
 
         uplift_out[idx] = uplift;
         subsidence_out[idx] = subsidence;
@@ -317,7 +339,11 @@ pub unsafe extern "C" fn world_age_run(
     let width_usize = width as usize;
     let height_usize = height as usize;
 
-    let norm_shear = if max_shear_val <= 1e-6 { 1.0 } else { max_shear_val };
+    let norm_shear = if max_shear_val <= 1e-6 {
+        1.0
+    } else {
+        max_shear_val
+    };
     let mut shear_blurred = vec![0.0f32; total];
     for r in 0..height_usize {
         for c in 0..width_usize {
@@ -339,7 +365,11 @@ pub unsafe extern "C" fn world_age_run(
                 }
             }
             let idx = r * width_usize + c;
-            shear_blurred[idx] = if count > 0.0 { acc / count } else { shear_raw[idx] };
+            shear_blurred[idx] = if count > 0.0 {
+                acc / count
+            } else {
+                shear_raw[idx]
+            };
         }
     }
     for idx in 0..total {
@@ -359,7 +389,7 @@ pub unsafe extern "C" fn world_age_run(
             for (dr, dc) in neighbor_offsets {
                 let nr = r as i32 + dr;
                 let nc = c as i32 + dc;
-                if nr < 0 || nr >= height as i32 || nc < 0 || nc >= width as i32 {
+                if nr < 0 || nr >= height || nc < 0 || nc >= width {
                     continue;
                 }
                 let nidx = (nr as usize) * width_usize + (nc as usize);
@@ -377,9 +407,7 @@ pub unsafe extern "C" fn world_age_run(
     }
 
     if coastline_queue.is_empty() {
-        for idx in 0..total {
-            coastal_exposure_out[idx] = base_ocean_mask_out[idx];
-        }
+        coastal_exposure_out[..total].copy_from_slice(&base_ocean_mask_out[..total]);
     } else {
         while let Some(idx) = coastline_queue.pop_front() {
             let r = idx / width_usize;
@@ -388,7 +416,7 @@ pub unsafe extern "C" fn world_age_run(
             for (dr, dc) in neighbor_offsets {
                 let nr = r as i32 + dr;
                 let nc = c as i32 + dc;
-                if nr < 0 || nr >= height as i32 || nc < 0 || nc >= width as i32 {
+                if nr < 0 || nr >= height || nc < 0 || nc >= width {
                     continue;
                 }
                 let nidx = (nr as usize) * width_usize + (nc as usize);

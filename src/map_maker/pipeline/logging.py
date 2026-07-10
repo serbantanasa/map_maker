@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .models import StageResult, StageStats
+from .models import StageResult
 
 
 class RunLogger:

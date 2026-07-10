@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import wraps
-from typing import Any, Callable, Dict, Iterable, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterable, Mapping, Optional
 
 from .models import StageOutput, StageResult
 
-StageCallable = Callable[["PipelineContext", Mapping[str, StageResult], Mapping[str, Any]], StageOutput]
+if TYPE_CHECKING:
+    from .execution import PipelineContext
+
+StageCallable = Callable[
+    ["PipelineContext", Mapping[str, StageResult], Mapping[str, Any]], StageOutput
+]
 StageVisualizer = Callable[
     [StageResult, "VisualizationRequest"],
     Optional["VisualizationResult" | Iterable["VisualizationResult"]],

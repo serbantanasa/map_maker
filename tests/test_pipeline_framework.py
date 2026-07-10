@@ -123,6 +123,91 @@ def test_execution_engine_caches_and_logs(tmp_path: Path):
     assert summary1 == summary2
 
 
+def test_requesting_terminal_stage_runs_dependency_closure(tmp_path: Path):
+    calls: list[str] = []
+
+    @stage("foundation")
+    def foundation(context, deps, config):
+        calls.append("foundation")
+        return {"value": 2}
+
+    @stage("middle", inputs=("foundation",))
+    def middle(context, deps, config):
+        calls.append("middle")
+        value = deps["foundation"].artifact_records["value"].value
+        return {"value": value + 3}
+
+    @stage("terminal", inputs=("middle",))
+    def terminal(context, deps, config):
+        calls.append("terminal")
+        value = deps["middle"].artifact_records["value"].value
+        return {"value": value * 2}
+
+    config = _make_config(tmp_path, "dependency-closure")
+    results = ExecutionEngine(config).run(["terminal"])
+
+    assert calls == ["foundation", "middle", "terminal"]
+    assert list(results) == ["foundation", "middle", "terminal"]
+    assert results["terminal"].artifact_records["value"].value == 10
+
+
+def test_native_fingerprint_change_invalidates_stage_cache(tmp_path: Path, monkeypatch):
+    import map_maker.pipeline.execution as execution
+
+    calls = 0
+
+    @stage("native_sensitive")
+    def native_sensitive(context, deps, config):
+        nonlocal calls
+        calls += 1
+        return {"value": calls}
+
+    monkeypatch.setattr(
+        execution,
+        "simulation_native_fingerprints",
+        lambda: {"kernel": {"abi_version": 1, "sha256": "a" * 64}},
+    )
+    first = ExecutionEngine(_make_config(tmp_path, "fingerprint-a")).run(["native_sensitive"])
+    monkeypatch.setattr(
+        execution,
+        "simulation_native_fingerprints",
+        lambda: {"kernel": {"abi_version": 1, "sha256": "b" * 64}},
+    )
+    second = ExecutionEngine(_make_config(tmp_path, "fingerprint-b")).run(["native_sensitive"])
+
+    assert calls == 2
+    assert first["native_sensitive"].cache_key != second["native_sensitive"].cache_key
+    assert not second["native_sensitive"].stats.cache_hit
+
+
+def test_corrupt_cache_artifact_is_recomputed(tmp_path: Path):
+    calls = 0
+
+    @stage("corruptible")
+    def corruptible(context, deps, config):
+        nonlocal calls
+        calls += 1
+        grid = context.arena.allocate_grid("corruptible_grid", context.topology.shape)
+        grid.mutable_view().fill(7.0)
+        return {"grid": grid}
+
+    first_config = _make_config(tmp_path, "corrupt-first")
+    first = ExecutionEngine(first_config).run(["corruptible"])["corruptible"]
+    cache_path = first.artifact_records["grid"].cache_path
+    native_grid = first_config.resolution_set.native
+    np.save(cache_path, np.zeros((native_grid.height, native_grid.width), dtype=np.float32))
+
+    second_config = _make_config(tmp_path, "corrupt-second")
+    second = ExecutionEngine(second_config).run(["corruptible"])["corruptible"]
+    restored = np.asarray(second.artifact_records["grid"].value.array())
+
+    assert calls == 2
+    assert second.stats is not None and not second.stats.cache_hit
+    assert np.all(restored == 7.0)
+    events = [json.loads(line) for line in second_config.run_log_path().read_text().splitlines()]
+    assert any(event.get("type") == "cache_corruption" for event in events)
+
+
 def test_cycle_detection(tmp_path: Path):
     reg = registry()
     reg.clear()

@@ -16,6 +16,10 @@ from .memory import ArrayHandle, GridHandle, MemoryArena, VectorHandle
 from .models import ArtifactRecord, StageResult
 
 
+class CacheCorruptionError(RuntimeError):
+    """Raised when a cached artifact does not match its recorded checksum."""
+
+
 def _hash_bytes(data: bytes) -> str:
     hasher = hashlib.blake2b()
     hasher.update(data)
@@ -69,7 +73,9 @@ class DatasetWriter:
             return self._write_json(stage_dir, cache_dir, name, value)
         raise TypeError(f"Unsupported artifact type for '{name}': {type(value)!r}")
 
-    def _write_grid(self, stage_dir: Path, cache_dir: Path, name: str, handle: GridHandle) -> ArtifactRecord:
+    def _write_grid(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: GridHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -88,7 +94,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_vector(self, stage_dir: Path, cache_dir: Path, name: str, handle: VectorHandle) -> ArtifactRecord:
+    def _write_vector(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: VectorHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -107,7 +115,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_array(self, stage_dir: Path, cache_dir: Path, name: str, handle: ArrayHandle) -> ArtifactRecord:
+    def _write_array(
+        self, stage_dir: Path, cache_dir: Path, name: str, handle: ArrayHandle
+    ) -> ArtifactRecord:
         handle.seal()
         array = np.array(handle.array(), copy=False)
         filename = f"{name}.npy"
@@ -126,7 +136,9 @@ class DatasetWriter:
             value=handle,
         )
 
-    def _write_ndarray(self, stage_dir: Path, cache_dir: Path, name: str, array: np.ndarray) -> ArtifactRecord:
+    def _write_ndarray(
+        self, stage_dir: Path, cache_dir: Path, name: str, array: np.ndarray
+    ) -> ArtifactRecord:
         filename = f"{name}.npy"
         cache_path = cache_dir / filename
         np.save(cache_path, array, allow_pickle=False)
@@ -144,7 +156,9 @@ class DatasetWriter:
             value=array,
         )
 
-    def _write_arrow_table(self, stage_dir: Path, cache_dir: Path, name: str, table: pa.Table) -> ArtifactRecord:
+    def _write_arrow_table(
+        self, stage_dir: Path, cache_dir: Path, name: str, table: pa.Table
+    ) -> ArtifactRecord:
         filename = f"{name}.arrow"
         cache_path = cache_dir / filename
         feather.write_feather(table, cache_path)
@@ -163,7 +177,9 @@ class DatasetWriter:
             value=table,
         )
 
-    def _write_json(self, stage_dir: Path, cache_dir: Path, name: str, value: Any) -> ArtifactRecord:
+    def _write_json(
+        self, stage_dir: Path, cache_dir: Path, name: str, value: Any
+    ) -> ArtifactRecord:
         filename = f"{name}.json"
         cache_path = cache_dir / filename
         encoded = json.dumps(value, sort_keys=True).encode("utf8")
@@ -183,7 +199,15 @@ class DatasetWriter:
 
     def _load_value(self, record: ArtifactRecord, arena: MemoryArena) -> Any:
         if record.kind in {"grid", "vector", "array", "ndarray"}:
+            if not record.dataset_path.is_file():
+                raise CacheCorruptionError(f"Cached artifact is missing: {record.dataset_path}")
             array = np.load(record.dataset_path, allow_pickle=False)
+            checksum = _hash_bytes(array.tobytes())
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
             shape = tuple(record.metadata.get("shape", array.shape))
             if record.kind == "grid" or (record.kind == "ndarray" and len(shape) == 2):
                 grid_shape = tuple(int(dim) for dim in shape)[:2]
@@ -210,8 +234,22 @@ class DatasetWriter:
                 return handle
             return array.reshape(shape)
         if record.kind == "json":
-            return json.loads(record.dataset_path.read_text(encoding="utf8"))
+            encoded = record.dataset_path.read_bytes()
+            checksum = _hash_bytes(encoded)
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
+            return json.loads(encoded.decode("utf8"))
         if record.kind == "arrow":
+            encoded = record.dataset_path.read_bytes()
+            checksum = _hash_bytes(encoded)
+            if checksum != record.checksum:
+                raise CacheCorruptionError(
+                    f"Checksum mismatch for cached artifact {record.name}: "
+                    f"expected {record.checksum}, got {checksum}"
+                )
             table = feather.read_table(record.dataset_path)
             return table
         return np.load(record.dataset_path, allow_pickle=False)

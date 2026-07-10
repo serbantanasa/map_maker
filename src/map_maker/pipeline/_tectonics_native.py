@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any, Dict
 
 import numpy as np
 from cffi import FFI
+
+from .._native import native_library_info, native_library_path
 
 PLATE_FIELD_COMPONENTS = 6
 
@@ -54,47 +52,11 @@ void tectonics_run(
 """
 
 
-def _library_name() -> str:
-    if sys.platform.startswith("win"):
-        return "tectonics_native.dll"
-    if sys.platform == "darwin":
-        return "libtectonics_native.dylib"
-    return "libtectonics_native.so"
-
-
-def _crate_dir() -> Path:
-    return Path(__file__).resolve().parent / "native" / "tectonics"
-
-
-def _library_path() -> Path:
-    return _crate_dir() / "target" / "release" / _library_name()
-
-
-def _needs_rebuild(library_path: Path, crate_dir: Path) -> bool:
-    if not library_path.exists():
-        return True
-    lib_mtime = library_path.stat().st_mtime
-    candidates = [crate_dir / "Cargo.toml"]
-    candidates.extend(crate_dir.rglob("*.rs"))
-    return any(path.stat().st_mtime > lib_mtime for path in candidates if path.exists())
-
-
-def _build_library() -> Path:
-    crate = _crate_dir()
-    library = _library_path()
-    if _needs_rebuild(library, crate):
-        subprocess.run(
-            ["cargo", "build", "--release"],
-            cwd=str(crate),
-            check=True,
-            env={**os.environ},
-        )
-    return library
-
-
 _ffi = FFI()
 _ffi.cdef(_CDEF)
-_lib = _ffi.dlopen(str(_build_library()))
+native_library_info("tectonics_native")
+_lib = _ffi.dlopen(str(native_library_path("tectonics_native")))
+
 
 def _as_write_array(array: np.ndarray, *, name: str) -> np.ndarray:
     if array.dtype != np.float32:

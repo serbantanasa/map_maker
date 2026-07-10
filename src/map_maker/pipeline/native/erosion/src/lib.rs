@@ -3,6 +3,11 @@ use std::slice;
 
 const PLATE_COMPONENTS: usize = 6;
 
+#[no_mangle]
+pub extern "C" fn erosion_native_abi_version() -> u32 {
+    1
+}
+
 #[repr(C)]
 pub struct IterDiagnostic {
     pub step: i32,
@@ -30,7 +35,7 @@ pub struct ErosionStats {
 }
 
 fn clamp_unit(value: f32) -> f32 {
-    value.max(0.0).min(1.0)
+    value.clamp(0.0, 1.0)
 }
 
 unsafe fn read_slice<'a>(ptr: *const f32, len: usize) -> &'a [f32] {
@@ -42,6 +47,12 @@ unsafe fn read_slice_mut<'a>(ptr: *mut f32, len: usize) -> &'a mut [f32] {
 }
 
 #[no_mangle]
+/// Release diagnostics allocated by [`erosion_run`].
+///
+/// # Safety
+///
+/// `array` must be returned by a successful `erosion_run` call and must not
+/// have been released previously.
 pub unsafe extern "C" fn erosion_free_diagnostics(array: IterDiagnosticArray) {
     if !array.data.is_null() && array.len > 0 {
         let _ = Vec::from_raw_parts(array.data, array.len, array.len);
@@ -49,6 +60,13 @@ pub unsafe extern "C" fn erosion_free_diagnostics(array: IterDiagnosticArray) {
 }
 
 #[no_mangle]
+/// Run the erosion kernel over caller-owned contiguous arrays.
+///
+/// # Safety
+///
+/// Every non-null input and output pointer must reference an aligned buffer of
+/// the length implied by `height`, `width`, and `plate_components`. Output
+/// buffers must be writable and must not alias inputs or one another.
 pub unsafe extern "C" fn erosion_run(
     height: i32,
     width: i32,
@@ -144,7 +162,8 @@ pub unsafe extern "C" fn erosion_run(
         let vel_u = plate_field[plate_idx + 4];
         let vel_v = plate_field[plate_idx + 5];
         let velocity_term = (vel_u * vel_u + vel_v * vel_v).sqrt() * 0.02;
-        elevation[idx] = isostasy[idx] + crust_term + litho_term + hotspot_influence[idx] * 0.08 + velocity_term;
+        elevation[idx] =
+            isostasy[idx] + crust_term + litho_term + hotspot_influence[idx] * 0.08 + velocity_term;
     }
     sediment.fill(0.0);
     incision.fill(0.0);
@@ -199,8 +218,10 @@ pub unsafe extern "C" fn erosion_run(
                 let dy = (south - north) * 0.5;
                 let slope = (dx * dx + dy * dy).sqrt();
 
-                let laplacian = (north * weight_n + south * weight_s + east * weight_e + west * weight_w - 4.0 * center)
-                    * 0.25;
+                let laplacian =
+                    (north * weight_n + south * weight_s + east * weight_e + west * weight_w
+                        - 4.0 * center)
+                        * 0.25;
 
                 let compression_factor = 1.0 + compression[idx] * 0.75;
                 let shear_factor = 1.0 + shear[idx] * 0.5;
@@ -217,7 +238,11 @@ pub unsafe extern "C" fn erosion_run(
                     * litho_factor
                     * dt;
 
-                let ocean_bias = if ocean_mask[idx] >= 0.5 { 1.0 + coastal[idx] * 0.5 } else { 1.0 };
+                let ocean_bias = if ocean_mask[idx] >= 0.5 {
+                    1.0 + coastal[idx] * 0.5
+                } else {
+                    1.0
+                };
                 let capacity = sediment_capacity * (1.0 + extension[idx] * 0.6) * ocean_bias;
 
                 let diffusive = (-laplacian).max(0.0) * 0.2 * dt;
@@ -252,7 +277,7 @@ pub unsafe extern "C" fn erosion_run(
         } as f32;
 
         diagnostics.push(IterDiagnostic {
-            step: step,
+            step,
             mean_elevation,
             mass_removed: removal_step as f32,
             mass_deposited: deposition_step as f32,

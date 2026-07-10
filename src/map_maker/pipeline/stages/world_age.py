@@ -25,10 +25,14 @@ class WorldAgeConfig:
             return cls()
         return cls(
             world_age=float(mapping.get("world_age", cls.world_age)),
-            thermal_decay_half_life=float(mapping.get("thermal_decay_half_life", cls.thermal_decay_half_life)),
+            thermal_decay_half_life=float(
+                mapping.get("thermal_decay_half_life", cls.thermal_decay_half_life)
+            ),
             hotspot_scale=float(mapping.get("hotspot_scale", cls.hotspot_scale)),
             isostasy_factor=float(mapping.get("isostasy_factor", cls.isostasy_factor)),
-            radiogenic_heat_scale=float(mapping.get("radiogenic_heat_scale", cls.radiogenic_heat_scale)),
+            radiogenic_heat_scale=float(
+                mapping.get("radiogenic_heat_scale", cls.radiogenic_heat_scale)
+            ),
         )
 
 
@@ -48,7 +52,9 @@ def _artifact_view(result, name: str) -> np.ndarray:
     return array
 
 
-def _log_world_age(context, metadata: Mapping[str, object], *, seed: int, config: WorldAgeConfig) -> None:
+def _log_world_age(
+    context, metadata: Mapping[str, object], *, seed: int, config: WorldAgeConfig
+) -> None:
     context.logger.log_event(
         {
             "type": "world_age_summary",
@@ -101,16 +107,36 @@ def world_age_stage(context, deps, config_mapping):
     shear_arr = _artifact_view(tectonics_result, "BoundaryShear")
     hotspot_arr = _artifact_view(tectonics_result, "HotspotMap")
 
-    crust_handle = context.arena.allocate_grid("world_age_crust_thickness", (height, width), dtype=np.float32)
-    isostasy_handle = context.arena.allocate_grid("world_age_isostatic_offset", (height, width), dtype=np.float32)
-    uplift_handle = context.arena.allocate_grid("world_age_uplift_rate", (height, width), dtype=np.float32)
-    subsidence_handle = context.arena.allocate_grid("world_age_subsidence_rate", (height, width), dtype=np.float32)
-    compression_handle = context.arena.allocate_grid("world_age_tectonic_compression", (height, width), dtype=np.float32)
-    extension_handle = context.arena.allocate_grid("world_age_tectonic_extension", (height, width), dtype=np.float32)
-    shear_handle = context.arena.allocate_grid("world_age_shear_magnitude", (height, width), dtype=np.float32)
-    coastal_handle = context.arena.allocate_grid("world_age_coastal_exposure", (height, width), dtype=np.float32)
-    lithosphere_handle = context.arena.allocate_grid("world_age_lithosphere_stiffness", (height, width), dtype=np.float32)
-    ocean_mask_handle = context.arena.allocate_grid("world_age_base_ocean_mask", (height, width), dtype=np.float32)
+    crust_handle = context.arena.allocate_grid(
+        "world_age_crust_thickness", (height, width), dtype=np.float32
+    )
+    isostasy_handle = context.arena.allocate_grid(
+        "world_age_isostatic_offset", (height, width), dtype=np.float32
+    )
+    uplift_handle = context.arena.allocate_grid(
+        "world_age_uplift_rate", (height, width), dtype=np.float32
+    )
+    subsidence_handle = context.arena.allocate_grid(
+        "world_age_subsidence_rate", (height, width), dtype=np.float32
+    )
+    compression_handle = context.arena.allocate_grid(
+        "world_age_tectonic_compression", (height, width), dtype=np.float32
+    )
+    extension_handle = context.arena.allocate_grid(
+        "world_age_tectonic_extension", (height, width), dtype=np.float32
+    )
+    shear_handle = context.arena.allocate_grid(
+        "world_age_shear_magnitude", (height, width), dtype=np.float32
+    )
+    coastal_handle = context.arena.allocate_grid(
+        "world_age_coastal_exposure", (height, width), dtype=np.float32
+    )
+    lithosphere_handle = context.arena.allocate_grid(
+        "world_age_lithosphere_stiffness", (height, width), dtype=np.float32
+    )
+    ocean_mask_handle = context.arena.allocate_grid(
+        "world_age_base_ocean_mask", (height, width), dtype=np.float32
+    )
 
     crust_view = crust_handle.mutable_view()
     isostasy_view = isostasy_handle.mutable_view()
