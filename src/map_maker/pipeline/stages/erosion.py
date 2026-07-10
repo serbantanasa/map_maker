@@ -9,6 +9,7 @@ import numpy as np
 import pyarrow as pa
 
 from .._erosion_native import run_erosion_kernels
+from ..cubed_sphere import CubedSphereGrid
 from ..registry import stage
 
 
@@ -134,6 +135,11 @@ def _log_erosion(context, metadata: Mapping[str, object]) -> None:
     version="v3",
 )
 def erosion_stage(context, deps, config_mapping):
+    if isinstance(context.topology, CubedSphereGrid):
+        raise NotImplementedError(
+            "erosion has not migrated to cubed_sphere; use world_age as the current "
+            "canonical pipeline endpoint"
+        )
     config = ErosionConfig.from_mapping(config_mapping)
     height, width = context.topology.shape
 

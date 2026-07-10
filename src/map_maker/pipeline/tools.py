@@ -117,6 +117,15 @@ def _register_tectonics_stage() -> str:
     return stage_name
 
 
+def _register_world_age_stage() -> str:
+    stage_name = "world_age"
+    if stage_name in registry():
+        return stage_name
+    from .stages import world_age  # noqa: F401
+
+    return stage_name
+
+
 def run_topology_visualizer(
     topology: str = "sphere",
     *,
@@ -230,7 +239,9 @@ def run_tectonics_visualizer(
 
 def main(args: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Produce pipeline stage visualization PNGs.")
-    parser.add_argument("--stage", choices=["topology", "tectonics"], default="topology")
+    parser.add_argument(
+        "--stage", choices=["topology", "tectonics", "world_age"], default="topology"
+    )
     parser.add_argument("--config", type=Path, default=None)
     parser.add_argument(
         "--topology", default="sphere", choices=["sphere", "cylinder", "torus", "cubed_sphere"]
@@ -280,14 +291,18 @@ def main(args: Iterable[str] | None = None) -> int:
         ]
         if invalid_controls:
             parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
-        stage_name = "geometry" if parsed.stage == "topology" else _register_tectonics_stage()
+        if parsed.stage == "topology":
+            stage_name = "geometry"
+        elif parsed.stage == "tectonics":
+            stage_name = _register_tectonics_stage()
+        else:
+            stage_name = _register_world_age_stage()
         started = time.perf_counter()
         ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run([stage_name])
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         visuals_dir = config.run_visual_dir() / stage_name
-        print(
-            f"{stage_name.title()} visuals written to {visuals_dir} (elapsed {elapsed_ms:.2f} ms)"
-        )
+        stage_label = stage_name.replace("_", " ").title()
+        print(f"{stage_label} visuals written to {visuals_dir} (elapsed {elapsed_ms:.2f} ms)")
         return 0
 
     invalid_controls = [
@@ -298,6 +313,8 @@ def main(args: Iterable[str] | None = None) -> int:
     if invalid_controls:
         parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
 
+    if parsed.stage == "world_age":
+        parser.error("--stage world_age requires --config")
     if parsed.stage == "topology":
         if parsed.topology == "cubed_sphere":
             from .cubed_sphere import run_cubed_sphere_diagnostic

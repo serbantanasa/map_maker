@@ -1,0 +1,23 @@
+topology: cubed_sphere
+resolutions:
+  - face_resolution: 128
+rng_seed: 42
+run_id: cubed-sphere-crust-state-42
+output_dir: out
+cache_dir: out/cache
+log_dir: out/logs
+stage_overrides:
+  tectonics:
+    num_plates: 24
+    continental_fraction: 0.35
+    lloyd_iterations: 4
+    velocity_scale: 1.0
+    drift_bias: 0.15
+    hotspot_density: 0.02
+    subduction_bias: 0.5
+  world_age:
+    world_age: 4.1
+    thermal_decay_half_life: 1.8
+    hotspot_scale: 0.9
+    isostasy_factor: 0.6
+    radiogenic_heat_scale: 1.0
