@@ -21,3 +21,9 @@ stage_overrides:
     hotspot_scale: 0.9
     isostasy_factor: 0.6
     radiogenic_heat_scale: 1.0
+  elevation:
+    collision_height_m: 5200.0
+    arc_height_m: 2800.0
+    ridge_height_m: 1800.0
+    trench_depth_m: 3600.0
+    rift_depth_m: 950.0

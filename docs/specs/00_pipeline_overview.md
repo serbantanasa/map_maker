@@ -32,7 +32,9 @@
 11. Mineral and energy systems.
 12. Selected-region refinement and map export.
 
-The current canonical cubed-sphere implementation reaches stage 4. The older
+The current canonical cubed-sphere implementation reaches stage 5 with a
+causal, pre-erosion bedrock surface and separate crustal, orogenic, basin, and
+relief-prior artifacts. The older
 rectangular compatibility path runs directly from world age into provisional
 erosion and final rendering; it is reference behavior, not the canonical stage
 order.
