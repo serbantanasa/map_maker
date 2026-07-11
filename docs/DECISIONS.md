@@ -1013,3 +1013,35 @@ Reuse the current Python stage registry, execution, caching, artifact, and
 visualization concepts while incrementally replacing the current tectonic and
 elevation kernels. Do not rewrite the full pipeline solely to make the project
 Rust-only.
+
+## Decision 021: Causal Pre-Erosion Elevation Components
+
+Status: approved, provisional
+
+Decision:
+Canonical elevation is generated before surface-process erosion as separate,
+inspectable crustal, orogenic, and basin components on the cubed sphere. The
+stage produces an initial bedrock surface and unresolved relief priors; it does
+not finalize sea level or claim eroded landform realism.
+
+Causality rule:
+Broad elevation derives from crust thickness, density, age, buoyancy, and
+subsidence. Localized tectonic relief derives from boundary regime, rate,
+polarity, strength, and angular distance from connected boundary segments.
+Geological province classes may condition those calculations but may not map
+directly to fixed elevations.
+
+Morphology rule:
+Collision belts, volcanic arcs, trenches, ridges, rifts, and transforms use
+distinct cross-strike profiles. Profiles cross cube-face seams through the
+canonical neighbor graph. Long structures receive coherent along-strike
+variation so they do not become uniform walls.
+
+Ownership rule:
+Rust owns graph propagation and component synthesis. Python owns configuration,
+persistence, diagnostics, and cartographic previews.
+
+Failure rule:
+Continental-sized flat plateaus, uniform boundary walls, cube-face seams,
+arbitrary class-to-height painting, and loss of inherited islands are hard
+failures.

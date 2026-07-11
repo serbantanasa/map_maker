@@ -6,6 +6,7 @@ from . import geometry  # noqa: F401
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
 from . import geology  # noqa: F401
+from . import elevation  # noqa: F401
 from . import erosion  # noqa: F401
 
 
@@ -19,6 +20,7 @@ def ensure_builtin_stages() -> None:
         "tectonics": tectonics,
         "world_age": world_age,
         "geology": geology,
+        "elevation": elevation,
         "erosion": erosion,
     }
     for stage_name, module in modules.items():

@@ -1,39 +1,113 @@
-# Stage 6 – Elevation Consolidation
+# Canonical Elevation And Orogenic Morphology
+
+## Status
+
+V1 implementation target. This stage creates pre-erosion bedrock elevation on
+the canonical cubed sphere. It does not finalize sea level, coastlines,
+drainage, sediment, or eroded landforms.
 
 ## Purpose
-- Convert erosion outputs into finalized multi-resolution elevation products and derived terrain metrics.
+
+Convert crustal state and geological process evidence into a continuous,
+seam-free initial topographic surface. The result must express broad crustal
+buoyancy, ocean-basin depth, sedimentary accommodation, and localized tectonic
+relief without turning geological labels into fixed elevation classes.
 
 ## Inputs
-- `ElevationRaw`, `SedimentDepth`, `BaseOceanMask`, `Topology`.
-- Config: `smoothing_kernel`, `shelf_depth`, `min_island_size`, `tile_size`, `enable_gpu`.
 
-## Steps (Rust SIMD w/ optional GPU kernels)
-1. **Finalize Sea Level**
-   - Adjust baseline via area-weighted binary search to ensure target ocean fraction (respecting sediment adjustments).
-   - Remove tiny islands below `min_island_size` using connected-component analysis on bit-packed masks.
-2. **Sediment & Bedrock Merge**
-   - Combine raw elevation with sediment depth; clamp bathymetry to non-negative values in place, using fused operations for cache efficiency.
-3. **Derived Metrics**
-   - Compute slope/aspect via gradient kernels (Sobel/Prewitt) implemented in Rust SIMD; GPU path uses Metal compute shader when enabled.
-   - Curvature and relief computed through windowed convolution with sliding tiles to keep cache hot.
-   - Hypsometric statistics derived via parallel histogram over elevation.
-4. **Multi-resolution Outputs**
-   - Downsample using area-weighted averaging (summed-area tables) to produce pyramid levels without re-reading from Python.
-   - Generate hillshade textures (vectorized lighting) and store as uint8 buffers.
-5. **Outputs**
-   - `Elevation` (arena-backed native grid + pyramid handles), `Slope`, `Aspect`, `Relief`, `Hillshade`.
+- Cubed-sphere geometry, cell areas, and reciprocal D4 neighbors.
+- Plate crust type, thickness, density, and motion.
+- Crust thickness, isostatic offset, uplift, subsidence, compression,
+  extension, shear, stiffness, and proto-ocean mask.
+- Crust age, rock strength, sediment accommodation, province confidence,
+  boundary regime, boundary confidence, and boundary segment identity.
+- A deterministic stage seed and versioned morphology parameters.
 
-## Performance
-- Rust SIMD + Rayon path target <1 s for 8 k grid; GPU hillshade optional for faster previews.
-- All computations tile-based to avoid thrashing caches; Python never touches raw buffers.
+## Scientific Model
 
-## Logging
-- Elevation min/max, quartiles.
-- Percentage land vs sea after cleanup.
-- Slope distribution summary, relief histogram, tile throughput (cells/sec).
+Elevation is the sum of independently inspectable causal components:
 
-## Testing
-- Sea-level adjustment achieves configured fraction.
-- Derived metrics match analytic results on test surfaces (plane, cone).
-- Multi-resolution downsampling conserves mean elevation.
-- CPU/GPU paths match within tolerance when both enabled.
+1. **Crustal buoyancy** supplies broad continental freeboard and age-dependent
+   ocean-basin depth from crust thickness, density, and isostatic state.
+2. **Basin subsidence** lowers extensional, sediment-accommodating, and old
+   oceanic crust without forcing all cells in a named basin to one height.
+3. **Orogenic morphology** localizes relief around active process corridors.
+   Collision, subduction, spreading, rifting, and transform regimes use
+   different cross-strike profiles.
+4. **Correlated structural variation** modulates relief coherently along and
+   across belts. It may not introduce cube-face seams or independent per-cell
+   noise.
+
+Geological province classes are evidence and modifiers. They may adjust
+strength, accommodation, confidence, and plausible morphology, but they are
+not elevation bins.
+
+## Boundary Morphology
+
+- Continental collision creates broad, high, asymmetric belts whose amplitude
+  follows compression and whose width responds to lithosphere strength.
+- Continental subduction creates a narrow oceanward trench and an inland
+  volcanic/magmatic arc. The oceanic and continental sides are identified from
+  crust state rather than arbitrary edge ordering.
+- Intra-oceanic subduction creates a trench plus a displaced island-arc ridge.
+- Spreading ridges create broad positive oceanic relief centered on the
+  boundary and age/depth gradients away from it.
+- Continental rifts create an axial depression with lower shoulders and
+  elevated roughness, not a mountain wall.
+- Transform boundaries create narrow, low-amplitude structural relief and may
+  orient later drainage, but do not receive collision-scale uplift.
+
+Boundary influence is propagated by angular distance over the canonical
+neighbor graph. Profiles therefore cross cube-face seams continuously and use
+physical angular widths rather than face-local pixel widths.
+
+## Outputs
+
+- `BedrockElevationM`: signed pre-erosion bedrock elevation relative to the
+  provisional zero datum.
+- `CrustalElevationM`: broad buoyancy and ocean-basin component.
+- `OrogenicElevationM`: collision, arc, ridge, rift-shoulder, and transform
+  contribution.
+- `BasinDepressionM`: positive magnitude subtracted for trenches, rifts, and
+  sediment-accommodating basins.
+- `TerrainReliefM`: unresolved local-relief prior for later refinement and
+  erosion; it is not added wholesale to cell elevation.
+- `ElevationConfidence`: confidence inherited from geological evidence and
+  proximity to constrained structures.
+- `ElevationMetadata`: parameters, component statistics, and model semantics.
+
+## Required Invariants
+
+- Every numeric output is finite and deterministic for identical inputs,
+  seed, software version, and configuration.
+- Reciprocal graph topology produces no cube-face discontinuity.
+- Proto-continental and proto-oceanic area classifications remain distinguishable
+  before final sea-level selection; isolated islands are not deleted here.
+- Collision uplift is statistically concentrated near collision corridors.
+- Subduction trenches occur on oceanic sides and arcs are displaced away from
+  the boundary rather than painted on top of the trench.
+- Stable continental interiors retain substantial elevation variation and may
+  contain basins; continental-sized flat plateaus are a hard visual failure.
+- Orogenic amplitude varies along long boundary segments; uniform walls are a
+  hard visual failure.
+- A geology class alone is insufficient to determine elevation.
+
+## Deferred Work
+
+- Geological-time integration of evolving elevation and sediment load.
+- Flexural/isostatic response to erosion, deposition, ice, and water loading.
+- Drainage-aware erosion, basin filling and overflow, sediment routing, and
+  coastal reworking.
+- Final sea-level solution, shoreline topology, and atlas cartography.
+- Conditional higher-resolution terrain realization and restriction checks.
+
+## Validation
+
+- Analytic synthetic cases for collision, subduction polarity, spreading,
+  rifting, and inactive boundaries.
+- Multi-seed global distributions for continental freeboard, ocean depth,
+  maximum relief, hypsometry, and boundary localization.
+- Seam checks over every cross-face neighbor edge.
+- Correlation checks between causal component fields and their source evidence.
+- Fixed truth-render gallery reviewed for plateaus, polygonal walls, concentric
+  halos, streaks, seam artifacts, and lost islands.

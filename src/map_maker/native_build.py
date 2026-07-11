@@ -9,6 +9,7 @@ from collections.abc import Sequence
 from ._native import library_filename, workspace_root
 
 NATIVE_LIBRARIES = (
+    "elevation_native",
     "erosion_native",
     "geology_native",
     "tectonics_native",
