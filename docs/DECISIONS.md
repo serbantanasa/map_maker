@@ -581,6 +581,18 @@ V1 non-goals:
 - ENSO-like internal variability.
 - Full atmospheric or oceanic general circulation.
 
+Implementation contract:
+- Climate consumes persisted monthly orbital forcing rather than recreating a
+  latitude-only insolation approximation.
+- Effective atmospheric orography is a persisted, smoothed land-surface field;
+  ocean bathymetry is not atmospheric elevation.
+- Horizontal wind is stored as global tangent XYZ vectors so cube-face edges do
+  not define local component discontinuities.
+- Moisture transport combines directed advection with unresolved synoptic mixing;
+  rate-limited orographic rainout must allow continental penetration.
+- The first pass writes pre-soil runoff potential only. It does not route rivers
+  or silently resolve depressions.
+
 ## Decision 013: Historical Source-To-Sink Coupling
 
 Status: approved, provisional

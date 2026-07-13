@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "src/map_maker/pipeline/native/climate",
     "src/map_maker/pipeline/native/elevation",
     "src/map_maker/pipeline/native/erosion",
     "src/map_maker/pipeline/native/geology",

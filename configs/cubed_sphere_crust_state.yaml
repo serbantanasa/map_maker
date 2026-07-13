@@ -42,3 +42,23 @@ stage_overrides:
     ridge_height_m: 1800.0
     trench_depth_m: 3600.0
     rift_depth_m: 950.0
+  climate:
+    spinup_years: 24
+    moisture_spinup_years: 3
+    moisture_steps_per_month_at_face_128: 16
+    greenhouse_offset_c: 0.0
+    land_albedo: 0.30
+    ocean_albedo: 0.28
+    olr_intercept_w_m2: 203.0
+    olr_slope_w_m2_c: 2.09
+    heat_transport_w_m2: 35.0
+    land_thermal_response: 0.22
+    ocean_thermal_response: 0.10
+    atmospheric_exchange: 0.16
+    lapse_rate_c_per_km: 6.5
+    wind_scale: 1.0
+    moisture_advection_fraction: 0.38
+    moisture_diffusion_fraction: 0.50
+    orographic_factor: 0.18
+    rain_shadow_factor: 0.70
+    runoff_base_fraction: 0.35
