@@ -24,17 +24,18 @@
 3. Age-conditioned crust state.
 4. Connected geological provinces and boundary segments.
 5. Initial elevation and tectonic morphology.
-6. Climate pass 1.
-7. Hydrology pass 1.
-8. Erosion and sedimentation.
-9. Hydrology pass 2.
-10. Soils and biomes.
-11. Mineral and energy systems.
-12. Selected-region refinement and map export.
+6. Planetary boundary conditions and monthly orbital forcing.
+7. Climate pass 1.
+8. Hydrology pass 1.
+9. Erosion and sedimentation.
+10. Hydrology pass 2.
+11. Soils and biomes.
+12. Mineral and energy systems.
+13. Selected-region refinement and map export.
 
-The current canonical cubed-sphere implementation reaches stage 5 with a
+The current canonical cubed-sphere implementation reaches stage 6 with a
 causal, pre-erosion bedrock surface and separate crustal, orogenic, basin, and
-relief-prior artifacts. The older
+relief-prior artifacts plus persisted monthly orbital forcing. The older
 rectangular compatibility path runs directly from world age into provisional
 erosion and final rendering; it is reference behavior, not the canonical stage
 order.

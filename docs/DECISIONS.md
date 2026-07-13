@@ -72,6 +72,16 @@ Derived outputs feed downstream stages:
 - Tide strength index.
 - Obliquity stability index.
 
+Implementation contract:
+- A year is represented by twelve equal-time climatological bins, not Gregorian
+  calendar months.
+- Insolation is daily-mean top-of-atmosphere shortwave forcing computed at each
+  bin midpoint from a Keplerian orbit.
+- Orbital period, perihelion day, and northern vernal equinox day are explicit
+  controls so the seasonal phase is reproducible.
+- Moon properties produce tide-strength and obliquity-stability indices in V1;
+  detailed tidal and long-term obliquity evolution remain future work.
+
 Non-goal:
 V1 does not simulate arbitrary exotic planets.
 

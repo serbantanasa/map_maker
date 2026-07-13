@@ -70,9 +70,9 @@ uv run map-maker generate --width 1024 --height 512 --seed 8675309
 Rerunning the same configuration reuses the stage cache. The current executable
 stack includes tectonics, crust/world-age fields, erosion/sedimentation, dataset
 persistence, diagnostics, and final cartography. The canonical cubed-sphere path
-now reaches connected geological provinces, boundary segments, and causal
-pre-erosion elevation/orogenic morphology. Explicit geological event history,
-spherical erosion, routed
+now reaches connected geological provinces, boundary segments, causal
+pre-erosion elevation/orogenic morphology, and monthly orbital forcing. Explicit
+geological event history, spherical erosion, routed
 hydrology, climate, soils, biomes, and regional refinement remain implementation
 milestones; the current output is a functional prototype rather than an
 atlas-grade world.
@@ -123,6 +123,9 @@ uv run map-maker-pipeline --stage geology --config configs/cubed_sphere_crust_st
 
 # Canonical pre-erosion bedrock elevation and orogenic morphology
 uv run map-maker-pipeline --stage elevation --config configs/cubed_sphere_crust_state.yaml
+
+# Canonical planetary boundary conditions and monthly orbital forcing
+uv run map-maker-pipeline --stage planet --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native
