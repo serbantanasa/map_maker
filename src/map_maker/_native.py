@@ -15,6 +15,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "elevation_native",
     "erosion_native",
     "geology_native",
+    "hydrology_native",
     "planet_native",
     "tectonics_native",
     "topology_native",

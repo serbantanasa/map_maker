@@ -72,10 +72,12 @@ stack includes tectonics, crust/world-age fields, erosion/sedimentation, dataset
 persistence, diagnostics, and final cartography. The canonical cubed-sphere path
 now reaches connected geological provinces, boundary segments, causal
 pre-erosion elevation/orogenic morphology, monthly orbital forcing, and seasonal
-climate/orographic precipitation. Explicit geological event history, spherical
-erosion, routed hydrology, soils, biomes, and regional refinement remain
-implementation milestones; the current output is a functional prototype rather
-than an atlas-grade world.
+climate/orographic precipitation. The first depression-aware hydrology pass now
+writes lakes, spill outlets, breaches, conservative drainage basins, monthly
+discharge, and vector river reaches. Explicit geological event history, spherical
+erosion and sediment feedback, hydrology pass 2, soils, biomes, and regional
+refinement remain implementation milestones; the current output is a functional
+prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -129,6 +131,9 @@ uv run map-maker-pipeline --stage planet --config configs/cubed_sphere_crust_sta
 
 # Canonical seasonal temperature, wind, precipitation, snow, and runoff potential
 uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_state.yaml
+
+# Canonical lakes, breaches, drainage graph, basins, and vector river reaches
+uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native
