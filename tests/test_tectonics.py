@@ -184,7 +184,7 @@ def test_cubed_sphere_tectonics_is_seam_free_tangent_and_connected(
     assert convergence.shape == grid.face_shape
     assert np.unique(plate[..., 0]).size == plate_count
     assert metadata["velocity_basis"] == "global_xyz_tangent"
-    assert metadata["kinematic_model"] == "spherical_angular_velocity_v1"
+    assert metadata["kinematic_model"] == "spherical_angular_velocity_v2"
 
     velocity = plate[..., 4:7]
     tangent_error = np.abs(np.sum(velocity * grid.xyz, axis=-1))

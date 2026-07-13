@@ -192,7 +192,7 @@ def _tectonics_visualizer(
         "HotspotMap",
         "TectonicsMetadata",
     ),
-    version="v5",
+    version="v6",
     native_libraries=("tectonics_native",),
     visualizer=_tectonics_visualizer,
 )
@@ -258,7 +258,7 @@ def tectonics_stage(context, deps, config_mapping):
         shear_view = scalar_views["shear"]
         subduction_view = scalar_views["subduction"]
         hotspot_view = scalar_views["hotspot"]
-        metadata["kinematic_model"] = "spherical_angular_velocity_v1"
+        metadata["kinematic_model"] = "spherical_angular_velocity_v2"
         metadata["velocity_basis"] = "global_xyz_tangent"
     else:
         height, width = context.topology.shape

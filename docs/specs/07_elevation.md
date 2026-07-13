@@ -19,6 +19,8 @@ relief without turning geological labels into fixed elevation classes.
 - Plate crust type, thickness, density, and motion.
 - Crust thickness, isostatic offset, uplift, subsidence, compression,
   extension, shear, stiffness, and proto-ocean mask.
+- Persisted spherical hotspot events. The noisy tectonic thermal-potential
+  raster is not interpreted directly as volcanic topography.
 - Crust age, rock strength, sediment accommodation, province confidence,
   boundary regime, boundary confidence, and boundary segment identity.
 - A deterministic stage seed and versioned morphology parameters.
@@ -56,10 +58,31 @@ not elevation bins.
   elevated roughness, not a mountain wall.
 - Transform boundaries create narrow, low-amplitude structural relief and may
   orient later drainage, but do not receive collision-scale uplift.
+- Hotspot events create isolated finite-width volcanic centers on their host
+  plates; event strength and plume proxy modulate amplitude.
 
 Boundary influence is propagated by angular distance over the canonical
 neighbor graph. Profiles therefore cross cube-face seams continuously and use
 physical angular widths rather than face-local pixel widths.
+
+### Corridor Realization
+
+The plate boundary graph is a causal skeleton, not the literal centerline of
+every resulting landform. V2 realizes each active boundary as a process
+corridor:
+
+- Low-amplitude, higher-frequency spherical warp terms bend long plate edges
+  without changing plate connectivity.
+- An independent, spatially correlated activity field strengthens and weakens
+  sections along a boundary while retaining a nonzero causal floor.
+- Collision, arc, ridge, trench, and rift profiles receive coherent lateral
+  offsets within their allowed corridors.
+- Angular distance and inherited activity are smoothed only within each plate
+  before profile evaluation to suppress D4 distance quantization without
+  leaking evidence across unrelated boundaries.
+
+This realization must produce connected regional systems rather than uniform
+walls or disconnected decorative mountain patches.
 
 ## Outputs
 
@@ -90,6 +113,9 @@ physical angular widths rather than face-local pixel widths.
   contain basins; continental-sized flat plateaus are a hard visual failure.
 - Orogenic amplitude varies along long boundary segments; uniform walls are a
   hard visual failure.
+- Exact boundary spines may not dominate their process-corridor flanks by an
+  unbounded ratio, and long active segments must retain measurable amplitude
+  variation.
 - A geology class alone is insufficient to determine elevation.
 
 ## Deferred Work

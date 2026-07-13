@@ -52,6 +52,24 @@ def _result_array(result, name: str) -> np.ndarray | None:
     return np.asarray(value.array() if hasattr(value, "array") else value)
 
 
+def _hotspot_event_grid(result, shape: tuple[int, int, int]) -> tuple[np.ndarray, int]:
+    grid = np.zeros(shape, dtype=np.float32)
+    record = result.artifact_records.get("HotspotEvents")
+    if record is None or record.value is None:
+        raise KeyError("Missing dependency artifact 'HotspotEvents'")
+    table = record.value
+    required = {"global_cell_id", "strength", "plume_factor"}
+    if not required.issubset(set(getattr(table, "column_names", ()))):
+        raise ValueError("HotspotEvents lacks canonical cubed-sphere event columns")
+    global_ids = np.asarray(table["global_cell_id"].to_numpy(), dtype=np.int64)
+    strengths = np.asarray(table["strength"].to_numpy(), dtype=np.float32)
+    plume = np.asarray(table["plume_factor"].to_numpy(), dtype=np.float32)
+    valid = (global_ids >= 0) & (global_ids < grid.size)
+    values = strengths[valid] * (0.65 + 0.35 * plume[valid])
+    np.maximum.at(grid.reshape(-1), global_ids[valid], values)
+    return grid, int(np.count_nonzero(valid))
+
+
 def _cube_net_rgb(faces: np.ndarray) -> np.ndarray:
     resolution = faces.shape[1]
     net = np.zeros((resolution * 3, resolution * 4, 3), dtype=np.uint8)
@@ -125,6 +143,32 @@ def _elevation_visualizer(
     morphology_path = request.output_dir / "orogenic_morphology.png"
     Image.fromarray(_cube_net_rgb(morphology_rgb), mode="RGB").save(morphology_path)
 
+    uplift_rgb = _palette(
+        orogenic,
+        (
+            (0.0, (3, 12, 10)),
+            (250.0, (32, 88, 62)),
+            (1000.0, (181, 125, 55)),
+            (3000.0, (224, 211, 174)),
+            (5500.0, (255, 255, 252)),
+        ),
+    )
+    uplift_path = request.output_dir / "orogenic_elevation.png"
+    Image.fromarray(_cube_net_rgb(uplift_rgb), mode="RGB").save(uplift_path)
+
+    depression_rgb = _palette(
+        basin,
+        (
+            (0.0, (4, 9, 16)),
+            (250.0, (17, 68, 91)),
+            (1000.0, (31, 124, 158)),
+            (2500.0, (112, 188, 203)),
+            (5000.0, (218, 241, 239)),
+        ),
+    )
+    depression_path = request.output_dir / "basin_depression.png"
+    Image.fromarray(_cube_net_rgb(depression_rgb), mode="RGB").save(depression_path)
+
     return [
         VisualizationResult(elevation_path, "BedrockElevationM", {"scale": "fixed_meters"}),
         VisualizationResult(
@@ -132,6 +176,8 @@ def _elevation_visualizer(
             "OrogenicElevationM",
             {"red": "orogenic", "green": "relief", "blue": "basin"},
         ),
+        VisualizationResult(uplift_path, "OrogenicElevationM", {"scale": "fixed_meters"}),
+        VisualizationResult(depression_path, "BasinDepressionM", {"scale": "fixed_meters"}),
     ]
 
 
@@ -147,7 +193,7 @@ def _elevation_visualizer(
         "ElevationConfidence",
         "ElevationMetadata",
     ),
-    version="v1",
+    version="v2",
     native_libraries=("elevation_native",),
     visualizer=_elevation_visualizer,
 )
@@ -182,6 +228,7 @@ def elevation_stage(context, deps, config_mapping: Mapping[str, object]):
     world_age = deps["world_age"]
     geology = deps["geology"]
     seed = int(context.rng("elevation").integers(0, 2**63 - 1))
+    hotspot_events, hotspot_event_count = _hotspot_event_grid(world_age, shape)
 
     with context.timed("elevation_kernel"):
         metadata = run_cubed_sphere_elevation(
@@ -199,7 +246,7 @@ def elevation_stage(context, deps, config_mapping: Mapping[str, object]):
             shear=_artifact_array(world_age, "ShearMagnitude"),
             stiffness=_artifact_array(world_age, "LithosphereStiffness"),
             proto_ocean=_artifact_array(world_age, "BaseOceanMask"),
-            hotspot=_artifact_array(tectonics, "HotspotMap"),
+            hotspot=hotspot_events,
             crust_age=_artifact_array(geology, "CrustAgeGa"),
             rock_strength=_artifact_array(geology, "RockStrength"),
             accommodation=_artifact_array(geology, "SedimentAccommodation"),
@@ -220,9 +267,10 @@ def elevation_stage(context, deps, config_mapping: Mapping[str, object]):
         {
             **asdict(config),
             "rng_seed": seed,
+            "hotspot_event_count": hotspot_event_count,
             "topology": "cubed_sphere",
             "datum": "provisional_pre_sea_level_zero",
-            "model": "causal_pre_erosion_components_v1",
+            "model": "causal_pre_erosion_components_v2",
             "history_semantics": "initial_morphology_not_eroded_present_day",
         }
     )

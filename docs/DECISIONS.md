@@ -1037,6 +1037,14 @@ distinct cross-strike profiles. Profiles cross cube-face seams through the
 canonical neighbor graph. Long structures receive coherent along-strike
 variation so they do not become uniform walls.
 
+Corridor realization rule:
+The discrete plate edge is the causal skeleton of a finite-width process
+corridor, not a mandatory terrain centerline. Multi-scale spherical curvature,
+coherent along-strike activity, regime-specific lateral offsets, and
+plate-constrained distance smoothing may realize morphology inside that
+corridor. These operations may not alter plate connectivity or move evidence
+onto unrelated plates.
+
 Ownership rule:
 Rust owns graph propagation and component synthesis. Python owns configuration,
 persistence, diagnostics, and cartographic previews.
