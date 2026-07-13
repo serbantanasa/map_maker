@@ -262,7 +262,7 @@ def main(args: Iterable[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Produce pipeline stage visualization PNGs.")
     parser.add_argument(
         "--stage",
-        choices=["topology", "tectonics", "world_age", "geology", "elevation"],
+        choices=["topology", "planet", "tectonics", "world_age", "geology", "elevation"],
         default="topology",
     )
     parser.add_argument("--config", type=Path, default=None)
@@ -316,6 +316,8 @@ def main(args: Iterable[str] | None = None) -> int:
             parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
         if parsed.stage == "topology":
             stage_name = "geometry"
+        elif parsed.stage == "planet":
+            stage_name = "planet"
         elif parsed.stage == "tectonics":
             stage_name = _register_tectonics_stage()
         elif parsed.stage == "world_age":
@@ -340,7 +342,7 @@ def main(args: Iterable[str] | None = None) -> int:
     if invalid_controls:
         parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
 
-    if parsed.stage in {"world_age", "geology", "elevation"}:
+    if parsed.stage in {"planet", "world_age", "geology", "elevation"}:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":
         if parsed.topology == "cubed_sphere":

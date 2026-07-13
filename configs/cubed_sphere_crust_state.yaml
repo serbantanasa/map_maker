@@ -7,6 +7,21 @@ output_dir: out
 cache_dir: out/cache
 log_dir: out/logs
 stage_overrides:
+  planet:
+    planet_radius_earth: 1.0
+    surface_gravity_g: 1.0
+    mean_density_earth: 1.0
+    star_luminosity_solar: 1.0
+    star_effective_temperature_k: 5772.0
+    semi_major_axis_au: 1.0
+    eccentricity: 0.0167
+    obliquity_deg: 23.44
+    rotation_period_hours: 24.0
+    orbital_period_days: 365.2422
+    perihelion_day: 3.0
+    northern_vernal_equinox_day: 79.0
+    moon_mass_lunar: 1.0
+    moon_distance_km: 384400.0
   tectonics:
     num_plates: 24
     continental_fraction: 0.35
