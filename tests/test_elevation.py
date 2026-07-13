@@ -107,16 +107,47 @@ def test_elevation_outputs_causal_components_and_visuals(tmp_path: Path):
     assert float(np.max(fields["BasinDepressionM"])) > 500.0
     assert _cross_face_gradient_ratio(bedrock, grid.neighbor_indices) < 2.5
 
+    regimes = _array(results["geology"], "BoundaryRegime").reshape(-1, 4)
+    segment_ids = _array(results["geology"], "BoundarySegmentID").reshape(-1, 4)
+    neighbors = grid.neighbor_indices.reshape(-1, 4)
+    active_spine = np.any(np.isin(regimes, [2, 3, 4, 5, 6]), axis=1)
+    corridor = active_spine.copy()
+    for _ in range(2):
+        corridor |= np.any(corridor[neighbors], axis=1)
+    corridor_flanks = corridor & ~active_spine
+    orogenic_flat = fields["OrogenicElevationM"].reshape(-1)
+    basin_flat = fields["BasinDepressionM"].reshape(-1)
+    assert float(np.mean(orogenic_flat[active_spine])) < 2.5 * float(
+        np.mean(orogenic_flat[corridor_flanks])
+    )
+    assert float(np.mean(basin_flat[active_spine])) < 3.0 * float(
+        np.mean(basin_flat[corridor_flanks])
+    )
+
+    segment_variation: list[float] = []
+    combined_relief = orogenic_flat + basin_flat
+    for segment_id in np.unique(segment_ids[segment_ids >= 0]):
+        cells = np.flatnonzero(np.any(segment_ids == segment_id, axis=1))
+        values = combined_relief[cells]
+        if cells.size >= 6 and float(np.mean(values)) > 100.0:
+            segment_variation.append(float(np.std(values) / np.mean(values)))
+    assert segment_variation
+    assert float(np.median(segment_variation)) > 0.20
+
     metadata = elevation.artifact_records["ElevationMetadata"].value
-    assert metadata["model"] == "causal_pre_erosion_components_v1"
+    assert metadata["model"] == "causal_pre_erosion_components_v2"
     assert metadata["history_semantics"] == "initial_morphology_not_eroded_present_day"
     assert metadata["continental_mean_m"] > metadata["oceanic_mean_m"]
     assert metadata["elevation_min_m"] == pytest.approx(float(np.min(bedrock)), abs=1e-3)
     assert metadata["elevation_max_m"] == pytest.approx(float(np.max(bedrock)), abs=1e-3)
+    hotspot_events = results["world_age"].artifact_records["HotspotEvents"].value
+    assert metadata["hotspot_event_count"] == hotspot_events.num_rows
 
     visual_dir = engine.context.config.run_visual_dir() / "elevation"
     assert (visual_dir / "bedrock_elevation.png").is_file()
     assert (visual_dir / "orogenic_morphology.png").is_file()
+    assert (visual_dir / "orogenic_elevation.png").is_file()
+    assert (visual_dir / "basin_depression.png").is_file()
 
 
 def test_elevation_is_deterministic_and_seed_sensitive(tmp_path: Path):

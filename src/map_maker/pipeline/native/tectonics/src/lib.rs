@@ -956,7 +956,7 @@ fn random_unit_vector(rng: &mut ChaCha8Rng) -> SVec3 {
     SVec3::new(radius * azimuth.cos(), radius * azimuth.sin(), z)
 }
 
-fn spherical_warp_terms(seed: u64) -> [WarpTerm; 5] {
+fn spherical_warp_terms(seed: u64) -> [WarpTerm; 8] {
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x4A39_B70D_91C8_2E65);
     std::array::from_fn(|index| WarpTerm {
         axis: random_unit_vector(&mut rng),
@@ -1994,6 +1994,9 @@ mod tests {
     fn spherical_warp_is_deterministic_unit_length_and_nontrivial() {
         let direction = SVec3::new(0.3, -0.4, 0.866_025_403_8).normalized();
         let terms = spherical_warp_terms(42);
+        assert_eq!(terms.len(), 8);
+        assert!(terms[7].frequency > terms[4].frequency);
+        assert!(terms[7].amplitude < terms[0].amplitude);
         let first = warp_spherical_direction(direction, &terms);
         let second = warp_spherical_direction(direction, &terms);
         assert!((first.norm() - 1.0).abs() < 1e-12);

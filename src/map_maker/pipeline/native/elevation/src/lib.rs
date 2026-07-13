@@ -92,6 +92,29 @@ fn smooth_graph(values: &mut [f32], neighbors: &[i32], passes: usize) {
     }
 }
 
+fn smooth_within_plates(values: &mut [f32], plate_ids: &[i32], neighbors: &[i32], passes: usize) {
+    let mut next = values.to_vec();
+    for _ in 0..passes {
+        for cell in 0..values.len() {
+            if !values[cell].is_finite() {
+                next[cell] = values[cell];
+                continue;
+            }
+            let mut sum = values[cell] * 4.0;
+            let mut weight = 4.0f32;
+            for neighbor in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+                let adjacent = *neighbor as usize;
+                if plate_ids[adjacent] == plate_ids[cell] && values[adjacent].is_finite() {
+                    sum += values[adjacent];
+                    weight += 1.0;
+                }
+            }
+            next[cell] = sum / weight;
+        }
+        values.copy_from_slice(&next);
+    }
+}
+
 fn normalized_noise(seed: u64, areas: &[f64], neighbors: &[i32]) -> Vec<f32> {
     let mut broad: Vec<f32> = (0..areas.len())
         .map(|cell| random_signed(seed ^ 0xA076_1D64_78BD_642F, cell))
@@ -175,7 +198,13 @@ fn nearest_source(
     (
         distances
             .into_iter()
-            .map(|value| value.min(f32::MAX as f64) as f32)
+            .map(|value| {
+                if value.is_finite() {
+                    value.min(f32::MAX as f64) as f32
+                } else {
+                    f32::INFINITY
+                }
+            })
             .collect(),
         amplitudes,
     )
@@ -187,6 +216,12 @@ fn gaussian(distance: f32, center: f32, sigma: f32) -> f32 {
     }
     let z = (distance - center) / sigma.max(1e-6);
     (-0.5 * z * z).exp()
+}
+
+fn corridor_activity(value: f32) -> f32 {
+    let normalized = ((value + 1.0) * 0.5).clamp(0.0, 1.0);
+    let smooth = normalized * normalized * (3.0 - 2.0 * normalized);
+    0.18 + 0.82 * smooth
 }
 
 fn km_to_radians(km: f32) -> f32 {
@@ -270,6 +305,8 @@ unsafe fn run_elevation(
     let mut ridge = vec![0.0f32; total];
     let mut rift = vec![0.0f32; total];
     let mut transform = vec![0.0f32; total];
+    let noise = normalized_noise(seed, areas, neighbors);
+    let corridor_noise = normalized_noise(seed ^ 0x8EBC_6AF0_9C88_C6E3, areas, neighbors);
 
     for source in 0..total {
         for slot in 0..D4_NEIGHBORS {
@@ -283,6 +320,8 @@ unsafe fn run_elevation(
             if confidence <= 0.0 {
                 continue;
             }
+            let activity =
+                corridor_activity(0.5 * (corridor_noise[source] + corridor_noise[target]));
             let compression_signal = (0.45
                 + 0.35 * (compression[source] + compression[target])
                 + 0.10 * (uplift[source] + uplift[target]))
@@ -292,8 +331,9 @@ unsafe fn run_elevation(
             let shear_signal = (0.35 + 0.45 * (shear[source] + shear[target])).clamp(0.0, 1.0);
             match regime {
                 REGIME_CONTINENTAL_COLLISION => {
-                    update_source(&mut collision, source, confidence * compression_signal);
-                    update_source(&mut collision, target, confidence * compression_signal);
+                    let strength = confidence * compression_signal * activity;
+                    update_source(&mut collision, source, strength);
+                    update_source(&mut collision, target, strength);
                 }
                 REGIME_SUBDUCTION_MARGIN | REGIME_INTRA_OCEANIC_SUBDUCTION => {
                     let source_ocean = !continental[source];
@@ -312,39 +352,87 @@ unsafe fn run_elevation(
                     } else {
                         (target, source)
                     };
-                    update_source(&mut descending, down, confidence * compression_signal);
-                    update_source(&mut overriding, over, confidence * compression_signal);
+                    let strength = confidence * compression_signal * activity;
+                    update_source(&mut descending, down, strength);
+                    update_source(&mut overriding, over, strength);
                 }
                 REGIME_SPREADING_RIDGE => {
-                    update_source(&mut ridge, source, confidence * extension_signal);
-                    update_source(&mut ridge, target, confidence * extension_signal);
+                    let strength = confidence * extension_signal * activity;
+                    update_source(&mut ridge, source, strength);
+                    update_source(&mut ridge, target, strength);
                 }
                 REGIME_CONTINENTAL_RIFT => {
-                    update_source(&mut rift, source, confidence * extension_signal);
-                    update_source(&mut rift, target, confidence * extension_signal);
+                    let strength = confidence * extension_signal * activity;
+                    update_source(&mut rift, source, strength);
+                    update_source(&mut rift, target, strength);
                 }
                 REGIME_TRANSFORM => {
-                    update_source(&mut transform, source, confidence * shear_signal);
-                    update_source(&mut transform, target, confidence * shear_signal);
+                    let strength = confidence * shear_signal * activity;
+                    update_source(&mut transform, source, strength);
+                    update_source(&mut transform, target, strength);
                 }
                 _ => {}
             }
         }
     }
 
-    let (collision_distance, collision_strength) =
+    let (mut collision_distance, mut collision_strength) =
         nearest_source(&collision, &plate_ids, neighbors, areas);
-    let (descending_distance, descending_strength) =
+    let (mut descending_distance, mut descending_strength) =
         nearest_source(&descending, &plate_ids, neighbors, areas);
-    let (overriding_distance, overriding_strength) =
+    let (mut overriding_distance, mut overriding_strength) =
         nearest_source(&overriding, &plate_ids, neighbors, areas);
-    let (ridge_distance, ridge_strength) = nearest_source(&ridge, &plate_ids, neighbors, areas);
-    let (rift_distance, rift_strength) = nearest_source(&rift, &plate_ids, neighbors, areas);
-    let (transform_distance, transform_strength) =
+    let (mut ridge_distance, mut ridge_strength) =
+        nearest_source(&ridge, &plate_ids, neighbors, areas);
+    let (mut rift_distance, mut rift_strength) =
+        nearest_source(&rift, &plate_ids, neighbors, areas);
+    let (mut transform_distance, mut transform_strength) =
         nearest_source(&transform, &plate_ids, neighbors, areas);
-    let noise = normalized_noise(seed, areas, neighbors);
+    let (mut hotspot_distance, mut hotspot_strength) =
+        nearest_source(hotspot, &plate_ids, neighbors, areas);
+    for field in [
+        &mut collision_distance,
+        &mut descending_distance,
+        &mut overriding_distance,
+        &mut ridge_distance,
+        &mut rift_distance,
+        &mut transform_distance,
+    ] {
+        smooth_within_plates(field, &plate_ids, neighbors, 2);
+    }
+    for (distance, sources) in [
+        (&mut collision_distance, &collision),
+        (&mut descending_distance, &descending),
+        (&mut overriding_distance, &overriding),
+        (&mut ridge_distance, &ridge),
+        (&mut rift_distance, &rift),
+        (&mut transform_distance, &transform),
+    ] {
+        for (value, source) in distance.iter_mut().zip(sources.iter()) {
+            if *source > 0.0 {
+                *value = 0.0;
+            }
+        }
+    }
+    for field in [
+        &mut collision_strength,
+        &mut descending_strength,
+        &mut overriding_strength,
+        &mut ridge_strength,
+        &mut rift_strength,
+        &mut transform_strength,
+    ] {
+        smooth_within_plates(field, &plate_ids, neighbors, 3);
+    }
+    smooth_within_plates(&mut hotspot_distance, &plate_ids, neighbors, 1);
+    smooth_within_plates(&mut hotspot_strength, &plate_ids, neighbors, 2);
+    for (distance, source) in hotspot_distance.iter_mut().zip(hotspot.iter()) {
+        if *source > 0.0 {
+            *distance = 0.0;
+        }
+    }
     let mut regional_compression = compression.to_vec();
-    smooth_graph(&mut regional_compression, neighbors, 14);
+    smooth_graph(&mut regional_compression, neighbors, 30);
 
     let mut elevation_min = f32::INFINITY;
     let mut elevation_max = f32::NEG_INFINITY;
@@ -360,7 +448,7 @@ unsafe fn run_elevation(
 
     for cell in 0..total {
         let structural_variation = noise[cell];
-        let corridor_variation = (0.72 + 0.28 * structural_variation).clamp(0.44, 1.0);
+        let corridor_variation = corridor_activity(corridor_noise[cell]);
         let crustal = if continental[cell] {
             320.0
                 + (isostasy[cell] - mean_land_iso) * 620.0
@@ -372,19 +460,15 @@ unsafe fn run_elevation(
                 + (crust_thickness[cell] - mean_ocean_thickness) * 70.0
         };
 
-        let collision_width = km_to_radians(230.0 + 170.0 * stiffness[cell]);
-        let collision_offset = km_to_radians(95.0 * structural_variation);
+        let collision_width = km_to_radians(270.0 + 210.0 * stiffness[cell]);
+        let collision_offset = km_to_radians(70.0 + 85.0 * (corridor_noise[cell] + 1.0));
         let collision_relief = collision_height_m
             * collision_strength[cell]
-            * gaussian(
-                collision_distance[cell],
-                collision_offset.max(0.0),
-                collision_width,
-            )
+            * gaussian(collision_distance[cell], collision_offset, collision_width)
             * (0.78 + 0.34 * structural_variation);
         let arc_center =
-            if continental[cell] { 190.0 } else { 145.0 } + 55.0 * structural_variation;
-        let arc_width = if continental[cell] { 115.0 } else { 82.0 };
+            if continental[cell] { 190.0 } else { 150.0 } + 85.0 * corridor_noise[cell];
+        let arc_width = if continental[cell] { 145.0 } else { 110.0 };
         let arc_relief = arc_height_m
             * overriding_strength[cell]
             * gaussian(
@@ -400,8 +484,8 @@ unsafe fn run_elevation(
                 * ridge_strength[cell]
                 * gaussian(
                     ridge_distance[cell],
-                    km_to_radians((55.0 + 45.0 * structural_variation).max(0.0)),
-                    km_to_radians(240.0),
+                    km_to_radians((95.0 + 95.0 * corridor_noise[cell]).max(0.0)),
+                    km_to_radians(285.0),
                 )
                 * corridor_variation
         };
@@ -417,17 +501,23 @@ unsafe fn run_elevation(
             * transform_strength[cell]
             * gaussian(transform_distance[cell], 0.0, km_to_radians(85.0))
             * (0.55 + 0.45 * structural_variation.abs());
-        let volcanic_relief = hotspot[cell].clamp(0.0, 1.0)
-            * if continental[cell] { 1050.0 } else { 1750.0 }
+        let volcanic_relief = hotspot_strength[cell].clamp(0.0, 1.5)
+            * if continental[cell] { 1800.0 } else { 2800.0 }
+            * gaussian(
+                hotspot_distance[cell],
+                0.0,
+                km_to_radians(if continental[cell] { 220.0 } else { 165.0 }),
+            )
             * (0.72 + 0.34 * structural_variation);
         let distributed_compression = if continental[cell] {
-            let compression_factor = (regional_compression[cell].clamp(0.0, 1.0) / 0.18)
+            let compression_factor = (regional_compression[cell].clamp(0.0, 1.0) / 0.13)
                 .clamp(0.0, 1.0)
                 .powf(1.05);
             3000.0
                 * compression_factor
                 * (0.62 + 0.38 * uplift[cell].clamp(0.0, 1.0))
                 * (0.76 + 0.32 * structural_variation)
+                * (0.48 + 0.52 * corridor_variation)
         } else {
             0.0
         };
@@ -452,8 +542,8 @@ unsafe fn run_elevation(
             * descending_strength[cell]
             * gaussian(
                 descending_distance[cell],
-                km_to_radians((75.0 + 42.0 * structural_variation).max(20.0)),
-                km_to_radians(108.0),
+                km_to_radians((115.0 + 90.0 * corridor_noise[cell]).max(20.0)),
+                km_to_radians(155.0),
             )
             * corridor_variation;
         let forearc = trench_depth_m
@@ -468,8 +558,8 @@ unsafe fn run_elevation(
             * rift_strength[cell]
             * gaussian(
                 rift_distance[cell],
-                km_to_radians((48.0 + 42.0 * structural_variation).max(0.0)),
-                km_to_radians(145.0),
+                km_to_radians((95.0 + 95.0 * corridor_noise[cell]).max(0.0)),
+                km_to_radians(210.0),
             )
             * corridor_variation;
         let basin = (accommodation_depth + extension_depth + trench + forearc + rift_axis).max(0.0);
