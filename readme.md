@@ -71,11 +71,11 @@ Rerunning the same configuration reuses the stage cache. The current executable
 stack includes tectonics, crust/world-age fields, erosion/sedimentation, dataset
 persistence, diagnostics, and final cartography. The canonical cubed-sphere path
 now reaches connected geological provinces, boundary segments, causal
-pre-erosion elevation/orogenic morphology, and monthly orbital forcing. Explicit
-geological event history, spherical erosion, routed
-hydrology, climate, soils, biomes, and regional refinement remain implementation
-milestones; the current output is a functional prototype rather than an
-atlas-grade world.
+pre-erosion elevation/orogenic morphology, monthly orbital forcing, and seasonal
+climate/orographic precipitation. Explicit geological event history, spherical
+erosion, routed hydrology, soils, biomes, and regional refinement remain
+implementation milestones; the current output is a functional prototype rather
+than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -126,6 +126,9 @@ uv run map-maker-pipeline --stage elevation --config configs/cubed_sphere_crust_
 
 # Canonical planetary boundary conditions and monthly orbital forcing
 uv run map-maker-pipeline --stage planet --config configs/cubed_sphere_crust_state.yaml
+
+# Canonical seasonal temperature, wind, precipitation, snow, and runoff potential
+uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

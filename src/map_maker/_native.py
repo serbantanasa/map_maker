@@ -11,6 +11,7 @@ from typing import Any, Iterable
 
 NATIVE_ABI_VERSION = 2
 SIMULATION_NATIVE_LIBRARIES = (
+    "climate_native",
     "elevation_native",
     "erosion_native",
     "geology_native",

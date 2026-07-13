@@ -4,6 +4,7 @@ import importlib
 
 from . import geometry  # noqa: F401
 from . import planet  # noqa: F401
+from . import climate  # noqa: F401
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
 from . import geology  # noqa: F401
@@ -19,6 +20,7 @@ def ensure_builtin_stages() -> None:
     modules = {
         "geometry": geometry,
         "planet": planet,
+        "climate": climate,
         "tectonics": tectonics,
         "world_age": world_age,
         "geology": geology,
