@@ -270,6 +270,7 @@ def main(args: Iterable[str] | None = None) -> int:
             "geology",
             "elevation",
             "climate",
+            "hydrology",
         ],
         default="topology",
     )
@@ -334,8 +335,10 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = _register_geology_stage()
         elif parsed.stage == "elevation":
             stage_name = _register_elevation_stage()
-        else:
+        elif parsed.stage == "climate":
             stage_name = "climate"
+        else:
+            stage_name = "hydrology"
         started = time.perf_counter()
         ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run([stage_name])
         elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -352,7 +355,14 @@ def main(args: Iterable[str] | None = None) -> int:
     if invalid_controls:
         parser.error("cubed_sphere tectonics does not use " + ", ".join(invalid_controls))
 
-    if parsed.stage in {"planet", "world_age", "geology", "elevation", "climate"}:
+    if parsed.stage in {
+        "planet",
+        "world_age",
+        "geology",
+        "elevation",
+        "climate",
+        "hydrology",
+    }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":
         if parsed.topology == "cubed_sphere":

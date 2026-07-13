@@ -2,9 +2,11 @@
 
 ## Status
 
-Canonical seasonal climate V1 is implemented on the cubed sphere. Depression-aware
-hydrology remains the next stage. Climate supplies monthly runoff potential but
-does not route water, fill lakes, create rivers, or erode channels.
+Canonical seasonal climate V1 and the first depression-aware modern hydrology
+pass are implemented on the cubed sphere. Climate supplies monthly runoff
+potential but does not pre-route water or draw rivers. Hydrology consumes that
+handoff and writes persistent lakes, breaches, drainage topology, discharge,
+basins, and vector river reaches.
 
 ## Scientific Intent
 
@@ -117,9 +119,106 @@ contract for inspection and surrogate training.
   is small, but face-1024 requires several gigabytes; month/tile streaming and
   chunked persistence are required before very large global runs.
 
-## Hydrology Handoff
+## Hydrology Pass 1
 
-The next canonical stage consumes monthly runoff potential, precipitation,
-snowmelt, evaporation, temperature, climate orography, final terrain, lithology,
-and topology. It must implement the depression/lake/spill/breach and vector river
-contracts in Decisions 004, 005, and 014. Climate does not pre-draw river lines.
+### Inputs
+
+- Climate: monthly runoff potential and evaporation plus annual aridity index.
+- Elevation: pre-erosion bedrock elevation and terrain relief.
+- Geology: rock strength and sediment accommodation.
+- World age: provisional ocean mask.
+- Planet and geometry: physical radius, cell areas, XYZ unit vectors, and global
+  cubed-sphere D4 neighbors.
+
+### Depression And Lake Model
+
+1. A deterministic global priority flood begins from every ocean cell. It writes
+   the minimum spill elevation and an ocean-directed parent for every land cell.
+2. Connected land below its spill surface becomes a registered depression rather
+   than being silently flattened.
+3. The whole upstream catchment contributes monthly runoff. Lake evaporation and
+   geology-modulated seepage are subtracted to estimate storage balance and fill
+   time.
+4. Shallow systems may remain wetlands. Water-limited systems remain closed;
+   sustained positive balance produces an open outlet. Open systems retain a
+   visible lake while passing accumulated discharge downstream.
+5. Depression nodes are evaluated upstream-to-downstream. Net outflow from an
+   upstream open or breached basin contributes to the next depression's monthly
+   inflow and can turn a previously terminal lake into a fill-spill lake chain.
+6. Closed lake surface area is an equilibrium subset of the depression, selected
+   from the deepest cells until water loss balances inflow. The whole depression
+   remains part of the drainage basin; it is not all painted as water.
+7. Sustained overflow, available head, discharge, weak rock, and low accommodation
+   produce a breach score. Accepted breaches carve a short coarse outlet path,
+   record gorge incision and a sediment pulse, and trigger a second priority flood.
+
+### Drainage And Rivers
+
+- Preserved closed water bodies become explicit registered sinks. Open lakes use
+  the earliest valid downstream edge in the final flood order, preventing lake
+  rewiring from introducing cycles.
+- A topological sort is a hard gate. The receiver graph is rejected if any land
+  cell is not covered or if an accidental cycle exists.
+- Cell area and all twelve monthly runoff fields accumulate once through that DAG.
+  Registered open-water evaporation and seepage are removed at lake outlets
+  before discharge continues downstream. Every land cell receives a basin ID and
+  propagated sink type.
+- River cells are selected from physical discharge and contributing area. Lake
+  interiors are excluded from channels while flow still accumulates through open
+  water bodies.
+- Junction-to-junction reaches form the canonical river graph. Exact cubed-sphere
+  cell paths are retained for refinement and a two-pass spherical corner-cutting
+  generalization writes smooth unit-XYZ polylines for rendering.
+- Reach attributes include monthly discharge and velocity, slope, stream power,
+  Strahler order, estimated width/depth, valley and floodplain width, meandering,
+  braiding, incision, sediment load, bed material, and morphology class.
+
+### Persistent Outputs
+
+Raster support fields include depression/lake IDs and classes, potential fill
+depth, hydrologic elevation, breach incision, receiver IDs, tangent flow vectors,
+slope, contributing area, monthly and mean discharge, velocity, stream power,
+basin and sink IDs, river corridor, and floodplain potential.
+
+Arrow products are `DepressionCatalog`, `LakeCatalog`, `BreachCatalog`,
+`BasinCatalog`, `DrainageGraph`, and `RiverReachCatalog`. `HydrologyMetadata`
+records physical controls, counts, distribution diagnostics, conservation error,
+and artifact semantics.
+
+### Hard Gates
+
+- The land receiver graph is acyclic and covers every land cell.
+- Every terminal drains to ocean or a registered closed water body.
+- Contributing area is nondecreasing downstream. Monthly discharge is
+  nondecreasing except at registered open-water loss nodes.
+- Source runoff agrees with terminal discharge/inflow plus registered open-water
+  losses within floating-point tolerance.
+- Flow vectors are tangent unit vectors on routed cells.
+- Reach IDs and downstream references are valid and the reach graph is acyclic.
+- Exact and smoothed reach geometries share endpoints and remain on the unit sphere.
+- Identical inputs produce byte-identical arrays and Arrow tables.
+
+### Current Hydrology Limits
+
+- The support receiver graph uses D4 neighbors. Smoothed vectors remove rendering
+  stair steps, but a future L2 routing upgrade should evaluate diagonal or
+  facet-based flow without breaking cube-face topology.
+- Priority flood identifies spill-connected depression components, but an explicit
+  nested fill-spill-merge hierarchy and time-ordered lake-chain events are not yet
+  implemented.
+- Land evaporation is provisional and not a dedicated open-water potential
+  evaporation field. Lake extent and endorheic statistics therefore remain
+  calibration targets.
+- Groundwater, infiltration, losing/intermittent reaches, glaciers, engineered
+  channels, and explicit delta distributary growth are absent or represented only
+  by coarse reach attributes.
+- Breach erosion is a basin-scale coarse incision event. Detailed gorge evolution,
+  sediment routing, erosion/sedimentation feedback, and Hydrology Pass 2 follow in
+  the next milestone.
+- Current statistical thresholds are provisional. Multi-seed conditional
+  validation against basin, lake, and river distributions is required before the
+  Earth-like default is considered calibrated.
+- Resolution stability is not yet achieved: face-128 audits produce materially
+  more closed-drainage land than face-64. Fine hydrology must inherit accepted
+  coarse trunk connectivity and flux before very high-resolution worlds are
+  considered trustworthy.

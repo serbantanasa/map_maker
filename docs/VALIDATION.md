@@ -83,6 +83,46 @@ Human review is recorded outside the report for now. A later review artifact
 should record reviewer, software version, decision, and notes without allowing a
 subjective pass to override failed automated gates.
 
+## Hydrology Pass 1 Audit
+
+Hydrology has stage-local automated gates even though its metrics are not yet
+integrated into `map-maker validate`:
+
+- The land receiver graph must be complete and acyclic.
+- Every terminal must be ocean-connected or a registered closed water body.
+- Contributing area must be nondecreasing downstream. Monthly discharge may
+  decrease only at registered open-water evaporation/seepage nodes.
+- Integrated source runoff must equal terminal discharge/inflow plus registered
+  open-water evaporation and seepage within `1e-6` relative error.
+- River-reach references and smooth spherical geometries must be valid and
+  deterministic.
+- Synthetic native scenarios require the same depression to remain terminal
+  under arid low inflow, overflow under sustained wet inflow, and breach only
+  when the configured erosion criterion is met.
+
+A provisional six-seed face-64 audit produced:
+
+| Metric | Observed range |
+| --- | ---: |
+| Registered lakes | 40-67 |
+| Open lake outlets | 30-46 |
+| Breach events | 0-4 |
+| Lake-covered land cells | 2.8-5.1% |
+| Closed-drainage land | 2.7-22.3% |
+
+The generated review sheet is
+`out/hydrology-gallery/hydrology-gallery.png`. These ranges are observations,
+not accepted Earth calibration bands.
+
+Resolution stability currently fails. Three face-128 worlds placed roughly
+26-36% of land into closed drainage, materially above the face-64 sweep. Finer
+elevation exposes additional local depressions that can capture drainage which
+the coarse pass sent onward. Do not tune this away with a resolution-specific
+lake count. The required fix is hierarchical hydrology: preserve accepted coarse
+trunk connectivity and flux while refining local basins, tributaries, wetlands,
+and channels. Until that constraint exists, closed-drainage and lake statistics
+are provisional and Pass 1 is not calibrated for arbitrary resolution.
+
 ## Calibration Rule
 
 Do not tighten or loosen a threshold solely to make the current gallery pass.
