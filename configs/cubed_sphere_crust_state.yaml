@@ -76,3 +76,6 @@ stage_overrides:
     river_discharge_threshold_m3s: 300.0
     river_contributing_area_threshold_km2: 200000.0
     river_minimum_discharge_m3s: 25.0
+  basin_refinement:
+    refinement_factor: 16
+    terrain_noise_fraction: 0.45

@@ -15,6 +15,7 @@ NATIVE_LIBRARIES = (
     "geology_native",
     "hydrology_native",
     "planet_native",
+    "refinement_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

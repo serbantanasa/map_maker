@@ -1153,8 +1153,14 @@ depth. Any change to cell-mean elevation derives only from a conserved physical
 volume divided by cell area.
 
 Refinement contract:
-- Child drainage inherits the parent reach entry and exit anchors, downstream
-  identity, monthly discharge, sediment flux, and accepted lake or ocean sink.
+- Child drainage inherits the parent reach entry and exit cells as spatial
+  constraints, downstream identity, monthly discharge, sediment flux, and any
+  accepted lake or ocean sink. A coarse junction anchor is not an arbitrary
+  fine-cell center that every connected reach must hit exactly.
+- Fine reaches are realized downstream-first. An upstream reach may merge at
+  any cell of its inherited downstream path inside the shared coarse junction
+  cell. The actual fine join cell is stored explicitly. The union must remain a
+  convergent directed acyclic graph with no reverse-used edge.
 - Fine routing may add tributaries, meanders, local wetlands, and distributaries
   or redistribute unresolved coverage, but may not silently redirect a major
   trunk or change an inherited water and sediment budget.
@@ -1168,8 +1174,10 @@ Refinement contract:
 
 Implementation sequence:
 1. Establish registered multiresolution reach and sparse membership artifacts.
-2. Select one complete drainage basin and refine it while preserving its outlet,
-   trunk identity, discharge, and sediment boundary conditions.
+2. Select one complete coarse drainage-basin footprint and refine it while
+   preserving its registered reach graph, trunk identity, discharge, and known
+   sediment boundary conditions. "Complete" describes spatial basin coverage;
+   it does not conceal reach gaps inherited from a coarse extraction threshold.
 3. Realize constrained local routing and subgrid valley properties in that
    basin.
 4. Run fluvial incision and conservative sediment routing at the finest active
@@ -1181,6 +1189,8 @@ Failure conditions:
 - Cell-wide trenches produced by subcell rivers.
 - Simulation width inferred from cartographic stroke width.
 - Refined rivers that do not connect to inherited parent reaches or sinks.
+- Applied erosion while any inherited terminal lacks a registered downstream
+  reach, lake/wetland/endorheic sink, or ocean boundary.
 - Water, sediment, or incision volumes that change under restriction.
 - Global fine grids used where selected regional refinement provides the same
   physical result within the accepted hierarchy.

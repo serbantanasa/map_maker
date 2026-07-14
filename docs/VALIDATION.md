@@ -146,6 +146,46 @@ tributaries, wetlands, and channels. Until that constraint exists, closed-draina
 and lake statistics are provisional and Pass 1 is not calibrated for arbitrary
 resolution.
 
+## Selected-Basin Refinement
+
+The canonical sparse refinement selects ocean-draining basin 226. Its 1,448
+coarse basin cells plus one inherited ocean boundary cell produce 370,944
+face-2048 child records at factor 16 without allocating a global face-2048
+raster. Twenty-one inherited reaches produce 11,253 km of D4-contiguous fine
+reach paths and 2,613 sparse reach-cell memberships.
+
+Observed conservation and topology diagnostics:
+
+| Metric | Canonical result |
+| --- | ---: |
+| Maximum parent area relative error | `8.1e-12` |
+| Maximum restricted elevation error | `< 1e-5 m` |
+| D4 path topology | Pass |
+| Inherited parent path | Pass |
+| Downstream-path junction merges | Pass |
+| Reverse directed edges | `0` |
+| Combined path DAG | Pass |
+| Inherited discharge error | `0` |
+
+Requested physical channel area is `1,366.835 km2`; centerline-cell fractions
+represent `1,366.835 km2`, or roughly 0.02% of the 6.98 million km2 basin. This
+demonstrates why river width must remain a fractional/vector property even at
+the refined level. Approximately `157.3 km3` of potential incision is recorded
+as reach volume and has not been applied to cell-wide elevation.
+
+Broad corridors do not yet fit entirely in their centerline cells. Requested
+valley area is `39,917 km2`, of which `30,347 km2` (76.0%) is currently
+represented; requested floodplain area is `38,043 km2`, of which `29,499 km2`
+(77.5%) is represented. The missing support must be spread laterally into
+neighboring fine cells before erosion rather than hidden by capped fractions.
+
+Source-to-sink readiness currently fails. Of 13 terminal registered reaches,
+one reaches the ocean and 12 end at land cells where Hydrology Pass 1 fell below
+the river extraction threshold. The refinement stage classifies and reports
+these inherited gaps instead of inventing connections. Conservative incision
+and sediment routing remain blocked until the gaps close. These are contract and
+conservation results, not accepted erosion calibration.
+
 ## Calibration Rule
 
 Do not tighten or loosen a threshold solely to make the current gallery pass.

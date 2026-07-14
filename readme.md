@@ -76,9 +76,14 @@ climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
 reaches. Explicit geological event history, spherical
-erosion and sediment feedback, hydrology pass 2, soils, biomes, and regional
-refinement remain implementation milestones; the current output is a functional
-prototype rather than an atlas-grade world.
+erosion and sediment feedback, hydrology pass 2, soils, biomes, and complete
+regional terrain remain implementation milestones. A first sparse basin-refinement
+stage now realizes one inherited trunk network at approximately 5 km scale,
+preserves parent terrain means and convergent reach junctions, and stores physical
+channel, valley, and floodplain fractions without carving whole cells. It also
+publishes inherited terminal gaps and source-to-sink readiness; the canonical
+basin is not yet cleared for conservative erosion. The current output is a
+functional prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -135,6 +140,9 @@ uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_st
 
 # Canonical lakes, breaches, drainage graph, basins, and vector river reaches
 uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_state.yaml
+
+# One sparse face-2048 basin with inherited trunks and subgrid valley fractions
+uv run map-maker-pipeline --stage basin_refinement --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native
