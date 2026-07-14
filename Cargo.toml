@@ -6,6 +6,7 @@ members = [
     "src/map_maker/pipeline/native/geology",
     "src/map_maker/pipeline/native/hydrology",
     "src/map_maker/pipeline/native/planet",
+    "src/map_maker/pipeline/native/refinement",
     "src/map_maker/pipeline/native/tectonics",
     "src/map_maker/pipeline/native/topology",
     "src/map_maker/pipeline/native/world_age",

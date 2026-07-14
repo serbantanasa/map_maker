@@ -1,0 +1,14 @@
+[package]
+name = "refinement_native"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+topology_native = { path = "../topology" }
+
+[lints]
+workspace = true

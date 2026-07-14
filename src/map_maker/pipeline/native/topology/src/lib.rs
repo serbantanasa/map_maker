@@ -179,6 +179,79 @@ fn global_index(face: Face, row: usize, col: usize, resolution: usize) -> usize 
     face as usize * resolution * resolution + row * resolution + col
 }
 
+pub fn cubed_sphere_global_index(
+    face_index: usize,
+    row: usize,
+    col: usize,
+    resolution: usize,
+) -> Option<usize> {
+    if face_index >= FACE_COUNT || row >= resolution || col >= resolution || resolution == 0 {
+        return None;
+    }
+    Some(global_index(
+        Face::from_index(face_index),
+        row,
+        col,
+        resolution,
+    ))
+}
+
+pub fn cubed_sphere_decode_index(index: usize, resolution: usize) -> Option<(usize, usize, usize)> {
+    let cells = checked_cell_count(resolution)?;
+    if index >= cells {
+        return None;
+    }
+    let face_cells = resolution * resolution;
+    let face = index / face_cells;
+    let within_face = index % face_cells;
+    Some((face, within_face / resolution, within_face % resolution))
+}
+
+pub fn cubed_sphere_cell_xyz(
+    face_index: usize,
+    row: usize,
+    col: usize,
+    resolution: usize,
+) -> Option<[f64; 3]> {
+    cubed_sphere_global_index(face_index, row, col, resolution)?;
+    let direction = cell_direction(Face::from_index(face_index), row, col, resolution);
+    Some([direction.x, direction.y, direction.z])
+}
+
+pub fn cubed_sphere_cell_area_steradians(
+    face_index: usize,
+    row: usize,
+    col: usize,
+    resolution: usize,
+) -> Option<f64> {
+    cubed_sphere_global_index(face_index, row, col, resolution)?;
+    Some(cell_area(
+        Face::from_index(face_index),
+        row,
+        col,
+        resolution,
+    ))
+}
+
+pub fn cubed_sphere_neighbor_index(index: usize, slot: usize, resolution: usize) -> Option<usize> {
+    let (face, row, col) = cubed_sphere_decode_index(index, resolution)?;
+    let (row_offset, col_offset) = match slot {
+        0 => (-1, 0),
+        1 => (1, 0),
+        2 => (0, -1),
+        3 => (0, 1),
+        _ => return None,
+    };
+    Some(neighbor_index(
+        Face::from_index(face),
+        row,
+        col,
+        row_offset,
+        col_offset,
+        resolution,
+    ))
+}
+
 fn checked_cell_count(resolution: usize) -> Option<usize> {
     resolution
         .checked_mul(resolution)
