@@ -10,7 +10,7 @@ from cffi import FFI
 
 from .._native import NativeLibraryAbiError, native_library_info, native_library_path
 
-CUBED_SPHERE_HYDROLOGY_ABI_VERSION = 2
+CUBED_SPHERE_HYDROLOGY_ABI_VERSION = 3
 
 WATER_BODY_CLASSES = {
     1: "wetland",
@@ -39,10 +39,12 @@ BED_MATERIAL_CLASSES = {
 HYDROLOGY_CONTROL_NAMES = {
     "planet_radius_m",
     "minimum_depression_depth_m",
-    "wetland_maximum_depth_m",
+    "wetland_mean_depth_m",
     "endorheic_aridity_threshold",
     "maximum_fill_time_years",
     "lake_seepage_mm_year",
+    "subgrid_relief_scale",
+    "subgrid_connected_basin_fraction",
     "breach_score_threshold",
     "maximum_breach_incision_m",
     "breach_length_cells",
@@ -133,10 +135,12 @@ _CDEF = """
 typedef struct {
     double planet_radius_m;
     float minimum_depression_depth_m;
-    float wetland_maximum_depth_m;
+    float wetland_mean_depth_m;
     float endorheic_aridity_threshold;
     float maximum_fill_time_years;
     float lake_seepage_mm_year;
+    float subgrid_relief_scale;
+    float subgrid_connected_basin_fraction;
     float breach_score_threshold;
     float maximum_breach_incision_m;
     int32_t breach_length_cells;
@@ -259,6 +263,8 @@ int32_t hydrology_run_cubed_sphere(
     int32_t* depression_id_out,
     int32_t* lake_id_out,
     uint8_t* water_class_out,
+    float* lake_fraction_out,
+    float* wetland_fraction_out,
     float* fill_depth_out,
     float* hydrologic_elevation_out,
     float* breach_incision_out,
@@ -512,6 +518,8 @@ def run_cubed_sphere_hydrology(
         "DepressionID": np.dtype(np.int32),
         "LakeID": np.dtype(np.int32),
         "WaterBodyClass": np.dtype(np.uint8),
+        "LakeFraction": np.dtype(np.float32),
+        "WetlandFraction": np.dtype(np.float32),
         "DepressionFillDepthM": np.dtype(np.float32),
         "HydrologicElevationM": np.dtype(np.float32),
         "BreachIncisionM": np.dtype(np.float32),
@@ -585,6 +593,8 @@ def run_cubed_sphere_hydrology(
         _ffi.cast("int32_t*", _ffi.from_buffer("int32_t[]", output_arrays["DepressionID"])),
         _ffi.cast("int32_t*", _ffi.from_buffer("int32_t[]", output_arrays["LakeID"])),
         _ffi.cast("uint8_t*", _ffi.from_buffer("uint8_t[]", output_arrays["WaterBodyClass"])),
+        _ffi.cast("float*", _ffi.from_buffer("float[]", output_arrays["LakeFraction"])),
+        _ffi.cast("float*", _ffi.from_buffer("float[]", output_arrays["WetlandFraction"])),
         *[
             _ffi.cast("float*", _ffi.from_buffer("float[]", output_arrays[name]))
             for name in ("DepressionFillDepthM", "HydrologicElevationM", "BreachIncisionM")

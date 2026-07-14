@@ -27,10 +27,12 @@ const SINK_STABLE_LAKE: u8 = 4;
 pub struct HydrologyConfig {
     pub planet_radius_m: f64,
     pub minimum_depression_depth_m: f32,
-    pub wetland_maximum_depth_m: f32,
+    pub wetland_mean_depth_m: f32,
     pub endorheic_aridity_threshold: f32,
     pub maximum_fill_time_years: f32,
     pub lake_seepage_mm_year: f32,
+    pub subgrid_relief_scale: f32,
+    pub subgrid_connected_basin_fraction: f32,
     pub breach_score_threshold: f32,
     pub maximum_breach_incision_m: f32,
     pub breach_length_cells: i32,
@@ -202,10 +204,13 @@ struct RiverProperties {
     floodplain: Vec<f32>,
 }
 
+#[derive(Clone)]
 struct Depression {
     id: i32,
     cells: Vec<usize>,
     water_cells: Vec<usize>,
+    water_fractions: Vec<f32>,
+    potential_fractions: Vec<f32>,
     sink_cell: usize,
     outlet_cell: usize,
     outlet_receiver: usize,
@@ -213,6 +218,7 @@ struct Depression {
     maximum_depth_m: f32,
     mean_depth_m: f32,
     area_km2: f64,
+    potential_water_area_km2: f64,
     volume_km3: f64,
     water_area_km2: f64,
     water_volume_km3: f64,
@@ -241,7 +247,7 @@ pub extern "C" fn hydrology_native_abi_version() -> u32 {
 
 #[no_mangle]
 pub extern "C" fn cubed_sphere_hydrology_abi_version() -> u32 {
-    2
+    3
 }
 
 fn priority_flood(elevation: &[f32], ocean: &[u8], neighbors: &[i32]) -> Option<FloodResult> {
@@ -302,17 +308,40 @@ fn edge_distance_m(first: usize, second: usize, xyz: &[f32], radius_m: f64) -> f
     dot.acos().max(1e-9) * radius_m
 }
 
+fn subgrid_inundation(
+    mean_elevation_m: f32,
+    relief_m: f32,
+    water_surface_m: f32,
+    minimum_depth_m: f32,
+    relief_scale: f32,
+    maximum_fraction: f32,
+) -> (f32, f64) {
+    let span_m = (relief_m.max(0.0) * relief_scale.max(0.01)).max(2.0 * minimum_depth_m.max(0.1));
+    let minimum_elevation_m = mean_elevation_m - 0.5 * span_m;
+    let surface_above_minimum_m = water_surface_m - minimum_elevation_m;
+    let raw_fraction = (surface_above_minimum_m / span_m).clamp(0.0, 1.0);
+    let fraction = raw_fraction.min(maximum_fraction.clamp(0.0, 1.0));
+    let equivalent_depth_m = (fraction as f64 * surface_above_minimum_m as f64
+        - 0.5 * span_m as f64 * fraction as f64 * fraction as f64)
+        .max(0.0);
+    (fraction, equivalent_depth_m)
+}
+
 fn find_depressions(
     flood: &FloodResult,
     elevation: &[f32],
+    relief: &[f32],
     ocean: &[u8],
     neighbors: &[i32],
     area_km2: &[f64],
-    minimum_depth_m: f32,
+    config: &HydrologyConfig,
 ) -> (Vec<i32>, Vec<Depression>) {
     let total = elevation.len();
     let candidate: Vec<bool> = (0..total)
-        .map(|cell| ocean[cell] == 0 && flood.filled[cell] - elevation[cell] >= minimum_depth_m)
+        .map(|cell| {
+            ocean[cell] == 0
+                && flood.filled[cell] - elevation[cell] >= config.minimum_depression_depth_m
+        })
         .collect();
     let mut depression_id = vec![-1i32; total];
     let mut depressions = Vec::new();
@@ -368,16 +397,73 @@ fn find_depressions(
         if !spill_elevation_m.is_finite() {
             spill_elevation_m = flood.filled[sink_cell];
         }
-        let maximum_depth_m = (spill_elevation_m - elevation[sink_cell]).max(0.0);
         let area = cells.iter().map(|cell| area_km2[*cell]).sum::<f64>();
-        let volume_km3 = cells
-            .iter()
-            .map(|cell| {
-                (spill_elevation_m - elevation[*cell]).max(0.0) as f64 * area_km2[*cell] / 1_000.0
-            })
-            .sum::<f64>();
-        let mean_depth_m = if area > 0.0 {
-            (volume_km3 * 1_000.0 / area) as f32
+        let mut raw_fractions = Vec::with_capacity(cells.len());
+        let mut raw_water_area_km2 = 0.0f64;
+        for &cell in &cells {
+            let (raw_fraction, _) = subgrid_inundation(
+                elevation[cell],
+                relief[cell],
+                spill_elevation_m,
+                config.minimum_depression_depth_m,
+                config.subgrid_relief_scale,
+                1.0,
+            );
+            raw_fractions.push(raw_fraction);
+            raw_water_area_km2 += raw_fraction as f64 * area_km2[cell];
+        }
+        let mut potential_fractions = vec![0.0f32; cells.len()];
+        let mut ranked: Vec<usize> = (0..cells.len()).collect();
+        ranked.sort_by(|first, second| {
+            let first_cell = cells[*first];
+            let second_cell = cells[*second];
+            let first_span = (relief[first_cell].max(0.0) * config.subgrid_relief_scale.max(0.01))
+                .max(2.0 * config.minimum_depression_depth_m.max(0.1));
+            let second_span = (relief[second_cell].max(0.0)
+                * config.subgrid_relief_scale.max(0.01))
+            .max(2.0 * config.minimum_depression_depth_m.max(0.1));
+            (elevation[first_cell] - 0.5 * first_span)
+                .total_cmp(&(elevation[second_cell] - 0.5 * second_span))
+                .then_with(|| first_cell.cmp(&second_cell))
+        });
+        let target_area_km2 =
+            raw_water_area_km2 * config.subgrid_connected_basin_fraction.clamp(0.0, 1.0) as f64;
+        let mut potential_water_area_km2 = 0.0f64;
+        for index in ranked {
+            let cell = cells[index];
+            let available_area_km2 = raw_fractions[index] as f64 * area_km2[cell];
+            let assigned_area_km2 =
+                available_area_km2.min(target_area_km2 - potential_water_area_km2);
+            if assigned_area_km2 <= 0.0 {
+                break;
+            }
+            let assigned_fraction = (assigned_area_km2 / area_km2[cell]) as f32;
+            potential_fractions[index] = assigned_fraction;
+            potential_water_area_km2 += assigned_area_km2;
+        }
+        let mut maximum_depth_m = 0.0f32;
+        let mut volume_km3 = 0.0f64;
+        for (index, &cell) in cells.iter().enumerate() {
+            let maximum_fraction = potential_fractions[index];
+            if maximum_fraction <= 0.0 {
+                continue;
+            }
+            let span_m = (relief[cell].max(0.0) * config.subgrid_relief_scale.max(0.01))
+                .max(2.0 * config.minimum_depression_depth_m.max(0.1));
+            maximum_depth_m = maximum_depth_m
+                .max((spill_elevation_m - (elevation[cell] - 0.5 * span_m)).max(0.0));
+            let (_, equivalent_depth_m) = subgrid_inundation(
+                elevation[cell],
+                relief[cell],
+                spill_elevation_m,
+                config.minimum_depression_depth_m,
+                config.subgrid_relief_scale,
+                maximum_fraction,
+            );
+            volume_km3 += equivalent_depth_m * area_km2[cell] / 1_000.0;
+        }
+        let mean_depth_m = if potential_water_area_km2 > 0.0 {
+            (volume_km3 * 1_000.0 / potential_water_area_km2) as f32
         } else {
             0.0
         };
@@ -385,6 +471,8 @@ fn find_depressions(
             id,
             cells,
             water_cells: Vec::new(),
+            water_fractions: Vec::new(),
+            potential_fractions,
             sink_cell,
             outlet_cell,
             outlet_receiver,
@@ -392,6 +480,7 @@ fn find_depressions(
             maximum_depth_m,
             mean_depth_m,
             area_km2: area,
+            potential_water_area_km2,
             volume_km3,
             water_area_km2: 0.0,
             water_volume_km3: 0.0,
@@ -456,7 +545,6 @@ fn classify_depressions(
         }
     }
 
-    let mut next_lake_id = 0i32;
     for depression in depressions {
         depression.catchment_area_km2 = catchment_area[depression.id as usize];
         depression.monthly_inflow_m3s = catchment_runoff[depression.id as usize];
@@ -466,22 +554,23 @@ fn classify_depressions(
         let mut aridity_weighted = 0.0f64;
         let mut rock_weighted = 0.0f64;
         let mut accommodation_weighted = 0.0f64;
-        for &cell in &depression.cells {
+        for (&cell, &fraction) in depression.cells.iter().zip(&depression.potential_fractions) {
+            let water_area_km2 = fraction as f64 * area_km2[cell];
             let annual_evaporation_mm = (0..MONTHS)
                 .map(|month| evaporation[month * owner.len() + cell].max(0.0) as f64)
                 .sum::<f64>();
-            evaporation_volume_m3 += annual_evaporation_mm * area_km2[cell] * 1_000.0;
-            aridity_weighted += aridity[cell].max(0.0) as f64 * area_km2[cell];
-            rock_weighted += rock_strength[cell].clamp(0.0, 1.0) as f64 * area_km2[cell];
-            accommodation_weighted += accommodation[cell].clamp(0.0, 1.0) as f64 * area_km2[cell];
+            evaporation_volume_m3 += annual_evaporation_mm * water_area_km2 * 1_000.0;
+            aridity_weighted += aridity[cell].max(0.0) as f64 * water_area_km2;
+            rock_weighted += rock_strength[cell].clamp(0.0, 1.0) as f64 * water_area_km2;
+            accommodation_weighted += accommodation[cell].clamp(0.0, 1.0) as f64 * water_area_km2;
         }
-        let inverse_area = 1.0 / depression.area_km2.max(1e-12);
+        let inverse_area = 1.0 / depression.potential_water_area_km2.max(1e-12);
         depression.mean_aridity = (aridity_weighted * inverse_area) as f32;
         let mean_rock = (rock_weighted * inverse_area) as f32;
         let mean_accommodation = (accommodation_weighted * inverse_area) as f32;
         depression.annual_evaporation_km3 = evaporation_volume_m3 / 1e9;
         depression.annual_seepage_km3 = config.lake_seepage_mm_year.max(0.0) as f64
-            * depression.area_km2
+            * depression.potential_water_area_km2
             * 1_000.0
             * (1.0 - 0.65 * mean_accommodation as f64)
             / 1e9;
@@ -506,7 +595,7 @@ fn classify_depressions(
 
         let overflows = depression.annual_balance_km3 > 0.0
             && depression.fill_time_years <= config.maximum_fill_time_years;
-        depression.class_code = if depression.maximum_depth_m <= config.wetland_maximum_depth_m {
+        depression.class_code = if depression.mean_depth_m <= config.wetland_mean_depth_m {
             WATER_WETLAND
         } else if depression.mean_aridity <= config.endorheic_aridity_threshold
             && depression.annual_balance_km3 <= 0.0
@@ -524,10 +613,6 @@ fn classify_depressions(
             WATER_STABLE_LAKE
         };
         depression.open_outlet = overflows && depression.class_code != WATER_BREACHED;
-        if depression.class_code != WATER_BREACHED {
-            depression.lake_id = next_lake_id;
-            next_lake_id += 1;
-        }
     }
 }
 
@@ -550,7 +635,7 @@ fn refresh_depression_classification(depression: &mut Depression, config: &Hydro
     depression.breach_score = depression.breach_static_score + 0.28 * discharge_score;
     let overflows = depression.annual_balance_km3 > 0.0
         && depression.fill_time_years <= config.maximum_fill_time_years;
-    depression.class_code = if depression.maximum_depth_m <= config.wetland_maximum_depth_m {
+    depression.class_code = if depression.mean_depth_m <= config.wetland_mean_depth_m {
         WATER_WETLAND
     } else if depression.mean_aridity <= config.endorheic_aridity_threshold
         && depression.annual_balance_km3 <= 0.0
@@ -622,79 +707,134 @@ fn propagate_depression_overflow(
             *inflow += routed;
         }
     }
-    let mut next_lake_id = 0i32;
-    for depression in depressions {
-        depression.lake_id = -1;
-        if depression.class_code != WATER_BREACHED {
-            depression.lake_id = next_lake_id;
-            next_lake_id += 1;
-        }
-    }
 }
 
 fn assign_water_extents(
     depressions: &mut [Depression],
     elevation: &[f32],
+    relief: &[f32],
     area_km2: &[f64],
-    minimum_depth_m: f32,
+    config: &HydrologyConfig,
 ) {
     for depression in depressions {
+        depression.water_cells.clear();
+        depression.water_fractions.clear();
         if depression.class_code == WATER_BREACHED {
-            continue;
-        }
-        if depression.open_outlet {
-            depression.water_cells.clone_from(&depression.cells);
-            depression.water_area_km2 = depression.area_km2;
-            depression.water_volume_km3 = depression.volume_km3;
-            depression.water_surface_elevation_m = depression.spill_elevation_m;
             continue;
         }
 
         let full_loss = depression.annual_evaporation_km3 + depression.annual_seepage_km3;
-        let equilibrium_fraction = if full_loss > 1e-12 {
+        let equilibrium_fraction = if depression.open_outlet {
+            1.0
+        } else if full_loss > 1e-12 {
             (depression.annual_inflow_km3 / full_loss).clamp(0.0, 1.0)
         } else {
             1.0
         };
-        let target_area = depression.area_km2 * equilibrium_fraction;
-        let mut ranked = depression.cells.clone();
-        ranked.sort_by(|first, second| {
-            elevation[*first]
-                .total_cmp(&elevation[*second])
-                .then_with(|| first.cmp(second))
-        });
-        let mut water_area = 0.0f64;
-        for cell in ranked {
-            depression.water_cells.push(cell);
-            water_area += area_km2[cell];
-            if water_area >= target_area.max(area_km2[cell]) {
-                break;
-            }
-        }
-        let highest_bed = depression
-            .water_cells
-            .iter()
-            .map(|cell| elevation[*cell])
-            .fold(elevation[depression.sink_cell], f32::max);
-        depression.water_surface_elevation_m =
-            (highest_bed + 0.5 * minimum_depth_m).min(depression.spill_elevation_m);
-        depression.water_area_km2 = water_area;
-        depression.water_volume_km3 = depression
-            .water_cells
+        let target_area = depression.potential_water_area_km2 * equilibrium_fraction;
+        let mut lower_surface = depression
+            .cells
             .iter()
             .map(|cell| {
-                (depression.water_surface_elevation_m - elevation[*cell])
-                    .max(0.25 * minimum_depth_m) as f64
-                    * area_km2[*cell]
-                    / 1_000.0
+                let span = (relief[*cell].max(0.0) * config.subgrid_relief_scale.max(0.01))
+                    .max(2.0 * config.minimum_depression_depth_m.max(0.1));
+                elevation[*cell] - 0.5 * span
             })
-            .sum();
-        let water_fraction = depression.water_area_km2 / depression.area_km2.max(1e-12);
+            .fold(depression.spill_elevation_m, f32::min);
+        let mut upper_surface = depression.spill_elevation_m;
+        if !depression.open_outlet {
+            for _ in 0..36 {
+                let trial_surface = 0.5 * (lower_surface + upper_surface);
+                let trial_area = depression
+                    .cells
+                    .iter()
+                    .enumerate()
+                    .map(|(index, cell)| {
+                        let (fraction, _) = subgrid_inundation(
+                            elevation[*cell],
+                            relief[*cell],
+                            trial_surface,
+                            config.minimum_depression_depth_m,
+                            config.subgrid_relief_scale,
+                            depression.potential_fractions[index],
+                        );
+                        fraction as f64 * area_km2[*cell]
+                    })
+                    .sum::<f64>();
+                if trial_area < target_area {
+                    lower_surface = trial_surface;
+                } else {
+                    upper_surface = trial_surface;
+                }
+            }
+        }
+        let water_surface = if depression.open_outlet {
+            depression.spill_elevation_m
+        } else {
+            0.5 * (lower_surface + upper_surface)
+        };
+        let mut water_area_km2 = 0.0f64;
+        let mut water_volume_km3 = 0.0f64;
+        let mut maximum_depth_m = 0.0f32;
+        for (index, &cell) in depression.cells.iter().enumerate() {
+            let (fraction, equivalent_depth_m) = subgrid_inundation(
+                elevation[cell],
+                relief[cell],
+                water_surface,
+                config.minimum_depression_depth_m,
+                config.subgrid_relief_scale,
+                depression.potential_fractions[index],
+            );
+            if fraction <= 1e-6 {
+                continue;
+            }
+            depression.water_cells.push(cell);
+            depression.water_fractions.push(fraction);
+            water_area_km2 += fraction as f64 * area_km2[cell];
+            water_volume_km3 += equivalent_depth_m * area_km2[cell] / 1_000.0;
+            let span_m = (relief[cell].max(0.0) * config.subgrid_relief_scale.max(0.01))
+                .max(2.0 * config.minimum_depression_depth_m.max(0.1));
+            maximum_depth_m =
+                maximum_depth_m.max((water_surface - (elevation[cell] - 0.5 * span_m)).max(0.0));
+        }
+        depression.water_surface_elevation_m = water_surface;
+        depression.water_area_km2 = water_area_km2;
+        depression.water_volume_km3 = water_volume_km3;
+        depression.maximum_depth_m = maximum_depth_m;
+        depression.mean_depth_m = if water_area_km2 > 0.0 {
+            (water_volume_km3 * 1_000.0 / water_area_km2) as f32
+        } else {
+            0.0
+        };
+        let water_fraction =
+            depression.water_area_km2 / depression.potential_water_area_km2.max(1e-12);
         depression.annual_evaporation_km3 *= water_fraction;
         depression.annual_seepage_km3 *= water_fraction;
         depression.annual_balance_km3 = depression.annual_inflow_km3
             - depression.annual_evaporation_km3
             - depression.annual_seepage_km3;
+        debug_assert!(
+            (depression.water_area_km2 - target_area).abs()
+                <= depression.potential_water_area_km2.max(1.0) * 1e-5
+        );
+    }
+}
+
+fn finalize_waterbody_classes(depressions: &mut [Depression], config: &HydrologyConfig) {
+    for depression in depressions.iter_mut() {
+        if depression.class_code != WATER_BREACHED
+            && depression.mean_depth_m <= config.wetland_mean_depth_m
+        {
+            depression.class_code = WATER_WETLAND;
+        }
+        depression.lake_id = -1;
+    }
+    let mut next_lake_id = 0i32;
+    for depression in depressions {
+        if depression.class_code != WATER_BREACHED && depression.class_code != WATER_WETLAND {
+            depression.lake_id = next_lake_id;
+            next_lake_id += 1;
+        }
     }
 }
 
@@ -915,7 +1055,7 @@ fn flow_geometry(
 fn river_properties(
     receiver: &[i32],
     ocean: &[u8],
-    water_class: &[u8],
+    preserved_waterbody_support: &[bool],
     area_accumulation: &[f64],
     discharge: &[f64],
     slope: &[f32],
@@ -930,7 +1070,7 @@ fn river_properties(
     let mut floodplain = vec![0.0f32; total];
     let log_reference = (config.river_discharge_threshold_m3s.max(1.0) * 100.0).ln_1p();
     for cell in 0..total {
-        if ocean[cell] != 0 || water_class[cell] != WATER_NONE || receiver[cell] < 0 {
+        if ocean[cell] != 0 || preserved_waterbody_support[cell] || receiver[cell] < 0 {
             continue;
         }
         let mean_q = (0..MONTHS)
@@ -1209,6 +1349,8 @@ fn run_hydrology(
     depression_id_out: &mut [i32],
     lake_id_out: &mut [i32],
     water_class_out: &mut [u8],
+    lake_fraction_out: &mut [f32],
+    wetland_fraction_out: &mut [f32],
     fill_depth_out: &mut [f32],
     hydrologic_elevation_out: &mut [f32],
     breach_incision_out: &mut [f32],
@@ -1233,6 +1375,11 @@ fn run_hydrology(
     if total == 0
         || config.planet_radius_m <= 0.0
         || !config.planet_radius_m.is_finite()
+        || config.subgrid_relief_scale <= 0.0
+        || !config.subgrid_relief_scale.is_finite()
+        || !(0.0 < config.subgrid_connected_basin_fraction
+            && config.subgrid_connected_basin_fraction <= 1.0)
+        || !config.subgrid_connected_basin_fraction.is_finite()
         || area_steradians
             .iter()
             .any(|value| !value.is_finite() || *value <= 0.0)
@@ -1280,10 +1427,11 @@ fn run_hydrology(
     let (depression_id, mut depressions) = find_depressions(
         &initial_flood,
         elevation,
+        relief,
         ocean,
         neighbors,
         &area_km2,
-        config.minimum_depression_depth_m,
+        config,
     );
     let owner = depression_catchments(&initial_flood, &depression_id, ocean);
     classify_depressions(
@@ -1298,12 +1446,8 @@ fn run_hydrology(
         config,
     );
     propagate_depression_overflow(&mut depressions, &initial_flood, &depression_id, config);
-    assign_water_extents(
-        &mut depressions,
-        elevation,
-        &area_km2,
-        config.minimum_depression_depth_m,
-    );
+    assign_water_extents(&mut depressions, elevation, relief, &area_km2, config);
+    finalize_waterbody_classes(&mut depressions, config);
     let (hydrologic_elevation, breach_incision, breach_records) = apply_breaches(
         &mut depressions,
         &initial_flood,
@@ -1329,10 +1473,27 @@ fn run_hydrology(
 
     let mut water_class = vec![WATER_NONE; total];
     let mut lake_id = vec![-1i32; total];
+    let mut lake_fraction = vec![0.0f32; total];
+    let mut wetland_fraction = vec![0.0f32; total];
+    let mut preserved_waterbody_support = vec![false; total];
     for depression in &depressions {
-        for &cell in &depression.water_cells {
+        if depression.class_code != WATER_BREACHED {
+            for &cell in &depression.cells {
+                preserved_waterbody_support[cell] = true;
+            }
+        }
+        for (&cell, &fraction) in depression
+            .water_cells
+            .iter()
+            .zip(&depression.water_fractions)
+        {
             water_class[cell] = depression.class_code;
             lake_id[cell] = depression.lake_id;
+            if depression.class_code == WATER_WETLAND {
+                wetland_fraction[cell] = fraction;
+            } else {
+                lake_fraction[cell] = fraction;
+            }
         }
     }
     let (basin_id, sink_type, basin_count) = assign_basins(&order, &receiver, ocean, &water_class);
@@ -1379,7 +1540,7 @@ fn run_hydrology(
     let river_properties = river_properties(
         &receiver,
         ocean,
-        &water_class,
+        &preserved_waterbody_support,
         &contributing_area,
         &discharge,
         &flow_slope,
@@ -1438,6 +1599,8 @@ fn run_hydrology(
     depression_id_out.copy_from_slice(&depression_id);
     lake_id_out.copy_from_slice(&lake_id);
     water_class_out.copy_from_slice(&water_class);
+    lake_fraction_out.copy_from_slice(&lake_fraction);
+    wetland_fraction_out.copy_from_slice(&wetland_fraction);
     for cell in 0..total {
         fill_depth_out[cell] = if ocean[cell] == 0 {
             (initial_flood.filled[cell] - elevation[cell]).max(0.0)
@@ -1479,12 +1642,12 @@ fn run_hydrology(
             / annual_runoff_km3.max(1e-12);
     let lake_count = depressions
         .iter()
-        .filter(|depression| depression.lake_id >= 0)
+        .filter(|depression| depression.lake_id >= 0 && depression.class_code != WATER_WETLAND)
         .count();
     let closed_sink_count = order.iter().filter(|cell| receiver[**cell] < 0).count();
     let lake_volume_km3 = depressions
         .iter()
-        .filter(|depression| depression.lake_id >= 0)
+        .filter(|depression| depression.lake_id >= 0 && depression.class_code != WATER_WETLAND)
         .map(|depression| depression.water_volume_km3)
         .sum();
     let breach_sediment_pulse_km3 = breach_records
@@ -1569,6 +1732,8 @@ pub unsafe extern "C" fn hydrology_run_cubed_sphere(
     depression_id_out: *mut i32,
     lake_id_out: *mut i32,
     water_class_out: *mut u8,
+    lake_fraction_out: *mut f32,
+    wetland_fraction_out: *mut f32,
     fill_depth_out: *mut f32,
     hydrologic_elevation_out: *mut f32,
     breach_incision_out: *mut f32,
@@ -1606,6 +1771,8 @@ pub unsafe extern "C" fn hydrology_run_cubed_sphere(
         || depression_id_out.is_null()
         || lake_id_out.is_null()
         || water_class_out.is_null()
+        || lake_fraction_out.is_null()
+        || wetland_fraction_out.is_null()
         || fill_depth_out.is_null()
         || hydrologic_elevation_out.is_null()
         || breach_incision_out.is_null()
@@ -1647,6 +1814,8 @@ pub unsafe extern "C" fn hydrology_run_cubed_sphere(
         slice::from_raw_parts_mut(depression_id_out, total),
         slice::from_raw_parts_mut(lake_id_out, total),
         slice::from_raw_parts_mut(water_class_out, total),
+        slice::from_raw_parts_mut(lake_fraction_out, total),
+        slice::from_raw_parts_mut(wetland_fraction_out, total),
         slice::from_raw_parts_mut(fill_depth_out, total),
         slice::from_raw_parts_mut(hydrologic_elevation_out, total),
         slice::from_raw_parts_mut(breach_incision_out, total),
@@ -1698,10 +1867,12 @@ mod tests {
         HydrologyConfig {
             planet_radius_m: 6_371_000.0,
             minimum_depression_depth_m: 20.0,
-            wetland_maximum_depth_m: 35.0,
+            wetland_mean_depth_m: 35.0,
             endorheic_aridity_threshold: 0.35,
             maximum_fill_time_years: 50_000.0,
             lake_seepage_mm_year: 30.0,
+            subgrid_relief_scale: 1.0,
+            subgrid_connected_basin_fraction: 0.50,
             breach_score_threshold: 1.0,
             maximum_breach_incision_m: 800.0,
             breach_length_cells: 2,
@@ -1719,6 +1890,24 @@ mod tests {
             result.extend_from_slice(&[before, after, before, after]);
         }
         result
+    }
+
+    #[test]
+    fn subgrid_hypsometry_integrates_fraction_and_volume() {
+        let (half_fraction, equivalent_depth_m) =
+            subgrid_inundation(100.0, 200.0, 100.0, 20.0, 1.0, 1.0);
+        assert!((half_fraction - 0.5).abs() < 1e-6);
+        assert!((equivalent_depth_m - 25.0).abs() < 1e-9);
+
+        let (full_fraction, equivalent_depth_m) =
+            subgrid_inundation(100.0, 200.0, 350.0, 20.0, 1.0, 1.0);
+        assert!((full_fraction - 1.0).abs() < 1e-6);
+        assert!((equivalent_depth_m - 250.0).abs() < 1e-9);
+
+        let (clipped_fraction, equivalent_depth_m) =
+            subgrid_inundation(100.0, 200.0, 100.0, 20.0, 1.0, 0.25);
+        assert!((clipped_fraction - 0.25).abs() < 1e-6);
+        assert!((equivalent_depth_m - 18.75).abs() < 1e-9);
     }
 
     #[test]
@@ -1746,16 +1935,42 @@ mod tests {
         let neighbors = line_neighbors(elevation.len());
         let area_km2 = [100.0; 5];
         let flood = priority_flood(&elevation, &ocean, &neighbors).unwrap();
-        let (depression_id, template) =
-            find_depressions(&flood, &elevation, &ocean, &neighbors, &area_km2, 20.0);
+        let relief = [100.0; 5];
+        let (depression_id, template) = find_depressions(
+            &flood,
+            &elevation,
+            &relief,
+            &ocean,
+            &neighbors,
+            &area_km2,
+            &test_config(),
+        );
         assert_eq!(template.len(), 1);
         let owner = depression_catchments(&flood, &depression_id, &ocean);
         let rock = [0.8; 5];
         let accommodation = [0.5; 5];
 
-        let mut wet = template;
+        assert!(template[0].maximum_depth_m > template[0].mean_depth_m);
+        let mut shallow = template.clone();
+        let mut wetland_config = test_config();
+        wetland_config.wetland_mean_depth_m =
+            0.5 * (template[0].maximum_depth_m + template[0].mean_depth_m);
         let wet_runoff = vec![10.0; MONTHS * elevation.len()];
         let wet_evaporation = vec![5.0; MONTHS * elevation.len()];
+        classify_depressions(
+            &mut shallow,
+            &owner,
+            &area_km2,
+            &wet_runoff,
+            &wet_evaporation,
+            &[1.2; 5],
+            &rock,
+            &accommodation,
+            &wetland_config,
+        );
+        assert_eq!(shallow[0].class_code, WATER_WETLAND);
+
+        let mut wet = template;
         classify_depressions(
             &mut wet,
             &owner,
@@ -1770,8 +1985,15 @@ mod tests {
         assert_eq!(wet[0].class_code, WATER_OVERFLOW_LAKE);
         assert!(wet[0].open_outlet);
 
-        let (depression_id, mut dry) =
-            find_depressions(&flood, &elevation, &ocean, &neighbors, &area_km2, 20.0);
+        let (depression_id, mut dry) = find_depressions(
+            &flood,
+            &elevation,
+            &relief,
+            &ocean,
+            &neighbors,
+            &area_km2,
+            &test_config(),
+        );
         let owner = depression_catchments(&flood, &depression_id, &ocean);
         let dry_runoff = vec![0.001; MONTHS * elevation.len()];
         let dry_evaporation = vec![500.0; MONTHS * elevation.len()];
@@ -1786,14 +2008,26 @@ mod tests {
             &accommodation,
             &test_config(),
         );
-        assign_water_extents(&mut dry, &elevation, &area_km2, 20.0);
+        assign_water_extents(&mut dry, &elevation, &relief, &area_km2, &test_config());
         assert_eq!(dry[0].class_code, WATER_ENDORHEIC);
+        finalize_waterbody_classes(&mut dry, &test_config());
+        assert_eq!(dry[0].class_code, WATER_WETLAND);
+        assert_eq!(dry[0].lake_id, -1);
         assert!(!dry[0].open_outlet);
         assert_eq!(dry[0].water_cells.len(), 1);
+        assert!(dry[0].water_fractions[0] < 1.0);
         assert!(dry[0].water_area_km2 < dry[0].area_km2 + 1e-9);
+        assert!(dry[0].maximum_depth_m >= dry[0].mean_depth_m);
 
-        let (depression_id, mut breached) =
-            find_depressions(&flood, &elevation, &ocean, &neighbors, &area_km2, 20.0);
+        let (depression_id, mut breached) = find_depressions(
+            &flood,
+            &elevation,
+            &relief,
+            &ocean,
+            &neighbors,
+            &area_km2,
+            &test_config(),
+        );
         let owner = depression_catchments(&flood, &depression_id, &ocean);
         let mut breach_config = test_config();
         breach_config.breach_score_threshold = 0.0;
@@ -1829,8 +2063,16 @@ mod tests {
         let neighbors = line_neighbors(elevation.len());
         let area_km2 = [100.0; 6];
         let flood = priority_flood(&elevation, &ocean, &neighbors).unwrap();
-        let (depression_id, mut depressions) =
-            find_depressions(&flood, &elevation, &ocean, &neighbors, &area_km2, 20.0);
+        let relief = [100.0; 6];
+        let (depression_id, mut depressions) = find_depressions(
+            &flood,
+            &elevation,
+            &relief,
+            &ocean,
+            &neighbors,
+            &area_km2,
+            &test_config(),
+        );
         assert_eq!(depressions.len(), 2);
         let owner = depression_catchments(&flood, &depression_id, &ocean);
         let mut runoff = vec![0.001; MONTHS * elevation.len()];

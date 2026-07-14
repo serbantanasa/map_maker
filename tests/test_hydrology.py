@@ -97,6 +97,8 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
         "DepressionID": np.int32,
         "LakeID": np.int32,
         "WaterBodyClass": np.uint8,
+        "LakeFraction": np.float32,
+        "WetlandFraction": np.float32,
         "DepressionFillDepthM": np.float32,
         "HydrologicElevationM": np.float32,
         "BreachIncisionM": np.float32,
@@ -140,11 +142,15 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
 
     contributing_area = arrays["ContributingAreaKm2"].reshape(-1)
     monthly_discharge = arrays["MonthlyDischargeM3s"].reshape(12, -1)
+    depression_catalog = hydrology.artifact_records["DepressionCatalog"].value
+    open_outlet_cells = set(
+        depression_catalog.filter(depression_catalog["open_outlet"])["outlet_cell"].to_pylist()
+    )
     for cell in np.flatnonzero(land.reshape(-1)):
         target = int(flat_receiver[cell])
         if target >= 0 and not flat_ocean[target]:
             assert contributing_area[target] + 1e-8 >= contributing_area[cell]
-            if arrays["LakeID"].reshape(-1)[target] < 0:
+            if target not in open_outlet_cells:
                 assert np.all(monthly_discharge[:, target] + 1e-3 >= monthly_discharge[:, cell])
 
     routed = land & (receiver >= 0)
@@ -156,27 +162,52 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
     assert np.all(arrays["MeanDischargeM3s"] >= 0.0)
     assert np.all(arrays["MeanFlowVelocityMps"] >= 0.0)
     assert np.all(arrays["StreamPowerW"] >= 0.0)
-    assert np.all(arrays["RiverCorridor"][arrays["LakeID"] >= 0] == 0.0)
+    water_fraction = arrays["LakeFraction"] + arrays["WetlandFraction"]
+    assert np.all((arrays["LakeFraction"] >= 0.0) & (arrays["LakeFraction"] <= 1.0))
+    assert np.all((arrays["WetlandFraction"] >= 0.0) & (arrays["WetlandFraction"] <= 1.0))
+    assert np.all(water_fraction <= 1.0 + 1e-6)
+    assert np.all(arrays["LakeFraction"][arrays["WaterBodyClass"] == 1] == 0.0)
+    assert np.all(arrays["WetlandFraction"][arrays["WaterBodyClass"] != 1] == 0.0)
+    assert np.all(arrays["LakeID"][arrays["WetlandFraction"] > 0.0] == -1)
+    assert np.any((water_fraction > 0.0) & (water_fraction < 1.0))
+    assert np.all(arrays["RiverCorridor"][water_fraction >= 0.5] == 0.0)
 
-    depression_catalog = hydrology.artifact_records["DepressionCatalog"].value
     lake_catalog = hydrology.artifact_records["LakeCatalog"].value
+    wetland_catalog = hydrology.artifact_records["WetlandCatalog"].value
     breach_catalog = hydrology.artifact_records["BreachCatalog"].value
     basin_catalog = hydrology.artifact_records["BasinCatalog"].value
     drainage_graph = hydrology.artifact_records["DrainageGraph"].value
+    waterbody_cells = hydrology.artifact_records["WaterBodyCellCatalog"].value
     reaches = hydrology.artifact_records["RiverReachCatalog"].value
     for table in (
         depression_catalog,
         lake_catalog,
+        wetland_catalog,
         breach_catalog,
         basin_catalog,
         drainage_graph,
+        waterbody_cells,
         reaches,
     ):
         assert isinstance(table, pa.Table)
     assert depression_catalog.num_rows > 0
     assert lake_catalog.num_rows > 0
+    assert set(lake_catalog["class_code"].to_pylist()).isdisjoint({1})
+    assert set(wetland_catalog["class_code"].to_pylist()) <= {1}
+    np.testing.assert_array_equal(
+        np.sort(np.asarray(lake_catalog["lake_id"])),
+        np.arange(lake_catalog.num_rows, dtype=np.int32),
+    )
+    assert set(wetland_catalog["lake_id"].to_pylist()) <= {-1}
+    depression_classes = np.asarray(depression_catalog["class_code"])
+    preserved_depression_ids = np.asarray(depression_catalog["depression_id"])[
+        depression_classes != 5
+    ]
+    preserved_support = np.isin(arrays["DepressionID"], preserved_depression_ids)
+    assert np.all(arrays["RiverCorridor"][preserved_support] == 0.0)
     assert basin_catalog.num_rows > 0
     assert drainage_graph.num_rows == int(np.count_nonzero(land))
+    assert waterbody_cells.num_rows == int(np.count_nonzero(water_fraction > 0.0))
     assert reaches.num_rows > 0
     assert {
         "cell_id",
@@ -185,9 +216,38 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
         "sink_type",
         "depression_id",
         "lake_id",
+        "lake_fraction",
+        "wetland_fraction",
         "contributing_area_km2",
         "mean_discharge_m3s",
     } == set(drainage_graph.column_names)
+    assert {
+        "cell_id",
+        "waterbody_id",
+        "depression_id",
+        "lake_id",
+        "class_code",
+        "class_name",
+        "lake_fraction",
+        "wetland_fraction",
+        "covered_area_km2",
+    } == set(waterbody_cells.column_names)
+    np.testing.assert_array_equal(
+        np.asarray(waterbody_cells["waterbody_id"]),
+        np.asarray(waterbody_cells["depression_id"]),
+    )
+    assert np.all(np.asarray(waterbody_cells["covered_area_km2"]) > 0.0)
+    catalog_covered_area = float(np.sum(np.asarray(waterbody_cells["covered_area_km2"])))
+    radius_km = 6_371.0
+    physical_area_km2 = grid.cell_areas * radius_km * radius_km
+    raster_covered_area = float(np.sum(physical_area_km2 * water_fraction))
+    assert catalog_covered_area == pytest.approx(raster_covered_area, rel=1e-6)
+    assert float(np.sum(np.asarray(lake_catalog["water_area_km2"]))) == pytest.approx(
+        float(np.sum(physical_area_km2 * arrays["LakeFraction"])), rel=1e-6
+    )
+    assert float(np.sum(np.asarray(wetland_catalog["water_area_km2"]))) == pytest.approx(
+        float(np.sum(physical_area_km2 * arrays["WetlandFraction"])), rel=1e-6
+    )
     assert {"open_outlet", "outlet_cell", "annual_balance_km3"} <= set(
         depression_catalog.column_names
     )
@@ -248,10 +308,14 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
     assert metadata["annual_open_water_loss_km3"] >= 0.0
     assert metadata["depression_count"] == depression_catalog.num_rows
     assert metadata["lake_count"] == lake_catalog.num_rows
+    assert metadata["wetland_count"] == wetland_catalog.num_rows
+    assert metadata["waterbody_count"] == lake_catalog.num_rows + wetland_catalog.num_rows
     assert metadata["basin_count"] == basin_catalog.num_rows
     assert metadata["reach_count"] == reaches.num_rows
     assert metadata["open_lake_count"] > 0
     assert 0.0 < metadata["lake_land_cell_fraction"] < 0.25
+    assert 0.0 < metadata["lake_land_area_fraction"] < metadata["lake_land_cell_fraction"]
+    assert 0.0 <= metadata["wetland_land_area_fraction"] < 0.25
     assert 0.0 <= metadata["closed_drainage_land_fraction"] < 1.0
 
     visual_dir = engine.context.config.run_visual_dir() / "hydrology"
@@ -271,6 +335,8 @@ def test_hydrology_is_deterministic_and_cacheable(tmp_path: Path):
         "DepressionID",
         "LakeID",
         "WaterBodyClass",
+        "LakeFraction",
+        "WetlandFraction",
         "HydrologicElevationM",
         "FlowReceiverID",
         "ContributingAreaKm2",
@@ -282,9 +348,11 @@ def test_hydrology_is_deterministic_and_cacheable(tmp_path: Path):
     for name in (
         "DepressionCatalog",
         "LakeCatalog",
+        "WetlandCatalog",
         "BreachCatalog",
         "BasinCatalog",
         "DrainageGraph",
+        "WaterBodyCellCatalog",
         "RiverReachCatalog",
     ):
         assert first.artifact_records[name].value.equals(second.artifact_records[name].value)
@@ -294,13 +362,15 @@ def test_hydrology_is_deterministic_and_cacheable(tmp_path: Path):
 def test_hydrology_config_and_cli_reject_invalid_controls():
     with pytest.raises(ValueError, match="Unknown hydrology controls"):
         HydrologyConfig.from_mapping({"draw_rivers": True})
-    with pytest.raises(ValueError, match="wetland_maximum_depth_m"):
-        HydrologyConfig.from_mapping(
-            {"minimum_depression_depth_m": 50.0, "wetland_maximum_depth_m": 20.0}
-        )
+    with pytest.raises(ValueError, match="wetland_mean_depth_m"):
+        HydrologyConfig.from_mapping({"wetland_mean_depth_m": 0.0})
     with pytest.raises(ValueError, match="river_minimum_discharge_m3s"):
         HydrologyConfig.from_mapping(
             {"river_minimum_discharge_m3s": 500.0, "river_discharge_threshold_m3s": 100.0}
         )
+    with pytest.raises(ValueError, match="subgrid_relief_scale"):
+        HydrologyConfig.from_mapping({"subgrid_relief_scale": 0.0})
+    with pytest.raises(ValueError, match="subgrid_connected_basin_fraction"):
+        HydrologyConfig.from_mapping({"subgrid_connected_basin_fraction": 1.1})
     with pytest.raises(SystemExit):
         pipeline_tools_main(["--stage", "hydrology"])

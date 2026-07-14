@@ -1075,3 +1075,39 @@ Failure rule:
 Continental-sized flat plateaus, uniform boundary walls, cube-face seams,
 arbitrary class-to-height painting, and loss of inherited islands are hard
 failures.
+
+## Decision 022: Fractional Coarse Surface Coverage
+
+Status: approved, provisional
+
+Decision:
+Coarse cells are mixed-cover containers rather than atomic terrain labels.
+Surface classes whose physical features are commonly smaller than a cell must
+store area fractions. Hydrologic feature identity and drainage topology remain
+explicit and discrete.
+
+Hydrology rule:
+- Permanent lake and wetland coverage are separate fractions in `[0, 1]`.
+- Lakes retain waterbody identity, level, area, volume, inflow, outflow, spill
+  point, and downstream graph relationships.
+- Rivers remain vector reaches with physical width and discharge rather than
+  converting every crossed cell into a river cell.
+- A sparse cell-to-waterbody table records membership and covered physical area.
+
+Subgrid rule:
+Unresolved terrain relief defines a provisional cell hypsometry. Lake level and
+connected-basin occupancy determine fractional inundation and volume. This is a
+computational approximation, not a substitute for refined bathymetry.
+
+Refinement rule:
+Regional refinement spatially realizes parent fractions while preserving parent
+waterbody identity, drainage connectivity, aggregate area, storage, and flux.
+Refined geometry may redistribute coverage inside the parent. It may instantiate
+multiple minor waterbody objects from explicitly unresolved parent coverage, but
+may not change aggregate water area, storage, or major connectivity merely to
+improve appearance.
+
+Classification rule:
+Permanent lakes, present-day wetlands, seasonal floodplains, and paleowetlands
+are distinct products. Paleowetlands may contribute to geological resource
+history, including coal formation, but are not counted as present-day lakes.

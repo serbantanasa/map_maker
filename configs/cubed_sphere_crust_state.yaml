@@ -64,10 +64,12 @@ stage_overrides:
     runoff_base_fraction: 0.35
   hydrology:
     minimum_depression_depth_m: 20.0
-    wetland_maximum_depth_m: 35.0
+    wetland_mean_depth_m: 35.0
     endorheic_aridity_threshold: 0.35
     maximum_fill_time_years: 50000.0
     lake_seepage_mm_year: 30.0
+    subgrid_relief_scale: 1.0
+    subgrid_connected_basin_fraction: 0.50
     breach_score_threshold: 0.58
     maximum_breach_incision_m: 800.0
     breach_length_cells: 4
