@@ -100,28 +100,51 @@ integrated into `map-maker validate`:
   under arid low inflow, overflow under sustained wet inflow, and breach only
   when the configured erosion criterion is met.
 
-A provisional six-seed face-64 audit produced:
+A fractional-water six-seed face-64 audit produced:
 
 | Metric | Observed range |
 | --- | ---: |
-| Registered lakes | 40-67 |
-| Open lake outlets | 30-46 |
-| Breach events | 0-4 |
-| Lake-covered land cells | 2.8-5.1% |
-| Closed-drainage land | 2.7-22.3% |
+| Permanent lakes | 34-58 |
+| Wetlands | 0-1 |
+| Open lake outlets | 28-53 |
+| Fractional lake area / land | 0.55-1.76% |
+| Fractional wetland area / land | 0-0.007% |
+| Closed-drainage land | 0.94-6.15% |
 
-The generated review sheet is
-`out/hydrology-gallery/hydrology-gallery.png`. These ranges are observations,
-not accepted Earth calibration bands.
+Three face-128 seeds produced `2.16-2.70%` permanent lake area, `0.009-0.067%`
+shallow-water wetland area, and `8.8-24.7%` closed-drainage land. The canonical
+seed reports `2.70%` lake area and passes the provisional Earth-like `1.5-4.0%` lake-area
+band. The band covers published natural-lake estimates of approximately 1.8% of
+all land in [HydroLAKES](https://doi.org/10.1038/ncomms13603) and 3.7% of
+nonglaciated land when much smaller lakes are included in the
+[high-resolution inventory](https://doi.org/10.1002/2014GL060641). It is a
+validation diagnostic, not a global-area clamp.
 
-Resolution stability currently fails. Three face-128 worlds placed roughly
-26-36% of land into closed drainage, materially above the face-64 sweep. Finer
-elevation exposes additional local depressions that can capture drainage which
-the coarse pass sent onward. Do not tune this away with a resolution-specific
-lake count. The required fix is hierarchical hydrology: preserve accepted coarse
-trunk connectivity and flux while refining local basins, tributaries, wetlands,
-and channels. Until that constraint exists, closed-drainage and lake statistics
-are provisional and Pass 1 is not calibrated for arbitrary resolution.
+The previous whole-cell lake statistic is retired as an area estimate. Coarse
+support cells now carry `LakeFraction` and `WetlandFraction`; area diagnostics
+weight those fractions by physical cubed-sphere cell area. These ranges remain
+observations, not proof of calibrated lake morphology or bathymetry.
+
+Lake depth remains provisional. The canonical face-128 seed stores about
+`458,000 km3` in permanent lakes with an area-weighted mean depth near `95 m`.
+That is high relative to Earth and is not accepted as calibrated; sedimentary
+infilling, explicit basin age, glacial excavation, and resolved bathymetric
+hypsometry are still absent.
+
+The shallow-water wetland class remains sparse after classification was corrected
+to use equilibrium subgrid mean depth instead of coarse-cell depth. Ecological
+wetlands require hydroperiod, water table, soils, and vegetation and are not
+calibrated by this lake-depression pass.
+
+Resolution stability still fails. Fractional area removes whole-cell inflation,
+but face-128 worlds retain materially more lakes and closed drainage than the
+face-64 sweep. Finer elevation exposes additional local depressions that can
+capture drainage which the coarse pass sent onward. Do not tune this away with a
+resolution-specific lake count. The required fix is hierarchical hydrology:
+preserve accepted coarse trunk connectivity and flux while refining local basins,
+tributaries, wetlands, and channels. Until that constraint exists, closed-drainage
+and lake statistics are provisional and Pass 1 is not calibrated for arbitrary
+resolution.
 
 ## Calibration Rule
 

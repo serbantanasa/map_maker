@@ -139,16 +139,23 @@ contract for inspection and surrogate training.
 3. The whole upstream catchment contributes monthly runoff. Lake evaporation and
    geology-modulated seepage are subtracted to estimate storage balance and fill
    time.
-4. Shallow systems may remain wetlands. Water-limited systems remain closed;
-   sustained positive balance produces an open outlet. Open systems retain a
-   visible lake while passing accumulated discharge downstream.
+4. Systems with shallow subgrid area-weighted mean depth may remain wetlands.
+   Water-limited systems remain closed; sustained positive balance produces an
+   open outlet. Open systems retain a visible lake while passing accumulated
+   discharge downstream.
 5. Depression nodes are evaluated upstream-to-downstream. Net outflow from an
    upstream open or breached basin contributes to the next depression's monthly
    inflow and can turn a previously terminal lake into a fill-spill lake chain.
-6. Closed lake surface area is an equilibrium subset of the depression, selected
-   from the deepest cells until water loss balances inflow. The whole depression
-   remains part of the drainage basin; it is not all painted as water.
-7. Sustained overflow, available head, discharge, weak rock, and low accommodation
+6. A coarse cell is a container, not an atomic land-cover label. `TerrainReliefM`
+   defines a uniform unresolved elevation distribution around the coarse bedrock
+   elevation. Intersecting a lake level with that distribution produces continuous
+   water area and integrated volume. A connected-basin fraction prevents all
+   hypsometrically low subgrid terrain from being assigned to one water body.
+7. Open lakes use the spill elevation. Closed lakes solve a deterministic
+   area-versus-level curve until evaporation and seepage balance inflow. Each
+   participating cell receives a `LakeFraction` or `WetlandFraction` in `[0, 1]`;
+   the whole depression remains part of the drainage basin.
+8. Sustained overflow, available head, discharge, weak rock, and low accommodation
    produce a breach score. Accepted breaches carve a short coarse outlet path,
    record gorge incision and a sediment pulse, and trigger a second priority flood.
 
@@ -163,9 +170,10 @@ contract for inspection and surrogate training.
   Registered open-water evaporation and seepage are removed at lake outlets
   before discharge continues downstream. Every land cell receives a basin ID and
   propagated sink type.
-- River cells are selected from physical discharge and contributing area. Lake
-  interiors are excluded from channels while flow still accumulates through open
-  water bodies.
+- River cells are selected from physical discharge and contributing area.
+  Provisional BFS routing inside a preserved depression is never emitted as river
+  geometry, including in mixed shoreline cells. Discharge still traverses the
+  drainage graph; refined inlet, lake-crossing, and outlet geometry is deferred.
 - Junction-to-junction reaches form the canonical river graph. Exact cubed-sphere
   cell paths are retained for refinement and a two-pass spherical corner-cutting
   generalization writes smooth unit-XYZ polylines for rendering.
@@ -175,15 +183,18 @@ contract for inspection and surrogate training.
 
 ### Persistent Outputs
 
-Raster support fields include depression/lake IDs and classes, potential fill
-depth, hydrologic elevation, breach incision, receiver IDs, tangent flow vectors,
-slope, contributing area, monthly and mean discharge, velocity, stream power,
-basin and sink IDs, river corridor, and floodplain potential.
+Raster support fields include depression/lake IDs and classes, fractional lake
+and wetland coverage, potential fill depth, hydrologic elevation, breach incision,
+receiver IDs, tangent flow vectors, slope, contributing area, monthly and mean
+discharge, velocity, stream power, basin and sink IDs, river corridor, and
+floodplain potential.
 
-Arrow products are `DepressionCatalog`, `LakeCatalog`, `BreachCatalog`,
-`BasinCatalog`, `DrainageGraph`, and `RiverReachCatalog`. `HydrologyMetadata`
-records physical controls, counts, distribution diagnostics, conservation error,
-and artifact semantics.
+Arrow products are `DepressionCatalog`, separate `LakeCatalog` and
+`WetlandCatalog` products, `WaterBodyCellCatalog`, `BreachCatalog`, `BasinCatalog`,
+`DrainageGraph`, and `RiverReachCatalog`. `WaterBodyCellCatalog` is the sparse
+cell-to-waterbody relation and records covered area, class, and both fractions.
+`HydrologyMetadata` records physical controls, counts, area-weighted diagnostics,
+conservation error, and artifact semantics.
 
 ### Hard Gates
 
@@ -196,6 +207,8 @@ and artifact semantics.
 - Flow vectors are tangent unit vectors on routed cells.
 - Reach IDs and downstream references are valid and the reach graph is acyclic.
 - Exact and smoothed reach geometries share endpoints and remain on the unit sphere.
+- Lake and wetland fractions are finite, bounded by `[0, 1]`, mutually exclusive,
+  and reproduce catalog water area when weighted by physical cell area.
 - Identical inputs produce byte-identical arrays and Arrow tables.
 
 ### Current Hydrology Limits
@@ -209,6 +222,17 @@ and artifact semantics.
 - Land evaporation is provisional and not a dedicated open-water potential
   evaporation field. Lake extent and endorheic statistics therefore remain
   calibration targets.
+- The connected-basin fraction is a coarse subgrid approximation. Hierarchical
+  refinement must replace it with resolved local hypsometry and approach atomic
+  coverage only where the refined cell is genuinely uniform.
+- Depression discovery still begins from coarse mean elevation, and the current
+  sparse membership product has at most one resolved waterbody per cell. It does
+  not yet discover several independent minor lakes inside one coarse cell.
+  Refinement may instantiate those from explicitly unresolved fractional water
+  while preserving parent area and storage.
+- Fractional area is now Earth-plausible in the face-128 audit, but lake depth
+  and total volume remain high. Basin-age sediment infill and explicit
+  bathymetric refinement are required before lake volume is calibrated.
 - Groundwater, infiltration, losing/intermittent reaches, glaciers, engineered
   channels, and explicit delta distributary growth are absent or represented only
   by coarse reach attributes.

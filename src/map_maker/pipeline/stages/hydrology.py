@@ -16,15 +16,18 @@ from ..registry import stage
 from ..visualization import VisualizationRequest, VisualizationResult
 
 EARTH_RADIUS_M = 6_371_000.0
+EARTH_LIKE_LAKE_AREA_FRACTION_RANGE = (0.015, 0.040)
 
 
 @dataclass(frozen=True)
 class HydrologyConfig:
     minimum_depression_depth_m: float = 20.0
-    wetland_maximum_depth_m: float = 35.0
+    wetland_mean_depth_m: float = 35.0
     endorheic_aridity_threshold: float = 0.35
     maximum_fill_time_years: float = 50_000.0
     lake_seepage_mm_year: float = 30.0
+    subgrid_relief_scale: float = 1.0
+    subgrid_connected_basin_fraction: float = 0.50
     breach_score_threshold: float = 0.58
     maximum_breach_incision_m: float = 800.0
     breach_length_cells: int = 4
@@ -48,10 +51,12 @@ class HydrologyConfig:
         config = cls(**values)
         bounds = {
             "minimum_depression_depth_m": (0.1, 2_000.0),
-            "wetland_maximum_depth_m": (0.1, 500.0),
+            "wetland_mean_depth_m": (0.1, 500.0),
             "endorheic_aridity_threshold": (0.05, 10.0),
             "maximum_fill_time_years": (1.0, 10_000_000.0),
             "lake_seepage_mm_year": (0.0, 5_000.0),
+            "subgrid_relief_scale": (0.1, 8.0),
+            "subgrid_connected_basin_fraction": (0.05, 1.0),
             "breach_score_threshold": (0.0, 1.0),
             "maximum_breach_incision_m": (1.0, 5_000.0),
             "breach_length_cells": (1, 64),
@@ -63,8 +68,6 @@ class HydrologyConfig:
             value = getattr(config, name)
             if not np.isfinite(value) or not minimum <= value <= maximum:
                 raise ValueError(f"{name} must be finite and in [{minimum}, {maximum}]")
-        if config.wetland_maximum_depth_m < config.minimum_depression_depth_m:
-            raise ValueError("wetland_maximum_depth_m must be at least minimum_depression_depth_m")
         if config.river_minimum_discharge_m3s > config.river_discharge_threshold_m3s:
             raise ValueError(
                 "river_minimum_discharge_m3s must not exceed river_discharge_threshold_m3s"
@@ -211,6 +214,8 @@ def _hydrology_visualizer(
 ) -> list[VisualizationResult] | None:
     elevation = _result_array(result, "HydrologicElevationM")
     water = _result_array(result, "WaterBodyClass")
+    lake_fraction = _result_array(result, "LakeFraction")
+    wetland_fraction = _result_array(result, "WetlandFraction")
     corridor = _result_array(result, "RiverCorridor")
     floodplain = _result_array(result, "FloodplainPotential")
     basin = _result_array(result, "BasinID")
@@ -220,7 +225,17 @@ def _hydrology_visualizer(
     if (
         any(
             value is None
-            for value in (elevation, water, corridor, floodplain, basin, discharge, breach)
+            for value in (
+                elevation,
+                water,
+                lake_fraction,
+                wetland_fraction,
+                corridor,
+                floodplain,
+                basin,
+                discharge,
+                breach,
+            )
         )
         or reach_record is None
         or not isinstance(reach_record.value, pa.Table)
@@ -228,6 +243,8 @@ def _hydrology_visualizer(
         return None
     assert elevation is not None
     assert water is not None
+    assert lake_fraction is not None
+    assert wetland_fraction is not None
     assert corridor is not None
     assert floodplain is not None
     assert basin is not None
@@ -247,8 +264,12 @@ def _hydrology_visualizer(
         ],
         dtype=np.uint8,
     )
-    water_cells = water > 0
-    terrain[water_cells] = water_palette[np.clip(water[water_cells], 0, 5)]
+    water_coverage = np.clip(lake_fraction + wetland_fraction, 0.0, 1.0)[..., None]
+    water_color = water_palette[np.clip(water, 0, 5)]
+    terrain = (
+        terrain.astype(np.float32) * (1.0 - water_coverage)
+        + water_color.astype(np.float32) * water_coverage
+    ).astype(np.uint8)
     floodplain_alpha = (0.12 * np.clip(floodplain, 0.0, 1.0))[..., None]
     floodplain_color = np.array([88, 145, 103], dtype=np.float32)
     terrain = (
@@ -361,6 +382,8 @@ def _drainage_graph(
     sink_type: np.ndarray,
     depression_id: np.ndarray,
     lake_id: np.ndarray,
+    lake_fraction: np.ndarray,
+    wetland_fraction: np.ndarray,
     contributing_area: np.ndarray,
     mean_discharge: np.ndarray,
     ocean: np.ndarray,
@@ -374,6 +397,10 @@ def _drainage_graph(
             "sink_type": pa.array(sink_type.reshape(-1)[land_cells], type=pa.uint8()),
             "depression_id": pa.array(depression_id.reshape(-1)[land_cells], type=pa.int32()),
             "lake_id": pa.array(lake_id.reshape(-1)[land_cells], type=pa.int32()),
+            "lake_fraction": pa.array(lake_fraction.reshape(-1)[land_cells], type=pa.float32()),
+            "wetland_fraction": pa.array(
+                wetland_fraction.reshape(-1)[land_cells], type=pa.float32()
+            ),
             "contributing_area_km2": pa.array(
                 contributing_area.reshape(-1)[land_cells], type=pa.float64()
             ),
@@ -384,10 +411,45 @@ def _drainage_graph(
     )
 
 
+def _waterbody_cell_catalog(
+    depression_id: np.ndarray,
+    lake_id: np.ndarray,
+    water_class: np.ndarray,
+    lake_fraction: np.ndarray,
+    wetland_fraction: np.ndarray,
+    areas_km2: np.ndarray,
+) -> pa.Table:
+    flat_lake_fraction = lake_fraction.reshape(-1)
+    flat_wetland_fraction = wetland_fraction.reshape(-1)
+    coverage = flat_lake_fraction + flat_wetland_fraction
+    cells = np.flatnonzero(coverage > 0.0).astype(np.int32)
+    classes = water_class.reshape(-1)[cells].astype(np.uint8)
+    return pa.table(
+        {
+            "cell_id": pa.array(cells, type=pa.int32()),
+            "waterbody_id": pa.array(depression_id.reshape(-1)[cells], type=pa.int32()),
+            "depression_id": pa.array(depression_id.reshape(-1)[cells], type=pa.int32()),
+            "lake_id": pa.array(lake_id.reshape(-1)[cells], type=pa.int32()),
+            "class_code": pa.array(classes, type=pa.uint8()),
+            "class_name": pa.array(
+                [WATER_BODY_CLASSES.get(int(code), "unknown") for code in classes],
+                type=pa.string(),
+            ),
+            "lake_fraction": pa.array(flat_lake_fraction[cells], type=pa.float32()),
+            "wetland_fraction": pa.array(flat_wetland_fraction[cells], type=pa.float32()),
+            "covered_area_km2": pa.array(
+                areas_km2.reshape(-1)[cells] * coverage[cells], type=pa.float64()
+            ),
+        }
+    )
+
+
 ARRAY_DTYPES = {
     "DepressionID": np.int32,
     "LakeID": np.int32,
     "WaterBodyClass": np.uint8,
+    "LakeFraction": np.float32,
+    "WetlandFraction": np.float32,
     "DepressionFillDepthM": np.float32,
     "HydrologicElevationM": np.float32,
     "BreachIncisionM": np.float32,
@@ -413,13 +475,15 @@ ARRAY_DTYPES = {
         *ARRAY_DTYPES,
         "DepressionCatalog",
         "LakeCatalog",
+        "WetlandCatalog",
         "BreachCatalog",
         "BasinCatalog",
         "DrainageGraph",
+        "WaterBodyCellCatalog",
         "RiverReachCatalog",
         "HydrologyMetadata",
     ),
-    version="v3",
+    version="v5",
     native_libraries=("hydrology_native",),
     visualizer=_hydrology_visualizer,
 )
@@ -485,7 +549,10 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             f"{metadata['conservation_relative_error']:.3e}"
         )
 
-    lake_catalog = depression_catalog.filter(pc.greater_equal(depression_catalog["lake_id"], 0))
+    registered_lake = pc.greater_equal(depression_catalog["lake_id"], 0)
+    wetland_class = pc.equal(depression_catalog["class_code"], 1)
+    lake_catalog = depression_catalog.filter(registered_lake)
+    wetland_catalog = depression_catalog.filter(wetland_class)
     basin_catalog = _basin_catalog(
         views["BasinID"],
         views["FlowSinkType"],
@@ -500,13 +567,37 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
         views["FlowSinkType"],
         views["DepressionID"],
         views["LakeID"],
+        views["LakeFraction"],
+        views["WetlandFraction"],
         views["ContributingAreaKm2"],
         views["MeanDischargeM3s"],
         ocean.astype(bool),
     )
+    waterbody_cell_catalog = _waterbody_cell_catalog(
+        views["DepressionID"],
+        views["LakeID"],
+        views["WaterBodyClass"],
+        views["LakeFraction"],
+        views["WetlandFraction"],
+        physical_areas_km2,
+    )
     flat_sink = views["FlowSinkType"][land_mask]
     closed_land_fraction = float(np.mean(flat_sink != 1))
-    lake_land_fraction = float(np.mean(views["LakeID"][land_mask] >= 0))
+    waterbody_support_land_cell_fraction = float(
+        np.mean((views["LakeFraction"] + views["WetlandFraction"])[land_mask] > 0.0)
+    )
+    lake_support_land_cell_fraction = float(np.mean(views["LakeFraction"][land_mask] > 0.0))
+    wetland_support_land_cell_fraction = float(np.mean(views["WetlandFraction"][land_mask] > 0.0))
+    land_area_km2 = float(np.sum(physical_areas_km2[land_mask]))
+    lake_land_area_fraction = float(
+        np.sum(physical_areas_km2[land_mask] * views["LakeFraction"][land_mask]) / land_area_km2
+    )
+    wetland_land_area_fraction = float(
+        np.sum(physical_areas_km2[land_mask] * views["WetlandFraction"][land_mask]) / land_area_km2
+    )
+    validation_minimum, validation_maximum = EARTH_LIKE_LAKE_AREA_FRACTION_RANGE
+    lake_area_km2 = float(pc.sum(lake_catalog["water_area_km2"]).as_py() or 0.0)
+    mean_lake_depth_m = float(metadata["lake_volume_km3"] * 1_000.0 / max(lake_area_km2, 1e-12))
     metadata.update(
         {
             **asdict(config),
@@ -515,14 +606,32 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             "effective_river_contributing_area_threshold_km2": controls[
                 "river_contributing_area_threshold_km2"
             ],
-            "open_lake_count": int(pc.sum(depression_catalog["open_outlet"]).as_py() or 0),
+            "waterbody_count": lake_catalog.num_rows + wetland_catalog.num_rows,
+            "open_lake_count": int(pc.sum(lake_catalog["open_outlet"]).as_py() or 0),
+            "open_wetland_count": int(pc.sum(wetland_catalog["open_outlet"]).as_py() or 0),
+            "mean_lake_depth_m": mean_lake_depth_m,
             "closed_drainage_land_fraction": closed_land_fraction,
-            "lake_land_cell_fraction": lake_land_fraction,
+            "lake_land_cell_fraction": lake_support_land_cell_fraction,
+            "lake_support_land_cell_fraction": lake_support_land_cell_fraction,
+            "wetland_support_land_cell_fraction": wetland_support_land_cell_fraction,
+            "waterbody_support_land_cell_fraction": waterbody_support_land_cell_fraction,
+            "lake_land_area_fraction": lake_land_area_fraction,
+            "wetland_land_area_fraction": wetland_land_area_fraction,
+            "inland_water_and_wetland_land_area_fraction": (
+                lake_land_area_fraction + wetland_land_area_fraction
+            ),
+            "earth_like_lake_area_fraction_range": [
+                validation_minimum,
+                validation_maximum,
+            ],
+            "earth_like_lake_area_validation_pass": int(
+                validation_minimum <= lake_land_area_fraction <= validation_maximum
+            ),
             "water_body_classes": {str(code): name for code, name in WATER_BODY_CLASSES.items()},
             "topology": "cubed_sphere",
-            "model": "priority_flood_fill_spill_breach_hydrology_v1",
+            "model": "fractional_priority_flood_fill_spill_breach_hydrology_v2",
             "runoff_semantics": "monthly_climate_runoff_potential_routed_conservatively",
-            "lake_semantics": "explicit_open_or_closed_water_balance_depressions",
+            "lake_semantics": "subgrid_fractional_open_or_closed_water_balance_depressions",
             "river_semantics": "vector_reach_graph_with_support_rasters",
             "breach_semantics": "selective_sustained_overflow_outlet_incision",
         }
@@ -532,9 +641,11 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
         **handles,
         "DepressionCatalog": depression_catalog,
         "LakeCatalog": lake_catalog,
+        "WetlandCatalog": wetland_catalog,
         "BreachCatalog": breach_catalog,
         "BasinCatalog": basin_catalog,
         "DrainageGraph": drainage_graph,
+        "WaterBodyCellCatalog": waterbody_cell_catalog,
         "RiverReachCatalog": reach_catalog,
         "HydrologyMetadata": metadata,
     }
