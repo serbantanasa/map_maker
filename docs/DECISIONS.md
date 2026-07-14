@@ -1111,3 +1111,76 @@ Classification rule:
 Permanent lakes, present-day wetlands, seasonal floodplains, and paleowetlands
 are distinct products. Paleowetlands may contribute to geological resource
 history, including coal formation, but are not counted as present-day lakes.
+
+## Decision 023: Hierarchical Rivers And Subgrid Fluvial Incision
+
+Status: approved, provisional
+
+Decision:
+River channels, valleys, and floodplains remain explicit subgrid features at
+every level where their physical width is smaller than a cell. A river may cross
+a coarse cell without converting that cell into an atomic river or lowering its
+entire bedrock surface. Literal raster incision is permitted only where the
+incised landform is genuinely resolved.
+
+Scale interpretation:
+- Face-128 is a global structural level whose average Earth-size cell is about
+  5,200 km2, or 72 km across. It may support drainage topology, basin-scale
+  denudation, and source-to-sink budgets, but not resolved channel or valley
+  morphology.
+- Approximately 2-5 km cells may resolve major valley corridors and
+  floodplains, while most channels remain vector or fractional features.
+- Approximately 500 m-1 km regional cells may resolve many valleys and broad
+  floodplains, but ordinary rivers and streams still retain explicit reach
+  geometry and physical width.
+- Approximately 100 m cells may resolve large rivers; minor channels remain
+  subgrid. Human-scale channel realization belongs to later local refinement.
+
+Canonical reach rule:
+Each river reach preserves centerline geometry, upstream and downstream
+relationships, entry and exit anchors, bed elevation, discharge, velocity,
+physical width and depth, valley and floodplain width, incision depth, eroded
+volume, sediment load, and provenance where available. Rendering width is not
+simulation width and may not feed physical calculations.
+
+Coarse-cell rule:
+A sparse cell-to-reach relation stores reach length inside the cell and derived
+channel, valley, and floodplain area fractions. Channel coverage is based on
+physical reach width times in-cell length divided by physical cell area.
+Incision lowers the reach bed and changes the unresolved low-elevation portion
+of the cell hypsometry. It does not lower the whole cell by the reach incision
+depth. Any change to cell-mean elevation derives only from a conserved physical
+volume divided by cell area.
+
+Refinement contract:
+- Child drainage inherits the parent reach entry and exit anchors, downstream
+  identity, monthly discharge, sediment flux, and accepted lake or ocean sink.
+- Fine routing may add tributaries, meanders, local wetlands, and distributaries
+  or redistribute unresolved coverage, but may not silently redirect a major
+  trunk or change an inherited water and sediment budget.
+- Fine incised and deposited volumes restrict to their parent totals within the
+  configured conservation tolerance.
+- Refined terrain must reproduce parent area-weighted elevation and unresolved
+  relief constraints before local process adjustments are applied.
+- Aggregation publishes conserved budgets and distribution updates; it does not
+  replace accepted coarse topology solely because a finer realization looks
+  preferable.
+
+Implementation sequence:
+1. Establish registered multiresolution reach and sparse membership artifacts.
+2. Select one complete drainage basin and refine it while preserving its outlet,
+   trunk identity, discharge, and sediment boundary conditions.
+3. Realize constrained local routing and subgrid valley properties in that
+   basin.
+4. Run fluvial incision and conservative sediment routing at the finest active
+   level, then restrict budgets and terrain-distribution changes upward.
+5. Generalize the proven regional path to additional basins and production
+   resolution levels.
+
+Failure conditions:
+- Cell-wide trenches produced by subcell rivers.
+- Simulation width inferred from cartographic stroke width.
+- Refined rivers that do not connect to inherited parent reaches or sinks.
+- Water, sediment, or incision volumes that change under restriction.
+- Global fine grids used where selected regional refinement provides the same
+  physical result within the accepted hierarchy.
