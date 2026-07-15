@@ -6,6 +6,7 @@ from pathlib import Path
 
 import numpy as np
 import pyarrow as pa
+import pyarrow.compute as pc
 import pytest
 
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
@@ -259,6 +260,7 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
         "downstream_reach_id",
         "basin_id",
         "cell_path",
+        "reach_kind",
         "polyline_on_cubed_sphere",
         "flow_direction_vector",
         "slope",
@@ -284,6 +286,15 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
     downstream = np.asarray(reaches["downstream_reach_id"].combine_chunks())
     np.testing.assert_array_equal(reach_ids, np.arange(len(reach_ids), dtype=np.int32))
     assert np.all((downstream == -1) | ((downstream >= 0) & (downstream < len(reach_ids))))
+    connector = np.asarray(pc.equal(reaches["reach_kind"], "connector"))
+    if np.any(connector):
+        assert np.all(np.asarray(reaches["channel_width_m"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["channel_depth_m"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["valley_width_m"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["floodplain_width_m"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["incision_m"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["velocity_mean"])[connector] == 0.0)
+        assert np.all(np.asarray(reaches["stream_power"])[connector] == 0.0)
     for reach_id in reach_ids:
         seen: set[int] = set()
         current = int(reach_id)
@@ -312,6 +323,9 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
     assert metadata["waterbody_count"] == lake_catalog.num_rows + wetland_catalog.num_rows
     assert metadata["basin_count"] == basin_catalog.num_rows
     assert metadata["reach_count"] == reaches.num_rows
+    assert metadata["connector_reach_count"] == int(np.count_nonzero(connector))
+    assert metadata["reach_source_to_sink_ready"] == 1
+    assert metadata["reach_terminal_unresolved_count"] == 0
     assert metadata["open_lake_count"] > 0
     assert 0.0 < metadata["lake_land_cell_fraction"] < 0.25
     assert 0.0 < metadata["lake_land_area_fraction"] < metadata["lake_land_cell_fraction"]

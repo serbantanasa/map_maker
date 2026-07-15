@@ -81,9 +81,11 @@ regional terrain remain implementation milestones. A first sparse basin-refineme
 stage now realizes one inherited trunk network at approximately 5 km scale,
 preserves parent terrain means and convergent reach junctions, and stores physical
 channel, valley, and floodplain fractions without carving whole cells. It also
-publishes inherited terminal gaps and source-to-sink readiness; the canonical
-basin is not yet cleared for conservative erosion. The current output is a
-functional prototype rather than an atlas-grade world.
+closes coarse extraction gaps with zero-width hydrologic connectors, verifies
+source-to-sink readiness, and conserves broad valley and floodplain support in
+nearby fine cells. The canonical basin now passes the input gates for the first
+conservative erosion pass, but no refined erosion has yet been applied. The
+current output is a functional prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -141,7 +143,7 @@ uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_st
 # Canonical lakes, breaches, drainage graph, basins, and vector river reaches
 uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_state.yaml
 
-# One sparse face-2048 basin with inherited trunks and subgrid valley fractions
+# One sparse face-2048 basin with connected trunks and conserved corridor support
 uv run map-maker-pipeline --stage basin_refinement --config configs/cubed_sphere_crust_state.yaml
 ```
 

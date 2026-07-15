@@ -444,6 +444,48 @@ def _waterbody_cell_catalog(
     )
 
 
+def _reach_readiness(
+    reaches: pa.Table,
+    receiver: np.ndarray,
+    sink_type: np.ndarray,
+    basin_id: np.ndarray,
+) -> dict[str, int]:
+    flat_receiver = receiver.reshape(-1)
+    flat_sink = sink_type.reshape(-1)
+    flat_basin = basin_id.reshape(-1)
+    terminal_ocean = 0
+    terminal_registered_sink = 0
+    terminal_unresolved = 0
+    terminal_count = 0
+    for downstream, to_node in zip(
+        np.asarray(reaches["downstream_reach_id"], dtype=np.int32),
+        np.asarray(reaches["to_node"], dtype=np.int32),
+        strict=True,
+    ):
+        if downstream >= 0:
+            continue
+        terminal_count += 1
+        cell = int(to_node)
+        if not 0 <= cell < len(flat_basin):
+            terminal_unresolved += 1
+            continue
+        target = int(flat_receiver[cell])
+        target_is_ocean = 0 <= target < len(flat_basin) and int(flat_basin[target]) < 0
+        if int(flat_basin[cell]) < 0 or target_is_ocean:
+            terminal_ocean += 1
+        elif target < 0 and int(flat_sink[cell]) in (2, 3, 4):
+            terminal_registered_sink += 1
+        else:
+            terminal_unresolved += 1
+    return {
+        "reach_terminal_count": terminal_count,
+        "reach_terminal_ocean_count": terminal_ocean,
+        "reach_terminal_registered_sink_count": terminal_registered_sink,
+        "reach_terminal_unresolved_count": terminal_unresolved,
+        "reach_source_to_sink_ready": int(terminal_unresolved == 0),
+    }
+
+
 ARRAY_DTYPES = {
     "DepressionID": np.int32,
     "LakeID": np.int32,
@@ -483,7 +525,7 @@ ARRAY_DTYPES = {
         "RiverReachCatalog",
         "HydrologyMetadata",
     ),
-    version="v5",
+    version="v6",
     native_libraries=("hydrology_native",),
     visualizer=_hydrology_visualizer,
 )
@@ -581,6 +623,28 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
         views["WetlandFraction"],
         physical_areas_km2,
     )
+    connector_mask = np.asarray(pc.equal(reach_catalog["reach_kind"], "connector"))
+    connector_count = int(np.count_nonzero(connector_mask))
+    for field in (
+        "channel_width_m",
+        "channel_depth_m",
+        "valley_width_m",
+        "floodplain_width_m",
+        "velocity_mean",
+        "stream_power",
+        "incision_m",
+    ):
+        values = np.asarray(reach_catalog[field], dtype=np.float32)
+        if connector_count and np.any(values[connector_mask] != 0.0):
+            raise RuntimeError(f"hydrologic connectors must publish zero {field}")
+    reach_readiness = _reach_readiness(
+        reach_catalog,
+        views["FlowReceiverID"],
+        views["FlowSinkType"],
+        views["BasinID"],
+    )
+    if reach_readiness["reach_source_to_sink_ready"] != 1:
+        raise RuntimeError("river reach graph contains unresolved source-to-sink terminals")
     flat_sink = views["FlowSinkType"][land_mask]
     closed_land_fraction = float(np.mean(flat_sink != 1))
     waterbody_support_land_cell_fraction = float(
@@ -601,12 +665,21 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
     metadata.update(
         {
             **asdict(config),
+            **reach_readiness,
             "planet_radius_m": radius_m,
             "median_land_cell_area_km2": median_land_cell_area,
             "effective_river_contributing_area_threshold_km2": controls[
                 "river_contributing_area_threshold_km2"
             ],
             "waterbody_count": lake_catalog.num_rows + wetland_catalog.num_rows,
+            "connector_reach_count": connector_count,
+            "connector_reach_cell_count": sum(
+                len(path)
+                for path, is_connector in zip(
+                    reach_catalog["cell_path"].to_pylist(), connector_mask, strict=True
+                )
+                if is_connector
+            ),
             "open_lake_count": int(pc.sum(lake_catalog["open_outlet"]).as_py() or 0),
             "open_wetland_count": int(pc.sum(wetland_catalog["open_outlet"]).as_py() or 0),
             "mean_lake_depth_m": mean_lake_depth_m,
@@ -632,7 +705,7 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             "model": "fractional_priority_flood_fill_spill_breach_hydrology_v2",
             "runoff_semantics": "monthly_climate_runoff_potential_routed_conservatively",
             "lake_semantics": "subgrid_fractional_open_or_closed_water_balance_depressions",
-            "river_semantics": "vector_reach_graph_with_support_rasters",
+            "river_semantics": ("vector_channel_reaches_with_zero_width_hydrologic_connectors"),
             "breach_semantics": "selective_sustained_overflow_outlet_incision",
         }
     )

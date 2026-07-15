@@ -1194,3 +1194,72 @@ Failure conditions:
 - Water, sediment, or incision volumes that change under restriction.
 - Global fine grids used where selected regional refinement provides the same
   physical result within the accepted hierarchy.
+
+## Decision 024: Hydrologic Connectors And Conservative Corridor Support
+
+Status: implemented, provisional
+
+Decision:
+The canonical reach graph distinguishes physical river channels from
+zero-width hydrologic connectors. A connector preserves source-to-sink topology
+where routed discharge crosses preserved coarse depression or waterbody support
+in which Hydrology Pass 1 cannot justify open-channel geometry. Ordinary
+below-threshold land gaps may not become connectors. A connector is not a
+hidden river and cannot contribute channel, valley, floodplain, or incision
+area.
+
+Connector contract:
+- Connectors retain reach identity, ordered cell paths, upstream/downstream
+  relationships, discharge, sediment flux, and sink topology needed by later
+  stages.
+- They publish `reach_kind = connector`, zero physical width and depth, zero
+  valley and floodplain width, zero local velocity and stream power, zero
+  incision, `hydrologic_connector` morphology, and a not-applicable bed
+  material.
+- A terminal reach is valid only at an ocean boundary or registered
+  lake/wetland/endorheic sink. Any other terminal blocks refinement and erosion.
+- Regional refinement may replace a connector with resolved inlet, waterbody,
+  outlet, or local channel geometry, but may not infer erosion from the coarse
+  connector itself.
+- Topological path length and physical channel length remain separate. Shared
+  connector endpoints preserve graph continuity but do not add physical channel
+  length or support.
+
+Corridor support contract:
+- Requested channel, floodplain, and valley area derives from physical reach
+  width times in-cell reach length. Rendering width never enters the budget.
+- Physical channel support is reserved first. Valley support is distributed
+  from the centerline into nearby sparse fine cells, and floodplain support is
+  constrained to the allocated valley footprint.
+- Per membership and in aggregate per fine cell, channel support must be no
+  greater than floodplain support, which must be no greater than valley
+  support. The summed support of each type cannot exceed the cell's physical
+  area even where multiple reaches share it.
+- Lateral support records carry zero reach length and zero incision volume.
+  They describe occupied area, not additional channel centerline.
+- Preserved depression parents are process-excluded: topological paths may cross
+  them, but channel, valley, floodplain, and incision memberships may not enter
+  them until resolved local geometry replaces the connector.
+- Requested and represented areas must agree within the configured conservation
+  tolerance. Allocation failure is fatal rather than silently clipping area.
+- Competing valley demands are ordered by spatial scarcity with deterministic
+  fallback orders. Floodplain area is allocated per reach from that reach's
+  already-conserved valley footprint, guaranteeing nested support when the
+  input widths are nested.
+
+Current approximation:
+Lateral allocation is deterministic and prefers nearby lower terrain, but it
+does not yet solve cross-valley flow direction, flood recurrence, or
+process-driven valley morphology. Those refinements may redistribute support
+while preserving the registered reach graph and physical area budgets.
+
+Failure conditions:
+- A connector with nonzero physical channel dimensions or incision.
+- A connector created across ordinary non-waterbody land merely to satisfy the
+  readiness gate.
+- An unresolved land terminal in the canonical reach graph.
+- Physical process support in a connector-owned or preserved-depression parent.
+- Corridor support clipped because it does not fit in a centerline cell.
+- Per-cell support greater than physical cell area or non-nested channel,
+  floodplain, and valley footprints.
+- Lateral support counted as extra reach length or erodible channel area.

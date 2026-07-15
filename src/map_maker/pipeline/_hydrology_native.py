@@ -27,9 +27,11 @@ RIVER_MORPHOLOGY_CLASSES = {
     4: "braided_river",
     5: "delta_distributary",
     6: "endorheic_inflow",
+    7: "hydrologic_connector",
 }
 
 BED_MATERIAL_CLASSES = {
+    0: "not_applicable",
     1: "bedrock",
     2: "gravel",
     3: "sand",
@@ -432,6 +434,10 @@ def _reach_table(records: np.ndarray, vertices: np.ndarray) -> pa.Table:
             "downstream_reach_id": pa.array(downstream, type=pa.int32()),
             "basin_id": pa.array(records["basin_id"], type=pa.int32()),
             "cell_path": pa.array(polylines, type=pa.list_(pa.int32())),
+            "reach_kind": pa.array(
+                np.where(records["morphology_code"] == 7, "connector", "channel"),
+                type=pa.string(),
+            ),
             "flow_direction_vector": _fixed_list(records["flow_direction_vector"], 3),
             "slope": pa.array(records["slope"], type=pa.float32()),
             "strahler_order": pa.array(records["strahler_order"], type=pa.int32()),

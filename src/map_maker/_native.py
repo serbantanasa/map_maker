@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 NATIVE_ABI_VERSION = 2
+NATIVE_ABI_OVERRIDES = {"refinement_native": 3}
 SIMULATION_NATIVE_LIBRARIES = (
     "climate_native",
     "elevation_native",
@@ -109,9 +110,10 @@ def _native_library_info_cached(
         raise NativeLibraryAbiError(
             f"Native library {path} does not expose required ABI symbol {symbol!r}"
         ) from exc
-    if actual_abi != NATIVE_ABI_VERSION:
+    expected_abi = NATIVE_ABI_OVERRIDES.get(name, NATIVE_ABI_VERSION)
+    if actual_abi != expected_abi:
         raise NativeLibraryAbiError(
-            f"Native library {path} uses ABI {actual_abi}; expected {NATIVE_ABI_VERSION}"
+            f"Native library {path} uses ABI {actual_abi}; expected {expected_abi}"
         )
     return {
         "abi_version": actual_abi,

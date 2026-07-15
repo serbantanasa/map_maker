@@ -28,9 +28,9 @@
 7. Climate pass 1.
 8. Hydrology pass 1.
    - A sparse selected-basin refinement gate proves inherited river topology,
-     subgrid physical width, and parent/child conservation before erosion.
-     It must also report complete source-to-sink readiness; erosion remains
-     blocked while inherited reach-threshold gaps exist.
+     subgrid physical width, lateral corridor capacity, and parent/child
+     conservation before erosion. It reports complete source-to-sink readiness
+     through physical channels and zero-width hydrologic connectors.
 9. Erosion and sedimentation.
 10. Hydrology pass 2.
 11. Soils and biomes.
@@ -38,7 +38,7 @@
 13. Selected-region refinement and map export.
 
 The current canonical cubed-sphere implementation reaches Hydrology Pass 1 and
-the selected-basin refinement gate with a
+passes the selected-basin refinement readiness gate with a
 causal, pre-erosion bedrock surface and separate crustal, orogenic, basin, and
 relief-prior artifacts, persisted monthly orbital forcing, and a first seasonal
 climate/orography pass. The older

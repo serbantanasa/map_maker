@@ -1130,6 +1130,35 @@ fn strahler_orders(order: &[usize], receiver: &[i32], river: &[bool]) -> Vec<i32
     result
 }
 
+fn extend_reach_support(
+    receiver: &[i32],
+    ocean: &[u8],
+    river: &[bool],
+    preserved_waterbody_support: &[bool],
+) -> Vec<bool> {
+    let mut support = river.to_vec();
+    for cell in 0..river.len() {
+        if !river[cell] || receiver[cell] < 0 {
+            continue;
+        }
+        let mut downstream = receiver[cell] as usize;
+        while ocean[downstream] == 0 && !river[downstream] {
+            if !preserved_waterbody_support[downstream] {
+                break;
+            }
+            if support[downstream] {
+                break;
+            }
+            support[downstream] = true;
+            if receiver[downstream] < 0 {
+                break;
+            }
+            downstream = receiver[downstream] as usize;
+        }
+    }
+    support
+}
+
 #[allow(clippy::too_many_arguments)]
 fn extract_reaches(
     order: &[usize],
@@ -1138,6 +1167,7 @@ fn extract_reaches(
     basin_id: &[i32],
     sink_type: &[u8],
     river: &[bool],
+    reach_support: &[bool],
     discharge: &[f64],
     direction: &[f32],
     slope: &[f32],
@@ -1149,21 +1179,26 @@ fn extract_reaches(
 ) -> (Vec<RiverReachRecord>, Vec<i32>) {
     let total = receiver.len();
     let mut upstream_count = vec![0usize; total];
+    let mut transition_entry = vec![false; total];
     for cell in 0..total {
-        if river[cell] && receiver[cell] >= 0 && river[receiver[cell] as usize] {
-            upstream_count[receiver[cell] as usize] += 1;
+        if reach_support[cell] && receiver[cell] >= 0 && reach_support[receiver[cell] as usize] {
+            let downstream = receiver[cell] as usize;
+            upstream_count[downstream] += 1;
+            transition_entry[downstream] |= river[cell] != river[downstream];
         }
     }
     let starts: Vec<usize> = order
         .iter()
         .copied()
-        .filter(|cell| river[*cell] && upstream_count[*cell] != 1)
+        .filter(|cell| {
+            reach_support[*cell] && (upstream_count[*cell] != 1 || transition_entry[*cell])
+        })
         .collect();
     let mut reach_by_start = vec![-1i32; total];
     for (reach_id, start) in starts.iter().enumerate() {
         reach_by_start[*start] = reach_id as i32;
     }
-    let cell_order = strahler_orders(order, receiver, river);
+    let cell_order = strahler_orders(order, receiver, reach_support);
     let mut records = Vec::with_capacity(starts.len());
     let mut vertices = Vec::new();
     for (reach_index, start) in starts.iter().enumerate() {
@@ -1182,7 +1217,11 @@ fn extract_reaches(
                 vertices.push(next as i32);
                 break;
             }
-            if !river[next] {
+            if !reach_support[next] {
+                vertices.push(next as i32);
+                break;
+            }
+            if river[current] != river[next] {
                 vertices.push(next as i32);
                 break;
             }
@@ -1203,6 +1242,7 @@ fn extract_reaches(
         } else {
             -1
         };
+        let is_connector = !river[*start];
         let mut monthly = [0.0f32; MONTHS];
         let mut monthly_velocity = [0.0f32; MONTHS];
         for month in 0..MONTHS {
@@ -1213,7 +1253,11 @@ fn extract_reaches(
                     .sum::<f64>()
                     / MONTHS as f64)
                     .max(0.01) as f32;
-            monthly_velocity[month] = (velocity[*start] * q_ratio.powf(0.16)).clamp(0.08, 10.0);
+            monthly_velocity[month] = if is_connector {
+                0.0
+            } else {
+                (velocity[*start] * q_ratio.powf(0.16)).clamp(0.08, 10.0)
+            };
         }
         let discharge_mean = monthly.iter().sum::<f32>() / MONTHS as f32;
         let slope_mean =
@@ -1256,7 +1300,9 @@ fn extract_reaches(
         .clamp(0.0, 1.0);
         let downstream_is_ocean = receiver[*cells.last().expect("reach cell")] >= 0
             && ocean[receiver[*cells.last().expect("reach cell")] as usize] != 0;
-        let morphology_code = if sink_type[*start] == SINK_ENDORHEIC {
+        let morphology_code = if is_connector {
+            7
+        } else if sink_type[*start] == SINK_ENDORHEIC {
             6
         } else if downstream_is_ocean && floodplain_mean > 0.45 {
             5
@@ -1269,7 +1315,9 @@ fn extract_reaches(
         } else {
             3
         };
-        let bed_material_code = if slope_mean > 0.012 {
+        let bed_material_code = if is_connector {
+            0
+        } else if slope_mean > 0.012 {
             1
         } else if slope_mean > 0.003 {
             2
@@ -1278,9 +1326,13 @@ fn extract_reaches(
         } else {
             4
         };
-        let incision_m = (hydrologic_elevation[*start] - hydrologic_elevation[to_node])
-            .max(0.0)
-            .min(relief_mean.max(0.0));
+        let incision_m = if is_connector {
+            0.0
+        } else {
+            (hydrologic_elevation[*start] - hydrologic_elevation[to_node])
+                .max(0.0)
+                .min(relief_mean.max(0.0))
+        };
         let sediment_load_kg_s = discharge_mean
             * (0.002 + 0.035 * (relief_mean / 1_000.0).clamp(0.0, 3.0))
             * (1.0 + 10.0 * slope_mean).clamp(1.0, 3.0);
@@ -1299,15 +1351,19 @@ fn extract_reaches(
             slope: slope_mean,
             discharge_mean,
             discharge_seasonal: monthly,
-            velocity_mean,
+            velocity_mean: if is_connector { 0.0 } else { velocity_mean },
             velocity_seasonal: monthly_velocity,
-            stream_power: power_mean,
-            channel_width_m,
-            channel_depth_m,
-            valley_width_m,
-            floodplain_width_m,
-            meander_index,
-            braiding_index,
+            stream_power: if is_connector { 0.0 } else { power_mean },
+            channel_width_m: if is_connector { 0.0 } else { channel_width_m },
+            channel_depth_m: if is_connector { 0.0 } else { channel_depth_m },
+            valley_width_m: if is_connector { 0.0 } else { valley_width_m },
+            floodplain_width_m: if is_connector {
+                0.0
+            } else {
+                floodplain_width_m
+            },
+            meander_index: if is_connector { 1.0 } else { meander_index },
+            braiding_index: if is_connector { 0.0 } else { braiding_index },
             incision_m,
             sediment_load_kg_s,
         });
@@ -1547,6 +1603,12 @@ fn run_hydrology(
         relief,
         config,
     );
+    let reach_support = extend_reach_support(
+        &receiver,
+        ocean,
+        &river_properties.river,
+        &preserved_waterbody_support,
+    );
     let (reach_records, reach_vertices) = extract_reaches(
         &order,
         &receiver,
@@ -1554,6 +1616,7 @@ fn run_hydrology(
         &basin_id,
         &sink_type,
         &river_properties.river,
+        &reach_support,
         &discharge,
         &flow_direction,
         &flow_slope,
@@ -1926,6 +1989,27 @@ mod tests {
         let ocean = [1, 0, 0];
         assert!(topological_order(&[-1, 2, 1], &ocean).is_none());
         assert!(topological_order(&[-1, 0, 1], &ocean).is_some());
+    }
+
+    #[test]
+    fn reach_support_bridges_nonriver_depression_cells() {
+        let receiver = [1, 2, 3, 4, 5, -1, 5];
+        let ocean = [0, 0, 0, 0, 0, 1, 0];
+        let river = [true, true, false, false, true, false, false];
+        let preserved = [false, false, true, true, false, false, false];
+        let support = extend_reach_support(&receiver, &ocean, &river, &preserved);
+        assert_eq!(support, vec![true, true, true, true, true, false, false]);
+        assert_eq!(
+            extend_reach_support(&receiver, &ocean, &river, &[false; 7]),
+            river
+        );
+
+        let branched_receiver = [2, 2, 3, -1];
+        let branched_support = [true; 4];
+        assert_eq!(
+            strahler_orders(&[0, 1, 2, 3], &branched_receiver, &branched_support),
+            vec![1, 1, 2, 2]
+        );
     }
 
     #[test]

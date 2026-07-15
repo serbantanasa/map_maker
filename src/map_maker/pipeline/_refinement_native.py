@@ -133,6 +133,7 @@ int32_t refinement_run_basin(
     const float* parent_elevation_m,
     const float* parent_relief_m,
     const double* parent_area_steradians,
+    const uint8_t* parent_process_excluded,
     int32_t reach_count,
     const int32_t* reach_ids,
     const int32_t* reach_from_nodes,
@@ -140,6 +141,7 @@ int32_t refinement_run_basin(
     const int32_t* reach_offsets,
     int32_t reach_parent_cell_count,
     const int32_t* reach_parent_cells,
+    const uint8_t* reach_parent_channel_support,
     const float* channel_width_m,
     const float* valley_width_m,
     const float* floodplain_width_m,
@@ -164,8 +166,8 @@ try:
     _abi_version = int(_lib.refinement_native_abi_version())
 except AttributeError as exc:
     raise NativeLibraryAbiError("refinement_native lacks its required API") from exc
-if _abi_version != 2:
-    raise NativeLibraryAbiError(f"refinement_native uses ABI {_abi_version}; expected ABI 2")
+if _abi_version != 3:
+    raise NativeLibraryAbiError(f"refinement_native uses ABI {_abi_version}; expected ABI 3")
 
 for c_name, dtype in (
     ("RefinedCellRecord", REFINED_CELL_DTYPE),
@@ -217,11 +219,13 @@ def run_basin_refinement(
     parent_elevation_m: np.ndarray,
     parent_relief_m: np.ndarray,
     parent_area_steradians: np.ndarray,
+    parent_process_excluded: np.ndarray,
     reach_ids: np.ndarray,
     reach_from_nodes: np.ndarray,
     reach_to_nodes: np.ndarray,
     reach_offsets: np.ndarray,
     reach_parent_cells: np.ndarray,
+    reach_parent_channel_support: np.ndarray,
     channel_width_m: np.ndarray,
     valley_width_m: np.ndarray,
     floodplain_width_m: np.ndarray,
@@ -247,6 +251,11 @@ def run_basin_refinement(
             name="parent_area_steradians",
             dtype=np.dtype(np.float64),
         ),
+        "parent_process_excluded": _input(
+            parent_process_excluded,
+            name="parent_process_excluded",
+            dtype=np.dtype(np.uint8),
+        ),
         "reach_ids": _input(reach_ids, name="reach_ids", dtype=np.dtype(np.int32)),
         "reach_from_nodes": _input(
             reach_from_nodes, name="reach_from_nodes", dtype=np.dtype(np.int32)
@@ -255,6 +264,11 @@ def run_basin_refinement(
         "reach_offsets": _input(reach_offsets, name="reach_offsets", dtype=np.dtype(np.int32)),
         "reach_parent_cells": _input(
             reach_parent_cells, name="reach_parent_cells", dtype=np.dtype(np.int32)
+        ),
+        "reach_parent_channel_support": _input(
+            reach_parent_channel_support,
+            name="reach_parent_channel_support",
+            dtype=np.dtype(np.uint8),
         ),
         "channel_width_m": _input(
             channel_width_m, name="channel_width_m", dtype=np.dtype(np.float32)
@@ -269,8 +283,30 @@ def run_basin_refinement(
     reach_count = len(arrays["reach_ids"])
     if parent_count == 0 or reach_count == 0:
         raise ValueError("selected basin must contain parent cells and river reaches")
+    for name in (
+        "parent_elevation_m",
+        "parent_relief_m",
+        "parent_area_steradians",
+        "parent_process_excluded",
+    ):
+        if len(arrays[name]) != parent_count:
+            raise ValueError(f"{name} must contain parent_count values")
+    for name in (
+        "reach_from_nodes",
+        "reach_to_nodes",
+        "channel_width_m",
+        "valley_width_m",
+        "floodplain_width_m",
+        "incision_m",
+    ):
+        if len(arrays[name]) != reach_count:
+            raise ValueError(f"{name} must contain reach_count values")
     if len(arrays["reach_offsets"]) != reach_count + 1:
         raise ValueError("reach_offsets must contain reach_count + 1 values")
+    if len(arrays["reach_parent_channel_support"]) != len(arrays["reach_parent_cells"]):
+        raise ValueError(
+            "reach_parent_channel_support must contain one value per reach parent cell"
+        )
 
     config = _ffi.new("RefinementConfig*")
     for name, value in controls.items():
@@ -295,6 +331,7 @@ def run_basin_refinement(
         pointer("parent_elevation_m", "float"),
         pointer("parent_relief_m", "float"),
         pointer("parent_area_steradians", "double"),
+        pointer("parent_process_excluded", "uint8_t"),
         reach_count,
         pointer("reach_ids", "int32_t"),
         pointer("reach_from_nodes", "int32_t"),
@@ -302,6 +339,7 @@ def run_basin_refinement(
         pointer("reach_offsets", "int32_t"),
         len(arrays["reach_parent_cells"]),
         pointer("reach_parent_cells", "int32_t"),
+        pointer("reach_parent_channel_support", "uint8_t"),
         pointer("channel_width_m", "float"),
         pointer("valley_width_m", "float"),
         pointer("floodplain_width_m", "float"),
@@ -319,6 +357,7 @@ def run_basin_refinement(
             3: "invalid or duplicate parent cells",
             4: "invalid inherited reach path or physical attributes",
             5: "fine routing could not satisfy the inherited topology",
+            6: "fine corridor support could not be allocated conservatively",
         }
         raise RuntimeError(
             f"refinement_run_basin failed: {messages.get(status, f'status {status}')}"

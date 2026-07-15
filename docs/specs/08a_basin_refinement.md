@@ -9,12 +9,12 @@ does not yet apply erosion, generate new tributaries, or replace Hydrology Pass
 
 ## Objective
 
-Refine one complete coarse drainage-basin footprint without allocating a global fine raster and
-without converting subcell rivers into atomic raster trenches. Preserve the
-accepted coarse basin, registered reach graph, junctions, physical dimensions,
-and flux attributes while realizing fine child terrain and reach paths. A
-complete footprint does not imply that thresholded Hydrology Pass 1 reaches
-already form a complete source-to-sink network.
+Refine one complete coarse drainage-basin footprint without allocating a global
+fine raster and without converting subcell rivers into atomic raster trenches.
+Preserve the accepted coarse basin, registered reach graph, junctions, physical
+dimensions, and flux attributes while realizing fine child terrain and reach
+paths. Zero-width hydrologic connectors preserve routed source-to-sink topology
+across coarse depression support where open-channel geometry is unresolved.
 
 ## Selection
 
@@ -45,6 +45,12 @@ across. Only selected child records are allocated and persisted.
 - Every inherited coarse reach retains its reach ID, basin, downstream reach,
   discharge, velocity, width, depth, valley and floodplain widths, incision
   potential, sediment load, morphology, and bed material.
+- Physical channel reaches and zero-width hydrologic connectors retain distinct
+  `reach_kind` semantics. Connectors preserve topology and flux but contribute
+  no channel dimensions, corridor area, or incision volume.
+- Topological path length includes the shared graph anchors required to cross
+  connectors. Physical channel length includes only fine segments whose parent
+  Hydrology Pass 1 cell contains channel support.
 - Reaches are processed downstream-first. Terminal reaches retain fine anchors;
   each upstream reach merges onto its registered downstream path inside the
   inherited coarse junction cell, and records the actual fine join cell.
@@ -62,7 +68,7 @@ across. Only selected child records are allocated and persisted.
 
 ## Fractional Support
 
-For every fine reach-cell membership:
+Each centerline membership contributes physical corridor demand:
 
 ```text
 channel_fraction = channel_width_m * reach_length_m / cell_area_m2
@@ -71,26 +77,37 @@ floodplain_fraction = floodplain_width_m * reach_length_m / cell_area_m2
 ```
 
 Fractions are bounded by `[0, 1]`. Broad valley and floodplain rectangles can
-exceed their centerline fine cell; current records cap that cell's represented
-support and report both represented and requested unclipped areas. Later lateral
-corridor realization must place the retained area in neighboring cells rather
-than discard it. Potential incision volume is physical channel width times
-in-cell reach length times inherited incision depth. It remains a diagnostic
-volume and does not lower the full fine cell.
+exceed their centerline fine cell. The allocator reserves physical channel
+support, spreads valley area into nearby sparse cells, and constrains floodplain
+area to the allocated valley footprint. Per-cell capacity is shared across
+reaches, so aggregate support cannot exceed physical cell area. Lateral records
+carry zero reach length and do not duplicate channel length or incision.
+Potential incision volume is physical channel width times in-cell reach length
+times inherited incision depth. It remains a diagnostic volume and does not
+lower the full fine cell.
+
+Preserved-depression parents are process-excluded. Reach topology may cross
+them, but no physical channel, valley, floodplain, or incision membership may
+enter them until local waterbody and outlet geometry is resolved. Connector
+reaches therefore have no `RefinedReachCellCatalog` records.
 
 ## Outputs
 
 - `RefinedBasinCellCatalog`: sparse child IDs, parent IDs, cubed-sphere
-  coordinates, areas, terrain prior, offset, and inherited relief.
+  coordinates, areas, terrain prior, offset, inherited relief, and process
+  exclusion.
 - `RefinedBasinParentCatalog`: parent/child area and elevation restriction
-  audit, including boundary membership.
+  audit, including boundary membership and preserved-depression process
+  exclusion.
 - `RefinedRiverReachCatalog`: inherited attributes, fine paths, downstream join
-  cells, terminal classification/readiness, path length, and spherical
-  polylines.
-- `RefinedReachCellCatalog`: sparse reach length, channel/valley/floodplain
-  fractions, and potential incision volume per fine cell.
+  cells, terminal classification/readiness, separate topological and physical
+  channel lengths, and spherical polylines.
+- `RefinedReachCellCatalog`: sparse reach length, centerline/lateral support
+  role, channel/valley/floodplain fractions, and potential incision volume per
+  fine cell.
 - `BasinRefinementMetadata`: selection, dimensions, conservation errors,
-  topology gates, physical totals, and semantic versioning.
+  channel/connector counts, topology gates, physical totals, and semantic
+  versioning.
 
 ## Hard Gates
 
@@ -102,8 +119,15 @@ volume and does not lower the full fine cell.
   inside the shared coarse junction cell.
 - The combined directed fine network is acyclic and contains no reverse-used
   edge.
+- Every terminal reach ends at an ocean boundary or registered hydrologic sink.
+- Hydrologic connectors have zero physical width, local velocity, stream power,
+  and incision.
+- Physical memberships do not enter preserved-depression parents, including
+  shared connector endpoint cells.
 - Inherited discharge is unchanged.
-- Channel, valley, and floodplain fractions remain finite and bounded.
+- Channel, valley, and floodplain fractions remain finite, nested, and bounded.
+- Summed support of each corridor type does not exceed any fine cell's physical
+  capacity, and represented corridor area conserves requested physical area.
 - Identical seed, configuration, inputs, and native build produce identical
   artifacts.
 
@@ -122,14 +146,15 @@ volume and does not lower the full fine cell.
   the conservative erosion pass and may not be inferred from rendering strokes.
 - The prototype refines one basin per stage run and stores Arrow catalogs rather
   than chunked regional rasters.
-- Reach gaps already present in Hydrology Pass 1 remain visible; refinement does
-  not invent connectivity that the accepted parent graph does not contain.
-- `source_to_sink_ready` remains false while those gaps exist. Conservative
-  erosion and sediment routing must not run on such a basin.
-- Capped valley and floodplain support is not yet spread laterally into adjacent
-  fine cells. Requested and represented areas therefore differ.
+- Coarse connectors are topological placeholders. Refined inlet, lake-crossing,
+  outlet, and channel geometry remain unresolved in those cells, and connectors
+  cannot erode terrain.
+- Lateral support currently uses deterministic proximity and lower terrain. It
+  does not yet solve cross-valley direction, flood recurrence, or physically
+  evolved valley morphology.
+- Scarcity ordering and deterministic retries avoid known greedy allocation
+  failures, but the valley allocator is not a general global optimizer.
 
-The next pass closes inherited source-to-sink threshold gaps and realizes broad
-corridors laterally. Conservative fluvial incision and sediment routing can
-follow only after those readiness gates pass, then aggregate physical budgets
-upward before Hydrology Pass 2.
+The next pass solves junction-consistent channel-bed profiles, applies
+conservative fluvial incision and sediment routing only to physical channel
+reaches, and aggregates physical budgets upward before Hydrology Pass 2.

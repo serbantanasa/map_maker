@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashMap, HashSet, VecDeque};
 
 use topology_native::{
     cubed_sphere_cell_area_steradians, cubed_sphere_cell_xyz, cubed_sphere_decode_index,
@@ -10,7 +10,7 @@ const D4_NEIGHBORS: usize = 4;
 
 #[no_mangle]
 pub extern "C" fn refinement_native_abi_version() -> u32 {
-    2
+    3
 }
 
 #[repr(C)]
@@ -117,6 +117,8 @@ struct Inputs<'a> {
     reach_to_nodes: &'a [i32],
     reach_offsets: &'a [i32],
     reach_parent_cells: &'a [i32],
+    reach_parent_channel_support: &'a [u8],
+    parent_process_excluded: &'a [u8],
     channel_width_m: &'a [f32],
     valley_width_m: &'a [f32],
     floodplain_width_m: &'a [f32],
@@ -206,6 +208,7 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
     if inputs.parent_elevation_m.len() != parent_count
         || inputs.parent_relief_m.len() != parent_count
         || inputs.parent_area_steradians.len() != parent_count
+        || inputs.parent_process_excluded.len() != parent_count
     {
         return Err(1);
     }
@@ -222,6 +225,11 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
     }
     if inputs.reach_offsets.first() != Some(&0)
         || inputs.reach_offsets.last().copied() != Some(inputs.reach_parent_cells.len() as i32)
+        || inputs.reach_parent_channel_support.len() != inputs.reach_parent_cells.len()
+        || inputs
+            .reach_parent_channel_support
+            .iter()
+            .any(|value| *value > 1)
     {
         return Err(4);
     }
@@ -237,6 +245,7 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
             || inputs.parent_relief_m[index] < 0.0
             || !inputs.parent_area_steradians[index].is_finite()
             || inputs.parent_area_steradians[index] <= 0.0
+            || inputs.parent_process_excluded[index] > 1
         {
             return Err(3);
         }
@@ -245,11 +254,13 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
     for reach_index in 0..reach_count {
         if !reach_set.insert(inputs.reach_ids[reach_index])
             || !inputs.channel_width_m[reach_index].is_finite()
-            || inputs.channel_width_m[reach_index] <= 0.0
+            || inputs.channel_width_m[reach_index] < 0.0
             || !inputs.valley_width_m[reach_index].is_finite()
             || inputs.valley_width_m[reach_index] < inputs.channel_width_m[reach_index]
             || !inputs.floodplain_width_m[reach_index].is_finite()
             || inputs.floodplain_width_m[reach_index] < 0.0
+            || inputs.floodplain_width_m[reach_index] < inputs.channel_width_m[reach_index]
+            || inputs.valley_width_m[reach_index] < inputs.floodplain_width_m[reach_index]
             || !inputs.incision_m[reach_index].is_finite()
             || inputs.incision_m[reach_index] < 0.0
         {
@@ -624,6 +635,504 @@ fn bounded_fraction(numerator: f64, denominator: f64) -> f32 {
     }
 }
 
+#[derive(Clone, Copy)]
+struct CorridorDemand {
+    reach_index: usize,
+    reach_id: i32,
+    path_order: i32,
+    center_cell: i32,
+    length_m: f64,
+}
+
+fn nearby_cells(
+    origin: i32,
+    maximum_hops: usize,
+    fine: usize,
+    cells: &[RefinedCellRecord],
+    local_by_id: &HashMap<i32, usize>,
+    process_excluded: &[bool],
+) -> Vec<i32> {
+    let mut visited = HashSet::from([origin]);
+    let mut queue = VecDeque::from([(origin, 0usize)]);
+    let mut candidates = Vec::<(usize, f32, i32)>::new();
+    while let Some((cell, hops)) = queue.pop_front() {
+        if let Some(&local) = local_by_id.get(&cell) {
+            if process_excluded[local] {
+                continue;
+            }
+            candidates.push((hops, cells[local].terrain_elevation_m, cell));
+        }
+        if hops == maximum_hops {
+            continue;
+        }
+        for slot in 0..D4_NEIGHBORS {
+            let Some(neighbor) = cubed_sphere_neighbor_index(cell as usize, slot, fine) else {
+                continue;
+            };
+            let neighbor = neighbor as i32;
+            if local_by_id.contains_key(&neighbor) && visited.insert(neighbor) {
+                queue.push_back((neighbor, hops + 1));
+            }
+        }
+    }
+    candidates.sort_by(|first, second| {
+        first
+            .0
+            .cmp(&second.0)
+            .then_with(|| first.1.total_cmp(&second.1))
+            .then_with(|| first.2.cmp(&second.2))
+    });
+    candidates.into_iter().map(|(_, _, cell)| cell).collect()
+}
+
+fn corridor_hops(width_m: f64, center_area_m2: f64) -> usize {
+    let cell_width_m = center_area_m2.sqrt().max(1.0);
+    ((width_m / cell_width_m).ceil() as usize + 2).clamp(2, 8)
+}
+
+struct CorridorAllocationContext<'a> {
+    fine: usize,
+    cells: &'a [RefinedCellRecord],
+    local_by_id: &'a HashMap<i32, usize>,
+    process_excluded: &'a [bool],
+}
+
+fn reserve_corridor_area(
+    key: (i32, i32),
+    local: usize,
+    amount_m2: f64,
+    allocations: &mut HashMap<(i32, i32), f64>,
+    global_used_m2: &mut [f64],
+    cells: &[RefinedCellRecord],
+) -> Result<(), i32> {
+    let capacity_m2 = cells[local].area_km2 * 1_000_000.0;
+    if global_used_m2[local] + amount_m2 > capacity_m2 + 1e-6 {
+        return Err(6);
+    }
+    *allocations.entry(key).or_insert(0.0) += amount_m2;
+    global_used_m2[local] += amount_m2;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn allocate_corridor_demand(
+    demand: CorridorDemand,
+    width_m: f64,
+    reserved_m2: f64,
+    allocations: &mut HashMap<(i32, i32), f64>,
+    global_used_m2: &mut [f64],
+    upper_bound: Option<&HashMap<(i32, i32), f64>>,
+    path_orders: &mut HashMap<(i32, i32), i32>,
+    context: &CorridorAllocationContext<'_>,
+) -> Result<(), i32> {
+    let requested_m2 = width_m * demand.length_m;
+    let mut remaining_m2 = (requested_m2 - reserved_m2).max(0.0);
+    if remaining_m2 <= 1e-6 {
+        return Ok(());
+    }
+    let center_local = *context.local_by_id.get(&demand.center_cell).ok_or(6)?;
+    let maximum_hops = corridor_hops(width_m, context.cells[center_local].area_km2 * 1_000_000.0);
+    for fine_cell in nearby_cells(
+        demand.center_cell,
+        maximum_hops,
+        context.fine,
+        context.cells,
+        context.local_by_id,
+        context.process_excluded,
+    ) {
+        let local = *context.local_by_id.get(&fine_cell).ok_or(6)?;
+        let key = (demand.reach_id, fine_cell);
+        let cell_area_m2 = context.cells[local].area_km2 * 1_000_000.0;
+        let global_available = (cell_area_m2 - global_used_m2[local]).max(0.0);
+        let nested_available = upper_bound.map_or(f64::INFINITY, |upper| {
+            (upper.get(&key).copied().unwrap_or(0.0)
+                - allocations.get(&key).copied().unwrap_or(0.0))
+            .max(0.0)
+        });
+        let allocated_m2 = remaining_m2.min(global_available).min(nested_available);
+        if allocated_m2 <= 0.0 {
+            continue;
+        }
+        *allocations.entry(key).or_insert(0.0) += allocated_m2;
+        global_used_m2[local] += allocated_m2;
+        path_orders
+            .entry(key)
+            .and_modify(|order| *order = (*order).min(demand.path_order))
+            .or_insert(demand.path_order);
+        remaining_m2 -= allocated_m2;
+        if remaining_m2 <= requested_m2.max(1.0) * 1e-12 {
+            return Ok(());
+        }
+    }
+    Err(6)
+}
+
+fn demand_allocation_capacity(
+    demand: CorridorDemand,
+    width_m: f64,
+    reserved_m2: f64,
+    allocations: &HashMap<(i32, i32), f64>,
+    global_used_m2: &[f64],
+    upper_bound: Option<&HashMap<(i32, i32), f64>>,
+    context: &CorridorAllocationContext<'_>,
+) -> (f64, f64) {
+    let requested_m2 = (width_m * demand.length_m - reserved_m2).max(0.0);
+    let center_local = match context.local_by_id.get(&demand.center_cell) {
+        Some(local) => *local,
+        None => return (requested_m2, 0.0),
+    };
+    let maximum_hops = corridor_hops(width_m, context.cells[center_local].area_km2 * 1_000_000.0);
+    let available_m2 = nearby_cells(
+        demand.center_cell,
+        maximum_hops,
+        context.fine,
+        context.cells,
+        context.local_by_id,
+        context.process_excluded,
+    )
+    .into_iter()
+    .map(|fine_cell| {
+        let local = context.local_by_id[&fine_cell];
+        let key = (demand.reach_id, fine_cell);
+        let cell_area_m2 = context.cells[local].area_km2 * 1_000_000.0;
+        let global_available = (cell_area_m2 - global_used_m2[local]).max(0.0);
+        let nested_available = upper_bound.map_or(f64::INFINITY, |upper| {
+            (upper.get(&key).copied().unwrap_or(0.0)
+                - allocations.get(&key).copied().unwrap_or(0.0))
+            .max(0.0)
+        });
+        global_available.min(nested_available)
+    })
+    .sum();
+    (requested_m2, available_m2)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn allocate_corridor_demands(
+    demands: &[CorridorDemand],
+    widths_m: &[f32],
+    reserved_widths_m: &[f32],
+    allocations: &mut HashMap<(i32, i32), f64>,
+    global_used_m2: &mut [f64],
+    upper_bound: Option<&HashMap<(i32, i32), f64>>,
+    path_orders: &mut HashMap<(i32, i32), i32>,
+    context: &CorridorAllocationContext<'_>,
+) -> Result<(), i32> {
+    let baseline_allocations = allocations.clone();
+    let baseline_used = global_used_m2.to_vec();
+    let baseline_path_orders = path_orders.clone();
+    for attempt in 0..3 {
+        let mut trial_allocations = baseline_allocations.clone();
+        let mut trial_used = baseline_used.clone();
+        let mut trial_path_orders = baseline_path_orders.clone();
+        let mut order = demands.to_vec();
+        if attempt == 0 {
+            let mut scored = order
+                .into_iter()
+                .map(|demand| {
+                    let reserved_m2 =
+                        reserved_widths_m[demand.reach_index] as f64 * demand.length_m;
+                    let (requested, available) = demand_allocation_capacity(
+                        demand,
+                        widths_m[demand.reach_index] as f64,
+                        reserved_m2,
+                        &baseline_allocations,
+                        &baseline_used,
+                        upper_bound,
+                        context,
+                    );
+                    (demand, available - requested, available, requested)
+                })
+                .collect::<Vec<_>>();
+            scored.sort_by(|first, second| {
+                first
+                    .1
+                    .total_cmp(&second.1)
+                    .then_with(|| first.2.total_cmp(&second.2))
+                    .then_with(|| second.3.total_cmp(&first.3))
+                    .then_with(|| first.0.reach_id.cmp(&second.0.reach_id))
+                    .then_with(|| first.0.path_order.cmp(&second.0.path_order))
+            });
+            order = scored.into_iter().map(|entry| entry.0).collect();
+        } else if attempt == 1 {
+            order.sort_by(|first, second| {
+                widths_m[second.reach_index]
+                    .total_cmp(&widths_m[first.reach_index])
+                    .then_with(|| first.reach_id.cmp(&second.reach_id))
+                    .then_with(|| first.path_order.cmp(&second.path_order))
+            });
+        } else {
+            order.sort_by(|first, second| {
+                second
+                    .reach_id
+                    .cmp(&first.reach_id)
+                    .then_with(|| second.path_order.cmp(&first.path_order))
+            });
+        }
+        let succeeded = order.into_iter().all(|demand| {
+            let reserved_m2 = reserved_widths_m[demand.reach_index] as f64 * demand.length_m;
+            allocate_corridor_demand(
+                demand,
+                widths_m[demand.reach_index] as f64,
+                reserved_m2,
+                &mut trial_allocations,
+                &mut trial_used,
+                upper_bound,
+                &mut trial_path_orders,
+                context,
+            )
+            .is_ok()
+        });
+        if succeeded {
+            *allocations = trial_allocations;
+            global_used_m2.copy_from_slice(&trial_used);
+            *path_orders = trial_path_orders;
+            return Ok(());
+        }
+    }
+    Err(6)
+}
+
+fn allocate_nested_corridor_by_reach(
+    demands: &[CorridorDemand],
+    widths_m: &[f32],
+    allocations: &mut HashMap<(i32, i32), f64>,
+    global_used_m2: &mut [f64],
+    upper_bound: &HashMap<(i32, i32), f64>,
+    path_orders: &HashMap<(i32, i32), i32>,
+    context: &CorridorAllocationContext<'_>,
+) -> Result<(), i32> {
+    let mut upper_entries = upper_bound
+        .iter()
+        .map(|(key, area)| (*key, *area))
+        .collect::<Vec<_>>();
+    upper_entries.sort_by_key(|(key, _)| *key);
+    let mut upper_by_cell = vec![0.0f64; context.cells.len()];
+    for ((reach_id, fine_cell), area_m2) in upper_entries {
+        if !area_m2.is_finite() || area_m2 < 0.0 {
+            return Err(6);
+        }
+        let local = *context.local_by_id.get(&fine_cell).ok_or(6)?;
+        upper_by_cell[local] += area_m2;
+        let cell_area_m2 = context.cells[local].area_km2 * 1_000_000.0;
+        if upper_by_cell[local] > cell_area_m2 + 1e-6
+            || allocations
+                .get(&(reach_id, fine_cell))
+                .is_some_and(|allocated| *allocated > area_m2 + 1e-6)
+        {
+            return Err(6);
+        }
+    }
+    let mut requested_by_reach = HashMap::<i32, f64>::new();
+    for demand in demands {
+        *requested_by_reach.entry(demand.reach_id).or_insert(0.0) +=
+            widths_m[demand.reach_index] as f64 * demand.length_m;
+    }
+    let mut reach_ids = requested_by_reach.keys().copied().collect::<Vec<_>>();
+    reach_ids.sort_unstable();
+    for reach_id in reach_ids {
+        let requested_m2 = requested_by_reach[&reach_id];
+        let mut represented_entries = allocations
+            .iter()
+            .filter_map(|((allocated_reach, fine_cell), area)| {
+                (*allocated_reach == reach_id).then_some((*fine_cell, *area))
+            })
+            .collect::<Vec<_>>();
+        represented_entries.sort_by_key(|entry| entry.0);
+        let represented_m2 = represented_entries
+            .into_iter()
+            .map(|(_, area)| area)
+            .sum::<f64>();
+        let mut remaining_m2 = (requested_m2 - represented_m2).max(0.0);
+        let mut candidates = upper_bound
+            .iter()
+            .filter_map(|(&(candidate_reach, fine_cell), &upper_area)| {
+                if candidate_reach != reach_id {
+                    return None;
+                }
+                let key = (reach_id, fine_cell);
+                let available =
+                    (upper_area - allocations.get(&key).copied().unwrap_or(0.0)).max(0.0);
+                (available > 0.0).then_some((
+                    *path_orders.get(&key).unwrap_or(&i32::MAX),
+                    fine_cell,
+                    available,
+                ))
+            })
+            .collect::<Vec<_>>();
+        candidates
+            .sort_by(|first, second| first.0.cmp(&second.0).then_with(|| first.1.cmp(&second.1)));
+        for (_, fine_cell, available_m2) in candidates {
+            let local = *context.local_by_id.get(&fine_cell).ok_or(6)?;
+            let cell_area_m2 = context.cells[local].area_km2 * 1_000_000.0;
+            let global_available_m2 = (cell_area_m2 - global_used_m2[local]).max(0.0);
+            let amount_m2 = remaining_m2.min(available_m2).min(global_available_m2);
+            if amount_m2 <= 0.0 {
+                continue;
+            }
+            *allocations.entry((reach_id, fine_cell)).or_insert(0.0) += amount_m2;
+            global_used_m2[local] += amount_m2;
+            remaining_m2 -= amount_m2;
+            if remaining_m2 <= requested_m2.max(1.0) * 1e-12 {
+                break;
+            }
+        }
+        if remaining_m2 > requested_m2.max(1.0) * 1e-12 {
+            return Err(6);
+        }
+    }
+    Ok(())
+}
+
+fn realize_corridor_memberships(
+    inputs: &Inputs<'_>,
+    fine: usize,
+    cells: &[RefinedCellRecord],
+    local_by_id: &HashMap<i32, usize>,
+    centerline_memberships: Vec<ReachCellRecord>,
+) -> Result<Vec<ReachCellRecord>, i32> {
+    let reach_index_by_id = inputs
+        .reach_ids
+        .iter()
+        .enumerate()
+        .map(|(index, reach_id)| (*reach_id, index))
+        .collect::<HashMap<_, _>>();
+    let mut centerline = HashMap::<(i32, i32), ReachCellRecord>::new();
+    let mut path_orders = HashMap::<(i32, i32), i32>::new();
+    let mut demands = Vec::<CorridorDemand>::with_capacity(centerline_memberships.len());
+    let mut channel_used_m2 = vec![0.0f64; cells.len()];
+    let excluded_parents = inputs
+        .parent_ids
+        .iter()
+        .zip(inputs.parent_process_excluded)
+        .filter_map(|(parent, excluded)| (*excluded != 0).then_some(*parent))
+        .collect::<HashSet<_>>();
+    let process_excluded = cells
+        .iter()
+        .map(|cell| excluded_parents.contains(&cell.parent_cell_id))
+        .collect::<Vec<_>>();
+    for mut record in centerline_memberships {
+        let reach_index = *reach_index_by_id.get(&record.reach_id).ok_or(6)?;
+        let local = *local_by_id.get(&record.fine_cell_id).ok_or(6)?;
+        if process_excluded[local] {
+            return Err(6);
+        }
+        let cell_area_m2 = cells[local].area_km2 * 1_000_000.0;
+        let channel_area_m2 = inputs.channel_width_m[reach_index] as f64 * record.reach_length_m;
+        channel_used_m2[local] += channel_area_m2;
+        if channel_used_m2[local] > cell_area_m2 + 1e-6 {
+            return Err(6);
+        }
+        demands.push(CorridorDemand {
+            reach_index,
+            reach_id: record.reach_id,
+            path_order: record.path_order,
+            center_cell: record.fine_cell_id,
+            length_m: record.reach_length_m,
+        });
+        record.valley_fraction = 0.0;
+        record.floodplain_fraction = 0.0;
+        let key = (record.reach_id, record.fine_cell_id);
+        path_orders.insert(key, record.path_order);
+        centerline.insert(key, record);
+    }
+
+    let context = CorridorAllocationContext {
+        fine,
+        cells,
+        local_by_id,
+        process_excluded: &process_excluded,
+    };
+    let mut valley_allocations = HashMap::<(i32, i32), f64>::new();
+    let mut floodplain_allocations = HashMap::<(i32, i32), f64>::new();
+    let mut valley_used_m2 = vec![0.0f64; cells.len()];
+    let mut floodplain_used_m2 = vec![0.0f64; cells.len()];
+
+    for demand in &demands {
+        let channel_m2 = inputs.channel_width_m[demand.reach_index] as f64 * demand.length_m;
+        if channel_m2 <= 0.0 {
+            continue;
+        }
+        let local = *local_by_id.get(&demand.center_cell).ok_or(6)?;
+        let key = (demand.reach_id, demand.center_cell);
+        reserve_corridor_area(
+            key,
+            local,
+            channel_m2,
+            &mut valley_allocations,
+            &mut valley_used_m2,
+            cells,
+        )?;
+        reserve_corridor_area(
+            key,
+            local,
+            channel_m2,
+            &mut floodplain_allocations,
+            &mut floodplain_used_m2,
+            cells,
+        )?;
+    }
+
+    allocate_corridor_demands(
+        &demands,
+        inputs.valley_width_m,
+        inputs.channel_width_m,
+        &mut valley_allocations,
+        &mut valley_used_m2,
+        None,
+        &mut path_orders,
+        &context,
+    )?;
+
+    allocate_nested_corridor_by_reach(
+        &demands,
+        inputs.floodplain_width_m,
+        &mut floodplain_allocations,
+        &mut floodplain_used_m2,
+        &valley_allocations,
+        &path_orders,
+        &context,
+    )?;
+
+    let mut keys = centerline.keys().copied().collect::<HashSet<_>>();
+    keys.extend(valley_allocations.keys().copied());
+    keys.extend(floodplain_allocations.keys().copied());
+    let mut memberships = Vec::with_capacity(keys.len());
+    for key in keys {
+        let local = *local_by_id.get(&key.1).ok_or(6)?;
+        let cell = cells[local];
+        let cell_area_m2 = cell.area_km2 * 1_000_000.0;
+        let mut record = centerline.get(&key).copied().unwrap_or(ReachCellRecord {
+            reach_id: key.0,
+            fine_cell_id: key.1,
+            parent_cell_id: cell.parent_cell_id,
+            path_order: *path_orders.get(&key).ok_or(6)?,
+            reach_length_m: 0.0,
+            channel_fraction: 0.0,
+            valley_fraction: 0.0,
+            floodplain_fraction: 0.0,
+            potential_incised_volume_m3: 0.0,
+        });
+        record.valley_fraction = bounded_fraction(
+            valley_allocations.get(&key).copied().unwrap_or(0.0),
+            cell_area_m2,
+        );
+        record.floodplain_fraction = bounded_fraction(
+            floodplain_allocations.get(&key).copied().unwrap_or(0.0),
+            cell_area_m2,
+        );
+        memberships.push(record);
+    }
+    memberships.sort_by(|first, second| {
+        first
+            .reach_id
+            .cmp(&second.reach_id)
+            .then_with(|| first.path_order.cmp(&second.path_order))
+            .then_with(|| first.fine_cell_id.cmp(&second.fine_cell_id))
+    });
+    Ok(memberships)
+}
+
 fn refine_reaches(
     inputs: &Inputs<'_>,
     fine: usize,
@@ -632,6 +1141,12 @@ fn refine_reaches(
     ranges: &ParentRanges,
 ) -> Result<ReachGeneration, i32> {
     let factor = inputs.config.factor as usize;
+    let excluded_parent_ids = inputs
+        .parent_ids
+        .iter()
+        .zip(inputs.parent_process_excluded)
+        .filter_map(|(parent, excluded)| (*excluded != 0).then_some(*parent))
+        .collect::<HashSet<_>>();
     let mut anchors = HashMap::<i32, i32>::new();
     for &node in inputs.reach_from_nodes.iter().chain(inputs.reach_to_nodes) {
         if let std::collections::hash_map::Entry::Vacant(entry) = anchors.entry(node) {
@@ -664,6 +1179,17 @@ fn refine_reaches(
         let coarse_start = inputs.reach_offsets[reach_index] as usize;
         let coarse_end = inputs.reach_offsets[reach_index + 1] as usize;
         let coarse_path = &inputs.reach_parent_cells[coarse_start..coarse_end];
+        let supported_parents = coarse_path
+            .iter()
+            .zip(&inputs.reach_parent_channel_support[coarse_start..coarse_end])
+            .filter_map(|(parent, supported)| (*supported != 0).then_some(*parent))
+            .collect::<HashSet<_>>();
+        if supported_parents
+            .iter()
+            .any(|parent| excluded_parent_ids.contains(parent))
+        {
+            return Err(4);
+        }
         let mut transitions = Vec::with_capacity(coarse_path.len() - 1);
         for pair in coarse_path.windows(2) {
             let key = (pair[0], pair[1]);
@@ -762,12 +1288,13 @@ fn refine_reaches(
         });
 
         let channel_width = inputs.channel_width_m[reach_index] as f64;
-        let valley_width = inputs.valley_width_m[reach_index] as f64;
-        let floodplain_width = inputs.floodplain_width_m[reach_index] as f64;
         let incision = inputs.incision_m[reach_index] as f64;
         for (path_order, (&fine_cell, &length)) in path.iter().zip(&cell_lengths).enumerate() {
             let local = *local_by_id.get(&fine_cell).ok_or(5)?;
             let cell = cells[local];
+            if channel_width <= 0.0 || !supported_parents.contains(&cell.parent_cell_id) {
+                continue;
+            }
             let area_m2 = cell.area_km2 * 1_000_000.0;
             memberships.push(ReachCellRecord {
                 reach_id: inputs.reach_ids[reach_index],
@@ -776,12 +1303,13 @@ fn refine_reaches(
                 path_order: path_order as i32,
                 reach_length_m: length,
                 channel_fraction: bounded_fraction(channel_width * length, area_m2),
-                valley_fraction: bounded_fraction(valley_width * length, area_m2),
-                floodplain_fraction: bounded_fraction(floodplain_width * length, area_m2),
+                valley_fraction: 0.0,
+                floodplain_fraction: 0.0,
                 potential_incised_volume_m3: channel_width * length * incision,
             });
         }
     }
+    let memberships = realize_corridor_memberships(inputs, fine, cells, local_by_id, memberships)?;
     Ok((reach_records, all_path_cells, memberships))
 }
 
@@ -900,6 +1428,7 @@ pub unsafe extern "C" fn refinement_run_basin(
     parent_elevation_m: *const f32,
     parent_relief_m: *const f32,
     parent_area_steradians: *const f64,
+    parent_process_excluded: *const u8,
     reach_count: i32,
     reach_ids: *const i32,
     reach_from_nodes: *const i32,
@@ -907,6 +1436,7 @@ pub unsafe extern "C" fn refinement_run_basin(
     reach_offsets: *const i32,
     reach_parent_cell_count: i32,
     reach_parent_cells: *const i32,
+    reach_parent_channel_support: *const u8,
     channel_width_m: *const f32,
     valley_width_m: *const f32,
     floodplain_width_m: *const f32,
@@ -923,6 +1453,7 @@ pub unsafe extern "C" fn refinement_run_basin(
         || parent_elevation_m.is_null()
         || parent_relief_m.is_null()
         || parent_area_steradians.is_null()
+        || parent_process_excluded.is_null()
         || reach_count <= 0
         || reach_ids.is_null()
         || reach_from_nodes.is_null()
@@ -930,6 +1461,7 @@ pub unsafe extern "C" fn refinement_run_basin(
         || reach_offsets.is_null()
         || reach_parent_cell_count <= 0
         || reach_parent_cells.is_null()
+        || reach_parent_channel_support.is_null()
         || channel_width_m.is_null()
         || valley_width_m.is_null()
         || floodplain_width_m.is_null()
@@ -955,12 +1487,20 @@ pub unsafe extern "C" fn refinement_run_basin(
                 parent_area_steradians,
                 parent_count,
             ),
+            parent_process_excluded: std::slice::from_raw_parts(
+                parent_process_excluded,
+                parent_count,
+            ),
             reach_ids: std::slice::from_raw_parts(reach_ids, reach_count),
             reach_from_nodes: std::slice::from_raw_parts(reach_from_nodes, reach_count),
             reach_to_nodes: std::slice::from_raw_parts(reach_to_nodes, reach_count),
             reach_offsets: std::slice::from_raw_parts(reach_offsets, reach_count + 1),
             reach_parent_cells: std::slice::from_raw_parts(
                 reach_parent_cells,
+                reach_parent_cell_count,
+            ),
+            reach_parent_channel_support: std::slice::from_raw_parts(
+                reach_parent_channel_support,
                 reach_parent_cell_count,
             ),
             channel_width_m: std::slice::from_raw_parts(channel_width_m, reach_count),
@@ -1062,6 +1602,8 @@ mod tests {
         let to = [second];
         let offsets = [0i32, 2];
         let path = [first, second];
+        let channel_support = [1u8, 0];
+        let process_excluded = [0u8, 1];
         let channel = [40.0f32];
         let valley = [1_200.0f32];
         let floodplain = [600.0f32];
@@ -1078,11 +1620,13 @@ mod tests {
             parent_elevation_m: &elevations,
             parent_relief_m: &relief,
             parent_area_steradians: &areas,
+            parent_process_excluded: &process_excluded,
             reach_ids: &reach_ids,
             reach_from_nodes: &from,
             reach_to_nodes: &to,
             reach_offsets: &offsets,
             reach_parent_cells: &path,
+            reach_parent_channel_support: &channel_support,
             channel_width_m: &channel,
             valley_width_m: &valley,
             floodplain_width_m: &floodplain,
@@ -1096,6 +1640,10 @@ mod tests {
         assert_eq!(result.stats.path_topology_valid, 1);
         assert!(result.stats.maximum_parent_area_relative_error < 1e-12);
         assert!(result.stats.maximum_parent_elevation_error_m < 1e-3);
+        assert!(result
+            .memberships
+            .iter()
+            .all(|record| record.parent_cell_id == first));
         assert!(result
             .memberships
             .iter()
@@ -1128,6 +1676,8 @@ mod tests {
         let to = [second];
         let offsets = [0i32, 2];
         let path = [first, second];
+        let channel_support = [1u8, 1];
+        let process_excluded = [0u8, 0];
         let channel = [25.0f32];
         let valley = [800.0f32];
         let floodplain = [500.0f32];
@@ -1144,11 +1694,13 @@ mod tests {
             parent_elevation_m: &elevations,
             parent_relief_m: &relief,
             parent_area_steradians: &areas,
+            parent_process_excluded: &process_excluded,
             reach_ids: &reach_ids,
             reach_from_nodes: &from,
             reach_to_nodes: &to,
             reach_offsets: &offsets,
             reach_parent_cells: &path,
+            reach_parent_channel_support: &channel_support,
             channel_width_m: &channel,
             valley_width_m: &valley,
             floodplain_width_m: &floodplain,
@@ -1170,5 +1722,230 @@ mod tests {
             }
         }
         assert_eq!(collapsed, path);
+    }
+
+    #[test]
+    fn wide_corridors_spread_laterally_and_conserve_area() {
+        let coarse = 128usize;
+        let first = cubed_sphere_global_index(0, 64, 63, coarse).unwrap() as i32;
+        let second = cubed_sphere_global_index(0, 64, 64, coarse).unwrap() as i32;
+        let parent_ids = [first, second];
+        let elevations = [140.0f32, 90.0];
+        let relief = [120.0f32, 80.0];
+        let areas = [parent_area(first, coarse), parent_area(second, coarse)];
+        let reach_ids = [11i32];
+        let from = [first];
+        let to = [second];
+        let offsets = [0i32, 2];
+        let path = [first, second];
+        let channel_support = [1u8, 1];
+        let process_excluded = [0u8, 0];
+        let channel = [120.0f32];
+        let valley = [8_000.0f32];
+        let floodplain = [6_000.0f32];
+        let incision = [18.0f32];
+        let inputs = Inputs {
+            config: RefinementConfig {
+                coarse_resolution: coarse as i32,
+                factor: 16,
+                planet_radius_m: 6_371_000.0,
+                terrain_seed: 91,
+                terrain_noise_fraction: 0.4,
+            },
+            parent_ids: &parent_ids,
+            parent_elevation_m: &elevations,
+            parent_relief_m: &relief,
+            parent_area_steradians: &areas,
+            parent_process_excluded: &process_excluded,
+            reach_ids: &reach_ids,
+            reach_from_nodes: &from,
+            reach_to_nodes: &to,
+            reach_offsets: &offsets,
+            reach_parent_cells: &path,
+            reach_parent_channel_support: &channel_support,
+            channel_width_m: &channel,
+            valley_width_m: &valley,
+            floodplain_width_m: &floodplain,
+            incision_m: &incision,
+        };
+        let result = run_refinement(&inputs).unwrap();
+        assert!(result
+            .memberships
+            .iter()
+            .any(|record| record.reach_length_m == 0.0 && record.valley_fraction > 0.0));
+        let requested_valley_km2 = result.reaches[0].path_length_m * valley[0] as f64 / 1_000_000.0;
+        let requested_floodplain_km2 =
+            result.reaches[0].path_length_m * floodplain[0] as f64 / 1_000_000.0;
+        assert!(
+            (result.stats.represented_valley_area_km2 / requested_valley_km2 - 1.0).abs() < 1e-6
+        );
+        assert!(
+            (result.stats.represented_floodplain_area_km2 / requested_floodplain_km2 - 1.0).abs()
+                < 1e-6
+        );
+        let mut valley_by_cell = HashMap::<i32, f64>::new();
+        for record in &result.memberships {
+            *valley_by_cell.entry(record.fine_cell_id).or_insert(0.0) +=
+                record.valley_fraction as f64;
+            assert!(record.channel_fraction <= record.floodplain_fraction + 1e-7);
+            assert!(record.floodplain_fraction <= record.valley_fraction + 1e-7);
+        }
+        assert!(valley_by_cell
+            .values()
+            .all(|fraction| *fraction <= 1.0 + 1e-6));
+    }
+
+    #[test]
+    fn corridor_allocator_prioritizes_spatially_constrained_demands() {
+        let fine = 16usize;
+        let cells = (3..=9)
+            .map(|col| RefinedCellRecord {
+                fine_cell_id: cubed_sphere_global_index(0, 8, col, fine).unwrap() as i32,
+                parent_cell_id: col as i32,
+                face: 0,
+                row: 8,
+                col: col as i32,
+                xyz: [1.0, 0.0, 0.0],
+                area_km2: 1e-6,
+                terrain_elevation_m: 0.0,
+                terrain_offset_m: 0.0,
+                parent_relief_m: 0.0,
+            })
+            .collect::<Vec<_>>();
+        let local_by_id = cells
+            .iter()
+            .enumerate()
+            .map(|(local, cell)| (cell.fine_cell_id, local))
+            .collect::<HashMap<_, _>>();
+        let excluded = vec![false; cells.len()];
+        let context = CorridorAllocationContext {
+            fine,
+            cells: &cells,
+            local_by_id: &local_by_id,
+            process_excluded: &excluded,
+        };
+        let demands = [
+            CorridorDemand {
+                reach_index: 0,
+                reach_id: 1,
+                path_order: 0,
+                center_cell: cells[3].fine_cell_id,
+                length_m: 3.5,
+            },
+            CorridorDemand {
+                reach_index: 1,
+                reach_id: 2,
+                path_order: 0,
+                center_cell: cells[0].fine_cell_id,
+                length_m: 3.125,
+            },
+        ];
+        let widths = [1.0f32, 0.8];
+        let reserved = [0.0f32, 0.0];
+        let mut allocations = HashMap::new();
+        let mut used = vec![0.0; cells.len()];
+        let mut path_orders = HashMap::new();
+        allocate_corridor_demands(
+            &demands,
+            &widths,
+            &reserved,
+            &mut allocations,
+            &mut used,
+            None,
+            &mut path_orders,
+            &context,
+        )
+        .unwrap();
+        let allocated = |reach_id| {
+            allocations
+                .iter()
+                .filter_map(|((reach, _), area)| (*reach == reach_id).then_some(*area))
+                .sum::<f64>()
+        };
+        assert!((allocated(1) - 3.5).abs() < 1e-6);
+        assert!((allocated(2) - 2.5).abs() < 1e-6);
+        assert!(used.iter().all(|area| *area <= 1.0 + 1e-9));
+    }
+
+    #[test]
+    fn nested_corridors_share_cell_capacity_across_reaches() {
+        let fine = 16usize;
+        let cells = (3..=5)
+            .map(|col| RefinedCellRecord {
+                fine_cell_id: cubed_sphere_global_index(0, 8, col, fine).unwrap() as i32,
+                parent_cell_id: col as i32,
+                face: 0,
+                row: 8,
+                col: col as i32,
+                xyz: [1.0, 0.0, 0.0],
+                area_km2: 1e-6,
+                terrain_elevation_m: 0.0,
+                terrain_offset_m: 0.0,
+                parent_relief_m: 0.0,
+            })
+            .collect::<Vec<_>>();
+        let local_by_id = cells
+            .iter()
+            .enumerate()
+            .map(|(local, cell)| (cell.fine_cell_id, local))
+            .collect::<HashMap<_, _>>();
+        let excluded = vec![false; cells.len()];
+        let context = CorridorAllocationContext {
+            fine,
+            cells: &cells,
+            local_by_id: &local_by_id,
+            process_excluded: &excluded,
+        };
+        let demands = [
+            CorridorDemand {
+                reach_index: 0,
+                reach_id: 1,
+                path_order: 0,
+                center_cell: cells[0].fine_cell_id,
+                length_m: 1.0,
+            },
+            CorridorDemand {
+                reach_index: 1,
+                reach_id: 2,
+                path_order: 0,
+                center_cell: cells[2].fine_cell_id,
+                length_m: 1.0,
+            },
+        ];
+        let widths = [0.8f32, 0.8];
+        let upper = HashMap::from([
+            ((1, cells[0].fine_cell_id), 0.4),
+            ((1, cells[1].fine_cell_id), 0.6),
+            ((2, cells[1].fine_cell_id), 0.4),
+            ((2, cells[2].fine_cell_id), 0.6),
+        ]);
+        let path_orders = HashMap::from([
+            ((1, cells[0].fine_cell_id), 1),
+            ((1, cells[1].fine_cell_id), 0),
+            ((2, cells[1].fine_cell_id), 0),
+            ((2, cells[2].fine_cell_id), 1),
+        ]);
+        let mut allocations = HashMap::new();
+        let mut used = vec![0.0; cells.len()];
+        allocate_nested_corridor_by_reach(
+            &demands,
+            &widths,
+            &mut allocations,
+            &mut used,
+            &upper,
+            &path_orders,
+            &context,
+        )
+        .unwrap();
+        for reach_id in [1, 2] {
+            let allocated = allocations
+                .iter()
+                .filter_map(|((reach, _), area)| (*reach == reach_id).then_some(*area))
+                .sum::<f64>();
+            assert!((allocated - 0.8).abs() < 1e-6);
+        }
+        assert!((allocations[&(1, cells[1].fine_cell_id)] - 0.6).abs() < 1e-9);
+        assert!((allocations[&(2, cells[1].fine_cell_id)] - 0.4).abs() < 1e-9);
+        assert!(used.iter().all(|area| *area <= 1.0 + 1e-9));
     }
 }

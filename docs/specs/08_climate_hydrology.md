@@ -177,6 +177,12 @@ contract for inspection and surrogate training.
 - Junction-to-junction reaches form the canonical river graph. Exact cubed-sphere
   cell paths are retained for refinement and a two-pass spherical corner-cutting
   generalization writes smooth unit-XYZ polylines for rendering.
+- Zero-width hydrologic connector reaches carry routed topology and flux across
+  preserved depression or waterbody support cells where the coarse pass cannot
+  justify open-channel geometry. They have no physical channel dimensions,
+  corridor support, or incision and must be replaced by resolved local geometry
+  before any channel process is applied there. Ordinary below-threshold land
+  paths remain unresolved and fail the source-to-sink readiness gate.
 - Reach attributes include monthly discharge and velocity, slope, stream power,
   Strahler order, estimated width/depth, valley and floodplain width, meandering,
   braiding, incision, sediment load, bed material, and morphology class.
@@ -206,6 +212,10 @@ conservation error, and artifact semantics.
   losses within floating-point tolerance.
 - Flow vectors are tangent unit vectors on routed cells.
 - Reach IDs and downstream references are valid and the reach graph is acyclic.
+- Every terminal reach ends at ocean or a registered lake, wetland, or
+  endorheic sink; unresolved terminals block downstream processing.
+- Hydrologic connectors have zero channel width, depth, local velocity, stream
+  power, and incision.
 - Exact and smoothed reach geometries share endpoints and remain on the unit sphere.
 - Lake and wetland fractions are finite, bounded by `[0, 1]`, mutually exclusive,
   and reproduce catalog water area when weighted by physical cell area.
