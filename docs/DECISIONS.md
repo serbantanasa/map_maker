@@ -1263,3 +1263,68 @@ Failure conditions:
 - Per-cell support greater than physical cell area or non-nested channel,
   floodplain, and valley footprints.
 - Lateral support counted as extra reach length or erodible channel area.
+
+## Decision 025: Junction Beds And Conservative First-Pass Fluvial Budgets
+
+Status: implemented, provisional
+
+Decision:
+The first refined fluvial pass solves the least-incision downstream-graded bed
+surface compatible with the inherited physical channel graph. It then converts
+that cut to solid volume and routes every removed volume unit to allocated
+floodplain support, a registered inland sink, or an ocean terminal. It does not
+force the provisional coarse potential-incision field into the fine terrain.
+
+Bed-profile contract:
+- Consecutive physical centerline memberships form a directed node DAG.
+- A fine cell shared at a confluence has exactly one bed elevation.
+- Bed elevation does not rise downstream and meets the configured minimum
+  grade within numerical tolerance.
+- Bed/profile coordinates and grade diagnostics persist as float64, and the
+  grade gate is recomputed from emitted records after native serialization.
+- The terrain prior is lowered only where required by the downstream envelope.
+- A path-order gap across process-excluded support breaks the physical bed
+  component. A connector does not invent a bed through an unresolved lake or
+  depression.
+
+Incision contract:
+- Physical volume is channel width times represented in-cell length times solved
+  incision depth.
+- Incision remains a subgrid channel property. Full-cell mean elevation changes
+  only by net process volume divided by full physical cell area.
+- Child erosion and deposition volumes restrict exactly to their coarse parent.
+- The inherited potential-incision volume is reported as a comparison. It is
+  neither a target nor a cap until calibrated process history exists.
+
+Sediment contract:
+- Only newly eroded solid volume enters this historical routing budget.
+- Physical reaches may retain a bounded, support-area-capped fraction on their
+  allocated floodplains. Connectors retain none and transfer all incoming
+  sediment downstream.
+- Registered inland terminals retain their remainder in a terminal inventory.
+  Ocean terminals export their remainder to the future delta/shelf model.
+- Eroded volume must equal floodplain deposition plus terminal deposition plus
+  ocean export. Reach-level incoming, local, deposited, and transferred budgets
+  are persisted for inspection and surrogate training.
+- Python independently reconciles profile, reach, fine-cell, parent, and native
+  totals, including every reach's input/output balance and downstream transfer.
+- Instantaneous inherited sediment load remains a separate flux diagnostic and
+  may not be added dimensionally to historical solid volume.
+
+Current approximation:
+The minimum-grade envelope is terrain conditioning, not a calibrated
+geological-time stream-power model. Floodplain retention uses inherited slope
+and allocated floodplain-to-valley support with bounded depth. Its parameters
+remain provisional until multi-seed morphology and Earth-derived sediment
+benchmarks exist.
+
+Failure conditions:
+- Different bed elevations for reaches sharing a physical junction cell.
+- A downstream physical bed rise above the configured grade tolerance.
+- Connector bed, incision, floodplain deposition, or local sediment production.
+- Process volume in a preserved-depression parent.
+- Cell-mean terrain change based on incision depth rather than conserved volume.
+- Eroded sediment disappearing, appearing, or changing under parent
+  restriction.
+- Native statistics agreeing internally while emitted catalogs disagree.
+- Treating the canonical seed's potential-incision value as calibration.

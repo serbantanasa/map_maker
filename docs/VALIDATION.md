@@ -201,8 +201,56 @@ physical memberships. Physical channel reaches also stop their process support
 at shared connector endpoints, so no channel, valley, floodplain, or incision
 area enters a connector-owned or preserved-depression parent. The basin
 therefore passes the topology and corridor input gates for conservative
-incision and sediment routing. These are contract and conservation results, not
-accepted erosion calibration.
+incision and sediment routing.
+
+## Selected-Basin Erosion
+
+The first conservative fluvial pass builds 2,434 physical bed nodes and 2,421
+physical edges in 13 components. The components are separated where zero-width
+connectors cross process-excluded depression support. All 2,442 physical
+centerline memberships receive bed and incision records; connectors receive
+none.
+
+Observed profile and sediment diagnostics:
+
+| Metric | Canonical result |
+| --- | ---: |
+| Shared-junction bed error | `0 m` |
+| Minimum realized downstream slope | `1.0e-5` |
+| Maximum conditioning incision | `537.11 m` |
+| Potential incision diagnostic | `150.20 km3` |
+| Actual grade-conditioning incision | `145.53 km3` |
+| Floodplain deposition | `95.96 km3` |
+| Inland terminal deposition | `0 km3` |
+| Ocean sediment export | `49.57 km3` |
+| Sediment conservation residual | `< 7.7e-6 m3` |
+| Maximum full-cell mean change | `12.41 m` |
+| Maximum coarse-parent mean change | `0.95 m` |
+| Preserved-depression process exclusion | Pass |
+| Connector physical-process exclusion | Pass |
+| Post-serialization float64 grade audit | Pass |
+| Cross-catalog reach/cell/parent budget audit | Pass |
+
+The actual-to-potential incision ratio is approximately `0.969`, but this
+agreement is not a calibration target. Actual incision is the volume required
+to make the unresolved fine terrain prior downstream-graded; potential incision
+was inherited from coarse reach relief. Their proximity in one basin and seed
+may be coincidental. The maximum cut shows why the next validation phase must
+inspect longitudinal profiles and multi-seed distributions before accepting
+morphology.
+
+Floodplain deposition is allocated only inside the previously conserved
+floodplain footprint. Every remaining solid volume exits through the registered
+ocean terminal. Cell means change by net volume divided by physical cell area,
+not by applying channel depth to the entire cell. These are contract and
+conservation results, not accepted erosion or sediment calibration.
+
+The stage recomputes grade from persisted float64 bed records and cell
+coordinates. It also reconciles profile erosion with reach-local and cell-local
+erosion, reach deposition with cell deposition, every reach's available and
+outgoing volume, downstream inputs, parent restrictions, and native totals. A
+face-16 seed-22 regression fixture contains both a connector and an excluded
+parent so the corresponding tests are non-vacuous.
 
 ## Calibration Rule
 

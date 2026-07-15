@@ -132,7 +132,9 @@ The cube net is a topology diagnostic, not an atlas projection.
 ## Migration Boundary
 
 The canonical tectonics, world-age, and geology kernels consume global IDs,
-exact spherical areas, and topology-owned D4 neighbors. Erosion remains on the
-provisional two-dimensional grid and explicitly rejects cubed-sphere input. It
-must not be migrated by flattening the six faces, because that would create
-false adjacency between face rows.
+exact spherical areas, and topology-owned D4 neighbors. The legacy whole-grid
+erosion stage remains on the provisional two-dimensional grid and explicitly
+rejects cubed-sphere input. Canonical sparse fluvial processing instead uses
+cubed-sphere child IDs and spherical edge lengths in `basin_erosion`. Neither
+path may flatten the six faces, because that would create false adjacency
+between face rows.

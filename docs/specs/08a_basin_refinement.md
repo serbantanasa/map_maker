@@ -3,9 +3,9 @@
 ## Status
 
 Implemented prototype following Hydrology Pass 1. This stage proves the
-cross-resolution river and terrain contract required before fluvial erosion. It
-does not yet apply erosion, generate new tributaries, or replace Hydrology Pass
-2.
+cross-resolution river and terrain contract consumed by the first sparse
+fluvial erosion pass. It does not generate new tributaries or replace Hydrology
+Pass 2.
 
 ## Objective
 
@@ -140,10 +140,9 @@ reaches therefore have no `RefinedReachCellCatalog` records.
   terrain and erosion.
 - Lake and wetland fractions are not yet spatially realized inside refined
   parents.
-- Potential incision volume is not applied, and sediment is not yet routed or
-  deposited.
-- Junction-consistent channel-bed profiles are not yet solved. They belong to
-  the conservative erosion pass and may not be inferred from rendering strokes.
+- Potential incision remains a diagnostic comparison rather than a mandatory
+  fine-scale cut. `basin_erosion` now solves the actual least-incision bed
+  envelope and routes the resulting sediment volume.
 - The prototype refines one basin per stage run and stores Arrow catalogs rather
   than chunked regional rasters.
 - Coarse connectors are topological placeholders. Refined inlet, lake-crossing,
@@ -155,6 +154,4 @@ reaches therefore have no `RefinedReachCellCatalog` records.
 - Scarcity ordering and deterministic retries avoid known greedy allocation
   failures, but the valley allocator is not a general global optimizer.
 
-The next pass solves junction-consistent channel-bed profiles, applies
-conservative fluvial incision and sediment routing only to physical channel
-reaches, and aggregates physical budgets upward before Hydrology Pass 2.
+The implemented downstream pass is specified in `08b_basin_erosion.md`.

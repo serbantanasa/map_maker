@@ -24,8 +24,9 @@ The native build is explicit. Importing `map_maker` never invokes Cargo or a
 C++ compiler. To load native libraries built elsewhere, set
 `MAP_MAKER_NATIVE_LIB_DIR` to their containing directory.
 
-Every native library currently exposes ABI version `2`. `map-maker doctor`
-verifies that ABI and reports the binary SHA-256 fingerprint. Simulation-library fingerprints
+Simulation native libraries expose ABI version `2`, except the refinement
+library's versioned ABI `3`. `map-maker doctor` verifies those contracts and
+reports each binary SHA-256 fingerprint. Simulation-library fingerprints
 are included in stage cache keys and run manifests, so replacing a native binary
 cannot silently reuse outputs from different code.
 
@@ -83,9 +84,13 @@ preserves parent terrain means and convergent reach junctions, and stores physic
 channel, valley, and floodplain fractions without carving whole cells. It also
 closes coarse extraction gaps with zero-width hydrologic connectors, verifies
 source-to-sink readiness, and conserves broad valley and floodplain support in
-nearby fine cells. The canonical basin now passes the input gates for the first
-conservative erosion pass, but no refined erosion has yet been applied. The
-current output is a functional prototype rather than an atlas-grade world.
+nearby fine cells. The downstream sparse erosion pass now solves shared-junction
+bed profiles, applies volume-based subgrid incision, routes newly eroded sediment
+through connectors, deposits only on allocated floodplain support, and restricts
+terrain-volume feedback to coarse parents. Its morphology and retention
+parameters remain provisional, and Hydrology Pass 2 has not yet consumed the
+result. The current output is a functional prototype rather than an atlas-grade
+world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -108,8 +113,9 @@ uv run map-maker topology --face-resolution 96 --output-dir out/topology
 This writes a globally continuous XYZ-colored cube net and a geometry report.
 The canonical tectonic snapshot, age-conditioned crust state, connected
 geological provinces, and initial elevation now run directly on cubed-sphere
-neighbor IDs. Erosion remains on the provisional two-dimensional path and
-explicitly rejects six-face fields.
+neighbor IDs. The legacy whole-grid `erosion` stage remains on the provisional
+two-dimensional path and explicitly rejects six-face fields; canonical sparse
+cubed-sphere fluvial processing runs through `basin_erosion`.
 
 Run the previous procedural generator for comparison:
 
@@ -145,6 +151,9 @@ uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_
 
 # One sparse face-2048 basin with connected trunks and conserved corridor support
 uv run map-maker-pipeline --stage basin_refinement --config configs/cubed_sphere_crust_state.yaml
+
+# Junction-consistent subgrid incision and conservative sediment routing
+uv run map-maker-pipeline --stage basin_erosion --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native
