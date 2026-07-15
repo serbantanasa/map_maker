@@ -12,6 +12,7 @@ NATIVE_LIBRARIES = (
     "climate_native",
     "elevation_native",
     "erosion_native",
+    "fluvial_native",
     "geology_native",
     "hydrology_native",
     "planet_native",

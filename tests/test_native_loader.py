@@ -51,3 +51,6 @@ def test_built_library_exposes_expected_abi_and_fingerprint() -> None:
 
     refinement = native_library_info("refinement_native")
     assert refinement["abi_version"] == 3
+
+    fluvial = native_library_info("fluvial_native")
+    assert fluvial["abi_version"] == 3

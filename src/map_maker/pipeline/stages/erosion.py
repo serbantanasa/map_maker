@@ -138,8 +138,8 @@ def _log_erosion(context, metadata: Mapping[str, object]) -> None:
 def erosion_stage(context, deps, config_mapping):
     if isinstance(context.topology, CubedSphereGrid):
         raise NotImplementedError(
-            "erosion has not migrated to cubed_sphere; use world_age as the current "
-            "canonical pipeline endpoint"
+            "legacy whole-grid erosion has not migrated to cubed_sphere; use "
+            "basin_erosion for the canonical sparse selected-basin pass"
         )
     config = ErosionConfig.from_mapping(config_mapping)
     height, width = context.topology.shape

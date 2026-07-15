@@ -1,0 +1,371 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import numpy as np
+import pyarrow as pa
+import pytest
+
+from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
+from map_maker.pipeline import _fluvial_native as fluvial_native
+from map_maker.pipeline.stages.basin_erosion import BasinErosionConfig
+
+
+@pytest.fixture(autouse=True)
+def _ensure_stages_registered():
+    registry().clear()
+    for module_name in (
+        "geometry",
+        "planet",
+        "tectonics",
+        "world_age",
+        "geology",
+        "elevation",
+        "climate",
+        "hydrology",
+        "basin_refinement",
+        "basin_erosion",
+    ):
+        module = importlib.import_module(f"map_maker.pipeline.stages.{module_name}")
+        importlib.reload(module)
+    yield
+
+
+def _config(
+    tmp_path: Path,
+    run_id: str,
+    *,
+    root: str = "primary",
+    face_resolution: int = 20,
+    rng_seed: int = 37,
+) -> PipelineConfig:
+    return PipelineConfig.from_mapping(
+        {
+            "topology": "cubed_sphere",
+            "resolutions": [{"face_resolution": face_resolution}],
+            "rng_seed": rng_seed,
+            "run_id": run_id,
+            "output_dir": str(tmp_path / root / "out"),
+            "cache_dir": str(tmp_path / root / "cache"),
+            "log_dir": str(tmp_path / root / "logs"),
+            "stage_overrides": {
+                "tectonics": {
+                    "num_plates": 14,
+                    "continental_fraction": 0.35,
+                    "lloyd_iterations": 3,
+                },
+                "world_age": {"world_age": 4.1},
+                "climate": {
+                    "spinup_years": 10,
+                    "moisture_spinup_years": 2,
+                    "moisture_steps_per_month_at_face_128": 16,
+                },
+                "basin_refinement": {
+                    "refinement_factor": 4,
+                    "terrain_noise_fraction": 0.4,
+                },
+                "basin_erosion": {
+                    "minimum_bed_slope": 1e-6,
+                    "maximum_deposition_fraction": 0.35,
+                    "deposition_slope_scale": 0.001,
+                    "maximum_deposition_depth_m": 10.0,
+                },
+            },
+        }
+    )
+
+
+def _table(result, name: str) -> pa.Table:
+    value = result.artifact_records[name].value
+    assert isinstance(value, pa.Table)
+    return value
+
+
+def _native_connector_fixture() -> dict[str, object]:
+    return {
+        "controls": {
+            "planet_radius_m": 1_000.0,
+            "minimum_bed_slope": 1e-6,
+            "maximum_deposition_fraction": 0.25,
+            "deposition_slope_scale": 0.001,
+            "maximum_deposition_depth_m": 10.0,
+        },
+        "cell_ids": np.array([10, 11, 12, 13, 14, 99], dtype=np.int32),
+        "cell_parent_ids": np.array([1, 1, 2, 3, 3, 9], dtype=np.int32),
+        "cell_terrain_m": np.array([1000, 1001, 999, 500, 501, 100], dtype=np.float32),
+        "cell_areas_km2": np.ones(6, dtype=np.float64),
+        "cell_xyz": np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.9992, 0.04, 0.0],
+                [0.9968, 0.08, 0.0],
+                [0.9928, 0.12, 0.0],
+                [0.9872, 0.16, 0.0],
+                [0.98, 0.2, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+        "reach_ids": np.array([1, 2, 3], dtype=np.int32),
+        "downstream_reach_ids": np.array([2, 3, -1], dtype=np.int32),
+        "reach_kinds": np.array([1, 2, 1], dtype=np.uint8),
+        "terminal_kinds": np.array([0, 0, 1], dtype=np.uint8),
+        "channel_width_m": np.array([10, 0, 20], dtype=np.float32),
+        "reach_slope": np.array([0.01, 0, 0.001], dtype=np.float32),
+        "membership_reach_ids": np.array([1, 1, 1, 3, 3], dtype=np.int32),
+        "membership_cell_ids": np.array([10, 11, 12, 13, 14], dtype=np.int32),
+        "membership_parent_ids": np.array([1, 1, 2, 3, 3], dtype=np.int32),
+        "membership_path_order": np.array([0, 1, 3, 0, 1], dtype=np.int32),
+        "membership_reach_length_m": np.full(5, 50.0, dtype=np.float64),
+        "membership_channel_fraction": np.full(5, 0.0005, dtype=np.float32),
+        "membership_valley_fraction": np.full(5, 0.01, dtype=np.float32),
+        "membership_floodplain_fraction": np.full(5, 0.005, dtype=np.float32),
+    }
+
+
+def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
+    engine = ExecutionEngine(_config(tmp_path, "basin-erosion"), generate_visuals=True)
+    result = engine.run(["basin_erosion"])["basin_erosion"]
+    metadata = result.artifact_records["BasinErosionMetadata"].value
+    profiles = _table(result, "ChannelBedProfileCatalog")
+    reaches = _table(result, "FluvialRiverReachCatalog")
+    cells = _table(result, "ErodedBasinCellCatalog")
+    parents = _table(result, "BasinErosionParentCatalog")
+
+    assert metadata["source_to_sink_ready"] == 1
+    assert metadata["bed_profile_valid"] == 1
+    assert metadata["sediment_conservation_valid"] == 1
+    assert metadata["process_exclusion_valid"] == 1
+    assert metadata["connector_process_valid"] == 1
+    assert metadata["physical_node_count"] > 0
+    assert metadata["profile_record_count"] == profiles.num_rows > 0
+    assert metadata["maximum_junction_bed_error_m"] == 0.0
+    assert metadata["minimum_realized_slope"] >= metadata["minimum_bed_slope"] - 1e-8
+    assert metadata["emitted_minimum_realized_slope"] >= metadata["minimum_bed_slope"] - 1e-12
+    assert metadata["total_eroded_volume_km3"] > 0.0
+
+    terrain = np.asarray(profiles["terrain_elevation_m"], dtype=np.float64)
+    bed = np.asarray(profiles["bed_elevation_m"], dtype=np.float64)
+    depth = np.asarray(profiles["incision_depth_m"], dtype=np.float64)
+    assert np.all(np.isfinite(bed))
+    assert np.all(bed <= terrain + 1e-5)
+    assert np.allclose(depth, terrain - bed, atol=1e-4)
+    width_by_reach = dict(
+        zip(
+            np.asarray(reaches["reach_id"], dtype=np.int32),
+            np.asarray(reaches["channel_width_m"], dtype=np.float64),
+            strict=True,
+        )
+    )
+    expected_volume = sum(
+        width_by_reach[int(reach_id)] * length_m * incision_depth
+        for reach_id, length_m, incision_depth in zip(
+            np.asarray(profiles["reach_id"], dtype=np.int32),
+            np.asarray(profiles["reach_length_m"], dtype=np.float64),
+            depth,
+            strict=True,
+        )
+    )
+    profile_volume = np.sum(np.asarray(profiles["eroded_volume_m3"], dtype=np.float64))
+    assert profile_volume == pytest.approx(expected_volume, rel=1e-7)
+    assert profile_volume == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-12)
+
+    cell_ids = np.asarray(profiles["fine_cell_id"], dtype=np.int32)
+    order = np.argsort(cell_ids, kind="stable")
+    sorted_ids = cell_ids[order]
+    sorted_beds = bed[order]
+    starts = np.r_[0, np.flatnonzero(np.diff(sorted_ids)) + 1]
+    ends = np.r_[starts[1:], len(sorted_ids)]
+    for start, end in zip(starts, ends, strict=True):
+        assert np.max(sorted_beds[start:end]) - np.min(sorted_beds[start:end]) <= 1e-5
+
+    connector = np.asarray(reaches["reach_kind"].to_pylist()) == "connector"
+    assert not np.any(np.asarray(reaches["has_physical_bed"])[connector])
+    assert np.all(np.asarray(reaches["local_erosion_volume_m3"])[connector] == 0.0)
+    assert np.all(np.asarray(reaches["floodplain_deposition_volume_m3"])[connector] == 0.0)
+
+    eroded = np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64)
+    deposited = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
+    area_m2 = np.asarray(cells["area_km2"], dtype=np.float64) * 1_000_000.0
+    mean_delta = np.asarray(cells["terrain_mean_delta_m"], dtype=np.float64)
+    assert np.allclose(mean_delta * area_m2, deposited - eroded, rtol=1e-12, atol=1e-5)
+    assert np.sum(eroded) == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-9)
+    assert np.sum(deposited) == pytest.approx(
+        metadata["total_floodplain_deposition_volume_m3"], rel=1e-9
+    )
+    assert (
+        metadata["total_floodplain_deposition_volume_m3"]
+        + metadata["total_terminal_deposition_volume_m3"]
+        + metadata["total_exported_sediment_volume_m3"]
+    ) == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-9)
+
+    assert np.sum(np.asarray(parents["child_eroded_volume_m3"])) == pytest.approx(
+        np.sum(eroded), rel=1e-12
+    )
+    assert np.sum(np.asarray(parents["child_deposited_volume_m3"])) == pytest.approx(
+        np.sum(deposited), rel=1e-12
+    )
+    assert (engine.context.config.run_visual_dir() / "basin_erosion" / "eroded_basin.png").is_file()
+    assert (
+        engine.context.config.run_visual_dir() / "basin_erosion" / "longitudinal_profile.png"
+    ).is_file()
+
+
+def test_basin_erosion_is_independently_deterministic_and_cacheable(tmp_path: Path):
+    first = ExecutionEngine(_config(tmp_path, "first", root="first")).run(["basin_erosion"])[
+        "basin_erosion"
+    ]
+    second = ExecutionEngine(_config(tmp_path, "second", root="second")).run(["basin_erosion"])[
+        "basin_erosion"
+    ]
+    for artifact in (
+        "ChannelBedProfileCatalog",
+        "FluvialRiverReachCatalog",
+        "ErodedBasinCellCatalog",
+        "BasinErosionParentCatalog",
+    ):
+        assert _table(first, artifact).equals(_table(second, artifact))
+    assert (
+        first.artifact_records["BasinErosionMetadata"].value
+        == second.artifact_records["BasinErosionMetadata"].value
+    )
+
+    cached = ExecutionEngine(_config(tmp_path, "second", root="second")).run(["basin_erosion"])[
+        "basin_erosion"
+    ]
+    assert cached.stats is not None and cached.stats.cache_hit
+
+
+def test_basin_erosion_config_rejects_unknown_and_invalid_controls():
+    with pytest.raises(ValueError, match="Unknown basin erosion controls"):
+        BasinErosionConfig.from_mapping({"magic": 1})
+    with pytest.raises(ValueError, match="maximum_deposition_fraction"):
+        BasinErosionConfig.from_mapping({"maximum_deposition_fraction": 1.1})
+    with pytest.raises(ValueError, match="deposition_slope_scale"):
+        BasinErosionConfig.from_mapping({"deposition_slope_scale": 0.0})
+
+
+def test_native_layout_round_trips_double_precision_profile_fields():
+    record = fluvial_native._ffi.new("BedProfileRecord*")
+    record.reach_id = 17
+    record.fine_cell_id = 23
+    record.bed_elevation_m = 1000.00004
+    record.eroded_volume_m3 = 1234.5
+    view = fluvial_native._ffi.buffer(record, fluvial_native._ffi.sizeof("BedProfileRecord"))
+    parsed = np.frombuffer(view, dtype=fluvial_native.BED_PROFILE_DTYPE, count=1)[0]
+
+    assert parsed["reach_id"] == 17
+    assert parsed["fine_cell_id"] == 23
+    assert parsed["bed_elevation_m"] == pytest.approx(1000.00004, rel=0.0, abs=1e-12)
+    assert parsed["eroded_volume_m3"] == 1234.5
+
+
+def test_native_connector_gap_and_persisted_grade_cross_cffi_boundary():
+    profiles, reaches, cells, metadata = fluvial_native.run_fluvial_erosion(
+        **_native_connector_fixture()
+    )
+
+    assert metadata["connector_reach_count"] == 1
+    assert metadata["physical_component_count"] == 3
+    connector = reaches[reaches["reach_id"] == 2][0]
+    upstream = reaches[reaches["reach_id"] == 1][0]
+    assert connector["has_physical_bed"] == 0
+    assert connector["local_erosion_volume_m3"] == 0.0
+    assert connector["upstream_input_volume_m3"] == upstream["downstream_transfer_volume_m3"]
+    assert connector["downstream_transfer_volume_m3"] == connector["upstream_input_volume_m3"]
+    assert 99 not in set(cells["fine_cell_id"])
+
+    first_reach = profiles[profiles["reach_id"] == 1]
+    first_reach.sort(order="path_order")
+    bed_drop = first_reach["bed_elevation_m"][0] - first_reach["bed_elevation_m"][1]
+    source = _native_connector_fixture()["cell_xyz"][0].astype(np.float64)
+    target = _native_connector_fixture()["cell_xyz"][1].astype(np.float64)
+    length_m = np.arccos(np.clip(np.dot(source, target), -1.0, 1.0)) * 1_000.0
+    assert first_reach["bed_elevation_m"][0] != first_reach["bed_elevation_m"][1]
+    assert bed_drop / length_m >= 1e-6 - 1e-12
+
+
+def test_native_rejects_even_zero_length_connector_membership():
+    fixture = _native_connector_fixture()
+    fixture["membership_reach_ids"] = np.append(fixture["membership_reach_ids"], 2).astype(np.int32)
+    fixture["membership_cell_ids"] = np.append(fixture["membership_cell_ids"], 99).astype(np.int32)
+    fixture["membership_parent_ids"] = np.append(fixture["membership_parent_ids"], 9).astype(
+        np.int32
+    )
+    fixture["membership_path_order"] = np.append(fixture["membership_path_order"], 0).astype(
+        np.int32
+    )
+    fixture["membership_reach_length_m"] = np.append(
+        fixture["membership_reach_length_m"], 0.0
+    ).astype(np.float64)
+    for field in (
+        "membership_channel_fraction",
+        "membership_valley_fraction",
+        "membership_floodplain_fraction",
+    ):
+        fixture[field] = np.append(fixture[field], 0.0).astype(np.float32)
+
+    with pytest.raises(RuntimeError, match="invalid channel/connector physical support"):
+        fluvial_native.run_fluvial_erosion(**fixture)
+
+
+def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: Path):
+    engine = ExecutionEngine(
+        _config(
+            tmp_path,
+            "connector-exclusion",
+            face_resolution=16,
+            rng_seed=22,
+        )
+    )
+    results = engine.run(["basin_refinement", "basin_erosion"])
+    refinement = results["basin_refinement"]
+    erosion = results["basin_erosion"]
+    refinement_metadata = refinement.artifact_records["BasinRefinementMetadata"].value
+    reaches = _table(erosion, "FluvialRiverReachCatalog")
+    profiles = _table(erosion, "ChannelBedProfileCatalog")
+    cells = _table(erosion, "ErodedBasinCellCatalog")
+    memberships = _table(refinement, "RefinedReachCellCatalog")
+
+    assert refinement_metadata["connector_reach_count"] > 0
+    assert refinement_metadata["process_excluded_parent_count"] > 0
+    connector_ids = np.asarray(reaches["reach_id"])[
+        np.asarray(reaches["reach_kind"].to_pylist()) == "connector"
+    ]
+    assert not np.any(np.isin(np.asarray(memberships["reach_id"]), connector_ids))
+    assert not np.any(np.isin(np.asarray(profiles["reach_id"]), connector_ids))
+    connector = np.isin(np.asarray(reaches["reach_id"]), connector_ids)
+    assert np.all(
+        np.asarray(reaches["downstream_transfer_volume_m3"])[connector]
+        == np.asarray(reaches["upstream_input_volume_m3"])[connector]
+    )
+
+    excluded = np.asarray(cells["process_excluded"])
+    assert np.any(excluded)
+    assert np.all(np.asarray(cells["subgrid_eroded_volume_m3"])[excluded] == 0.0)
+    assert np.all(np.asarray(cells["floodplain_deposited_volume_m3"])[excluded] == 0.0)
+    assert np.array_equal(
+        np.asarray(cells["terrain_elevation_after_m"])[excluded],
+        np.asarray(cells["terrain_elevation_m"])[excluded],
+    )
+
+
+def test_stage_rejects_cross_catalog_native_inconsistency(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = importlib.import_module("map_maker.pipeline.stages.basin_erosion")
+    native_run = module.run_fluvial_erosion
+
+    def inconsistent_native_run(**kwargs):
+        profiles, reaches, cells, metadata = native_run(**kwargs)
+        reaches = reaches.copy()
+        physical = np.flatnonzero(reaches["has_physical_bed"] != 0)
+        reaches["local_erosion_volume_m3"][physical[0]] += max(
+            float(metadata["total_eroded_volume_m3"]) * 0.01, 1.0
+        )
+        return profiles, reaches, cells, metadata
+
+    monkeypatch.setattr(module, "run_fluvial_erosion", inconsistent_native_run)
+    engine = ExecutionEngine(_config(tmp_path, "inconsistent-native"))
+    with pytest.raises(RuntimeError, match="catalogs disagree"):
+        engine.run(["basin_erosion"])

@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any, Iterable
 
 NATIVE_ABI_VERSION = 2
-NATIVE_ABI_OVERRIDES = {"refinement_native": 3}
+NATIVE_ABI_OVERRIDES = {"fluvial_native": 3, "refinement_native": 3}
 SIMULATION_NATIVE_LIBRARIES = (
     "climate_native",
     "elevation_native",
     "erosion_native",
+    "fluvial_native",
     "geology_native",
     "hydrology_native",
     "planet_native",
