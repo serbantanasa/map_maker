@@ -164,6 +164,7 @@ def _parent_table(
     parent_elevation_m: np.ndarray,
     parent_relief_m: np.ndarray,
     parent_areas_km2: np.ndarray,
+    parent_process_excluded: np.ndarray,
     factor: int,
 ) -> pa.Table:
     children_per_parent = factor * factor
@@ -178,6 +179,7 @@ def _parent_table(
         {
             "parent_cell_id": pa.array(parent_ids, type=pa.int32()),
             "inside_selected_basin": pa.array(inside_selected_basin, type=pa.bool_()),
+            "process_excluded": pa.array(parent_process_excluded != 0, type=pa.bool_()),
             "child_count": pa.array(
                 np.full(len(parent_ids), children_per_parent, dtype=np.int32), type=pa.int32()
             ),
@@ -257,6 +259,7 @@ def _reach_table(
             "reach_id": source["reach_id"],
             "parent_reach_id": source["reach_id"],
             "basin_id": source["basin_id"],
+            "reach_kind": source["reach_kind"],
             "from_parent_cell": source["from_node"],
             "to_parent_cell": source["to_node"],
             "downstream_reach_id": source["downstream_reach_id"],
@@ -435,7 +438,7 @@ def _classify_reach_terminals(
 def _corridor_area_metadata(
     reaches: pa.Table, metadata: Mapping[str, int | float]
 ) -> dict[str, float]:
-    path_length_m = np.asarray(reaches["path_length_km"], dtype=np.float64) * 1_000.0
+    path_length_m = np.asarray(reaches["physical_channel_length_km"], dtype=np.float64) * 1_000.0
     result: dict[str, float] = {}
     for corridor in ("channel", "valley", "floodplain"):
         requested = float(
@@ -456,6 +459,10 @@ def _membership_table(records: np.ndarray) -> pa.Table:
             "parent_cell_id": pa.array(records["parent_cell_id"], type=pa.int32()),
             "path_order": pa.array(records["path_order"], type=pa.int32()),
             "reach_length_m": pa.array(records["reach_length_m"], type=pa.float64()),
+            "support_role": pa.array(
+                np.where(records["reach_length_m"] > 0.0, "centerline", "lateral"),
+                type=pa.string(),
+            ),
             "channel_fraction": pa.array(records["channel_fraction"], type=pa.float32()),
             "valley_fraction": pa.array(records["valley_fraction"], type=pa.float32()),
             "floodplain_fraction": pa.array(records["floodplain_fraction"], type=pa.float32()),
@@ -466,9 +473,54 @@ def _membership_table(records: np.ndarray) -> pa.Table:
     )
 
 
+def _append_physical_reach_lengths(reaches: pa.Table, memberships: pa.Table) -> pa.Table:
+    reach_ids = np.asarray(reaches["reach_id"], dtype=np.int32)
+    row_by_reach = {int(reach_id): row for row, reach_id in enumerate(reach_ids)}
+    physical_length_m = np.zeros(reaches.num_rows, dtype=np.float64)
+    for reach_id, length_m in zip(
+        np.asarray(memberships["reach_id"], dtype=np.int32),
+        np.asarray(memberships["reach_length_m"], dtype=np.float64),
+        strict=True,
+    ):
+        physical_length_m[row_by_reach[int(reach_id)]] += float(length_m)
+    return reaches.append_column(
+        "physical_channel_length_km", pa.array(physical_length_m / 1_000.0, type=pa.float64())
+    )
+
+
+def _corridor_capacity_metadata(memberships: pa.Table) -> dict[str, int | float]:
+    fine_cell_ids = np.asarray(memberships["fine_cell_id"], dtype=np.int32)
+    _, inverse = np.unique(fine_cell_ids, return_inverse=True)
+    metadata: dict[str, int | float] = {
+        "centerline_membership_count": int(
+            pc.sum(pc.equal(memberships["support_role"], "centerline")).as_py() or 0
+        ),
+        "lateral_support_membership_count": int(
+            pc.sum(pc.equal(memberships["support_role"], "lateral")).as_py() or 0
+        ),
+    }
+    capacity_valid = True
+    for corridor in ("channel", "valley", "floodplain"):
+        fraction = np.asarray(memberships[f"{corridor}_fraction"], dtype=np.float64)
+        summed = np.bincount(inverse, weights=fraction)
+        maximum = float(np.max(summed, initial=0.0))
+        metadata[f"maximum_cell_{corridor}_fraction_sum"] = maximum
+        capacity_valid &= maximum <= 1.0 + 1e-6
+    channel = np.asarray(memberships["channel_fraction"], dtype=np.float64)
+    valley = np.asarray(memberships["valley_fraction"], dtype=np.float64)
+    floodplain = np.asarray(memberships["floodplain_fraction"], dtype=np.float64)
+    nested_valid = bool(
+        np.all(channel <= floodplain + 1e-7) and np.all(floodplain <= valley + 1e-7)
+    )
+    metadata["nested_corridor_support_valid"] = int(nested_valid)
+    metadata["corridor_cell_capacity_valid"] = int(capacity_valid)
+    return metadata
+
+
 def _cube_net_visualizer(result, request: VisualizationRequest) -> VisualizationResult | None:
     cell_record = result.artifact_records.get("RefinedBasinCellCatalog")
     reach_record = result.artifact_records.get("RefinedRiverReachCatalog")
+    membership_record = result.artifact_records.get("RefinedReachCellCatalog")
     metadata_record = result.artifact_records.get("BasinRefinementMetadata")
     if (
         cell_record is None
@@ -500,12 +552,56 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
     net_col = placements[face, 1] * display_resolution + display_col
     image[net_row, net_col] = colors
 
+    if membership_record is not None and isinstance(membership_record.value, pa.Table):
+        memberships = membership_record.value
+        fine_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
+        order = np.argsort(fine_ids)
+        sorted_ids = fine_ids[order]
+        membership_ids = np.asarray(memberships["fine_cell_id"], dtype=np.int32)
+        support_rows = _lookup_rows(sorted_ids, order, membership_ids)
+        valley = np.asarray(memberships["valley_fraction"], dtype=np.float32)
+        floodplain = np.asarray(memberships["floodplain_fraction"], dtype=np.float32)
+        support_strength: dict[tuple[int, int], tuple[float, float]] = {}
+        for row_index, valley_fraction, floodplain_fraction in zip(
+            support_rows, valley, floodplain, strict=True
+        ):
+            support_row = int(
+                placements[face[row_index], 0] * display_resolution
+                + min(
+                    row[row_index] * display_resolution // fine_resolution, display_resolution - 1
+                )
+            )
+            support_col = int(
+                placements[face[row_index], 1] * display_resolution
+                + min(
+                    col[row_index] * display_resolution // fine_resolution, display_resolution - 1
+                )
+            )
+            previous = support_strength.get((support_row, support_col), (0.0, 0.0))
+            support_strength[(support_row, support_col)] = (
+                max(previous[0], float(valley_fraction)),
+                max(previous[1], float(floodplain_fraction)),
+            )
+        for (support_row, support_col), (
+            valley_fraction,
+            floodplain_fraction,
+        ) in support_strength.items():
+            target = np.array(
+                (63, 137, 91) if floodplain_fraction > 0.0 else (104, 132, 73),
+                dtype=np.float32,
+            )
+            alpha = min(0.50, 0.16 + 0.34 * max(valley_fraction, floodplain_fraction))
+            image[support_row, support_col] = (
+                image[support_row, support_col].astype(np.float32) * (1.0 - alpha) + target * alpha
+            ).astype(np.uint8)
+
     rendered = Image.fromarray(image, mode="RGB")
     draw = ImageDraw.Draw(rendered)
     fine_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
     order = np.argsort(fine_ids)
     sorted_ids = fine_ids[order]
-    for path in reaches["fine_cell_path"].to_pylist():
+    reach_kinds = reaches["reach_kind"].to_pylist()
+    for path, reach_kind in zip(reaches["fine_cell_path"].to_pylist(), reach_kinds, strict=True):
         path_array = np.asarray(path, dtype=np.int32)
         rows = _lookup_rows(sorted_ids, order, path_array)
         path_face = face[rows]
@@ -524,8 +620,8 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
                             (int(path_col[position]), int(path_row[position]))
                             for position in range(segment_start, index)
                         ],
-                        fill=(29, 174, 235),
-                        width=2,
+                        fill=(29, 174, 235) if reach_kind == "channel" else (73, 122, 143),
+                        width=2 if reach_kind == "channel" else 1,
                     )
                 segment_start = index
     output = request.output_dir / "refined_basin.png"
@@ -559,7 +655,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "RefinedReachCellCatalog",
         "BasinRefinementMetadata",
     ),
-    version="v4",
+    version="v5",
     native_libraries=("refinement_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -581,6 +677,19 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     )
     if selected_reaches.num_rows == 0:
         raise ValueError(f"selected basin {selected_basin_id} has no river reaches")
+    selected_connectors = np.asarray(pc.equal(selected_reaches["reach_kind"], "connector"))
+    for field in (
+        "channel_width_m",
+        "channel_depth_m",
+        "valley_width_m",
+        "floodplain_width_m",
+        "velocity_mean",
+        "stream_power",
+        "incision_m",
+    ):
+        values = np.asarray(selected_reaches[field], dtype=np.float32)
+        if np.any(values[selected_connectors] != 0.0):
+            raise RuntimeError(f"hydrologic connectors must publish zero {field}")
 
     paths = [[int(cell) for cell in path] for path in selected_reaches["cell_path"].to_pylist()]
     basin_ids = _artifact_array(hydrology, "BasinID").reshape(-1)
@@ -604,8 +713,23 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     parent_area_steradians = np.ascontiguousarray(
         context.topology.cell_areas.reshape(-1)[parent_ids], dtype=np.float64
     )
+    depression_catalog = _artifact_table(hydrology, "DepressionCatalog")
+    preserved_depression_ids = np.asarray(
+        depression_catalog.filter(pc.not_equal(depression_catalog["class_code"], 5))[
+            "depression_id"
+        ],
+        dtype=np.int32,
+    )
+    depression_ids = _artifact_array(hydrology, "DepressionID").reshape(-1)
+    parent_process_excluded = np.ascontiguousarray(
+        np.isin(depression_ids[parent_ids], preserved_depression_ids), dtype=np.uint8
+    )
 
     reach_offsets, reach_parent_cells = _flatten_paths(paths)
+    river_corridor = _artifact_array(hydrology, "RiverCorridor").reshape(-1)
+    reach_parent_channel_support = np.ascontiguousarray(
+        river_corridor[reach_parent_cells] > 0.0, dtype=np.uint8
+    )
     planet = deps["planet"].artifact_records["PlanetMetadata"].value
     radius_m = float(planet["planet_radius_earth"]) * EARTH_RADIUS_M
     rng = context.rng("basin_refinement")
@@ -624,11 +748,13 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             parent_elevation_m=parent_elevation,
             parent_relief_m=parent_relief,
             parent_area_steradians=parent_area_steradians,
+            parent_process_excluded=parent_process_excluded,
             reach_ids=_column_numpy(selected_reaches, "reach_id", np.dtype(np.int32)),
             reach_from_nodes=_column_numpy(selected_reaches, "from_node", np.dtype(np.int32)),
             reach_to_nodes=_column_numpy(selected_reaches, "to_node", np.dtype(np.int32)),
             reach_offsets=reach_offsets,
             reach_parent_cells=reach_parent_cells,
+            reach_parent_channel_support=reach_parent_channel_support,
             channel_width_m=_column_numpy(
                 selected_reaches, "channel_width_m", np.dtype(np.float32)
             ),
@@ -642,6 +768,13 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     radius_km = radius_m / 1_000.0
     parent_areas_km2 = parent_area_steradians * radius_km * radius_km
     cells = _cell_table(cell_records)
+    cells = cells.append_column(
+        "process_excluded",
+        pa.array(
+            np.repeat(parent_process_excluded != 0, config.refinement_factor**2),
+            type=pa.bool_(),
+        ),
+    )
     parents = _parent_table(
         cell_records,
         parent_ids,
@@ -649,6 +782,7 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         parent_elevation,
         parent_relief,
         parent_areas_km2,
+        parent_process_excluded,
         config.refinement_factor,
     )
     reaches, junctions_valid, maximum_length_error = _reach_table(
@@ -664,18 +798,37 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         reaches, basin_ids, flow_receiver, flow_sink_type
     )
     reach_cells = _membership_table(memberships)
+    reaches = _append_physical_reach_lengths(reaches, reach_cells)
+    process_excluded_parent_ids = parent_ids[parent_process_excluded != 0]
+    process_exclusion_valid = not np.any(
+        np.isin(
+            np.asarray(reach_cells["parent_cell_id"], dtype=np.int32),
+            process_excluded_parent_ids,
+        )
+    )
     path_graph_metadata = _directed_path_graph_metadata(reaches)
     corridor_area_metadata = _corridor_area_metadata(reaches, metadata)
+    corridor_capacity_metadata = _corridor_capacity_metadata(reach_cells)
     metadata.update(
         {
             **asdict(config),
             **terminal_metadata,
             **path_graph_metadata,
             **corridor_area_metadata,
+            **corridor_capacity_metadata,
             "selected_basin_id": selected_basin_id,
             "selected_basin_parent_count": int(np.count_nonzero(inside_selected_basin)),
             "boundary_parent_count": int(np.count_nonzero(~inside_selected_basin)),
+            "process_excluded_parent_count": int(np.count_nonzero(parent_process_excluded)),
+            "process_exclusion_valid": int(process_exclusion_valid),
+            "channel_reach_count": int(
+                selected_reaches.num_rows - np.count_nonzero(selected_connectors)
+            ),
+            "connector_reach_count": int(np.count_nonzero(selected_connectors)),
             "selected_basin_area_km2": float(np.sum(parent_areas_km2[inside_selected_basin])),
+            "total_physical_channel_length_km": float(
+                pc.sum(reaches["physical_channel_length_km"]).as_py() or 0.0
+            ),
             "coarse_resolution": coarse_resolution,
             "terrain_seed": terrain_seed,
             "junction_merge_valid": int(junctions_valid),
@@ -683,9 +836,9 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "inherited_discharge_relative_error": 0.0,
             "topology": "sparse_selected_basin_on_cubed_sphere",
             "terrain_semantics": "parent_mean_conserving_unresolved_relief_realization",
-            "river_semantics": "subgrid_physical_width_vector_reaches",
+            "river_semantics": "physical_channel_reaches_with_zero_width_hydrologic_connectors",
             "corridor_area_semantics": (
-                "represented_centerline_cell_support_with_requested_unclipped_rectangles"
+                "conservative_nested_lateral_support_with_per_cell_capacity"
             ),
             "incision_semantics": "potential_reach_volume_not_cell_wide_elevation_change",
         }
@@ -706,6 +859,17 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             f"reverse_conflicts={metadata['reverse_directed_edge_conflict_count']}, "
             f"dag_valid={metadata['directed_path_dag_valid']}"
         )
+    if metadata["source_to_sink_ready"] != 1:
+        raise RuntimeError("refined reach graph contains an unresolved source-to-sink terminal")
+    if metadata["corridor_cell_capacity_valid"] != 1:
+        raise RuntimeError("refined corridor support exceeds fine-cell physical capacity")
+    if metadata["nested_corridor_support_valid"] != 1:
+        raise RuntimeError("refined channel, floodplain, and valley support is not nested")
+    if not process_exclusion_valid:
+        raise RuntimeError("refined physical reach support enters a process-excluded parent")
+    for corridor in ("channel", "valley", "floodplain"):
+        if metadata[f"{corridor}_area_retention_fraction"] < 1.0 - 1e-6:
+            raise RuntimeError(f"refined {corridor} support does not conserve requested area")
     context.logger.log_event(
         {"type": "basin_refinement_summary", "stage": "basin_refinement", **metadata}
     )

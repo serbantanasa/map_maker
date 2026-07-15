@@ -92,10 +92,14 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert metadata["reverse_directed_edge_conflict_count"] == 0
     assert metadata["directed_path_dag_valid"] == 1
     assert metadata["directed_path_graph_valid"] == 1
+    assert metadata["corridor_cell_capacity_valid"] == 1
+    assert metadata["nested_corridor_support_valid"] == 1
+    assert metadata["process_exclusion_valid"] == 1
     assert metadata["inherited_discharge_relative_error"] == 0.0
     assert metadata["parent_count"] == parents.num_rows
     assert metadata["child_count"] == cells.num_rows == parents.num_rows * factor * factor
     assert metadata["reach_count"] == reaches.num_rows > 0
+    assert metadata["channel_reach_count"] + metadata["connector_reach_count"] == reaches.num_rows
     assert metadata["reach_cell_count"] == memberships.num_rows > 0
     assert metadata["maximum_parent_area_relative_error"] < 1e-10
     assert metadata["maximum_parent_elevation_error_m"] < 1e-3
@@ -105,6 +109,12 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert np.max(np.abs(np.asarray(parents["elevation_error_m"]))) < 1e-3
     assert np.any(np.asarray(cells["terrain_offset_m"]) > 0.0)
     assert np.any(np.asarray(cells["terrain_offset_m"]) < 0.0)
+    assert "process_excluded" in cells.column_names
+    assert "process_excluded" in parents.column_names
+    assert (
+        int(np.count_nonzero(np.asarray(parents["process_excluded"])))
+        == metadata["process_excluded_parent_count"]
+    )
 
     fine_grid = CubedSphereGrid.create(fine_resolution)
     fine_to_parent = fine_grid.parent_map(factor).reshape(-1)
@@ -133,6 +143,8 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     valley_fraction = np.asarray(memberships["valley_fraction"])
     floodplain_fraction = np.asarray(memberships["floodplain_fraction"])
     assert np.all((channel_fraction >= 0.0) & (channel_fraction < 0.01))
+    assert np.all(channel_fraction <= floodplain_fraction + 1e-7)
+    assert np.all(floodplain_fraction <= valley_fraction + 1e-7)
     assert np.all(channel_fraction <= valley_fraction)
     assert np.all((floodplain_fraction >= 0.0) & (floodplain_fraction <= 1.0))
 
@@ -156,7 +168,10 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     for reach_id, expected_length in path_lengths_by_reach.items():
         selected = membership_reach == reach_id
         actual_length = float(np.sum(membership_length[selected]))
-        assert actual_length == pytest.approx(expected_length, rel=1e-12)
+        row = int(np.flatnonzero(np.asarray(reaches["reach_id"]) == reach_id)[0])
+        physical_length = float(reaches["physical_channel_length_km"][row].as_py()) * 1_000.0
+        assert physical_length <= expected_length
+        assert actual_length == pytest.approx(physical_length, rel=1e-12)
         assert float(np.sum(potential_volume[selected])) == pytest.approx(
             width_by_reach[reach_id] * actual_length * incision_by_reach[reach_id], rel=1e-6
         )
@@ -173,16 +188,46 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
         )
         assert metadata[f"represented_{corridor}_area_km2"] == pytest.approx(represented, rel=1e-12)
         assert metadata[f"requested_{corridor}_area_km2"] >= represented
-        assert 0.0 < metadata[f"{corridor}_area_retention_fraction"] <= 1.0 + 1e-7
+        assert 1.0 - 1e-6 < metadata[f"{corridor}_area_retention_fraction"] <= 1.0 + 1e-7
+        _, inverse = np.unique(membership_cell_ids, return_inverse=True)
+        per_cell = np.bincount(
+            inverse, weights=np.asarray(memberships[f"{corridor}_fraction"], dtype=np.float64)
+        )
+        assert np.max(per_cell, initial=0.0) <= 1.0 + 1e-6
 
     assert {
         "terminal_kind",
         "downstream_join_fine_cell",
+        "reach_kind",
         "terminal_parent_cell",
         "terminal_receiver_cell",
         "terminal_sink_type",
         "terminal_resolved",
     }.issubset(reaches.column_names)
+    assert "support_role" in memberships.column_names
+    lateral = np.asarray(memberships["support_role"]) == "lateral"
+    assert np.all(membership_length[lateral] == 0.0)
+    assert np.all(channel_fraction[lateral] == 0.0)
+    assert np.all(potential_volume[lateral] == 0.0)
+    connector_ids = set(
+        np.asarray(reaches["reach_id"], dtype=np.int32)[
+            np.asarray(reaches["reach_kind"]) == "connector"
+        ].tolist()
+    )
+    if connector_ids:
+        connector_memberships = np.isin(membership_reach, list(connector_ids))
+        assert not np.any(connector_memberships)
+        connector_parent_cells: set[int] = set()
+        for path, kind in zip(
+            reaches["parent_cell_path"].to_pylist(), reaches["reach_kind"].to_pylist(), strict=True
+        ):
+            if kind == "connector":
+                connector_parent_cells.update(int(cell) for cell in path[:-1])
+        assert not connector_parent_cells.intersection(
+            np.asarray(memberships["parent_cell_id"], dtype=np.int32).tolist()
+        )
+        connector_rows = np.asarray(reaches["reach_kind"]) == "connector"
+        assert np.all(np.asarray(reaches["physical_channel_length_km"])[connector_rows] == 0.0)
     unresolved = [
         kind for kind in reaches["terminal_kind"].to_pylist() if kind.startswith("unresolved_")
     ]
@@ -193,12 +238,10 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
 
 
 def test_refinement_is_deterministic_and_cacheable(tmp_path: Path):
-    first = ExecutionEngine(_config(tmp_path, "refinement-first")).run(["basin_refinement"])[
-        "basin_refinement"
-    ]
-    second = ExecutionEngine(_config(tmp_path, "refinement-second")).run(["basin_refinement"])[
-        "basin_refinement"
-    ]
+    first_config = _config(tmp_path / "independent-first", "refinement-first")
+    second_config = _config(tmp_path / "independent-second", "refinement-second")
+    first = ExecutionEngine(first_config).run(["basin_refinement"])["basin_refinement"]
+    second = ExecutionEngine(second_config).run(["basin_refinement"])["basin_refinement"]
     for name in (
         "RefinedBasinCellCatalog",
         "RefinedBasinParentCatalog",
@@ -210,7 +253,9 @@ def test_refinement_is_deterministic_and_cacheable(tmp_path: Path):
         first.artifact_records["BasinRefinementMetadata"].value
         == second.artifact_records["BasinRefinementMetadata"].value
     )
-    assert second.stats is not None and second.stats.cache_hit
+    assert second.stats is not None and not second.stats.cache_hit
+    cached = ExecutionEngine(second_config).run(["basin_refinement"])["basin_refinement"]
+    assert cached.stats is not None and cached.stats.cache_hit
 
 
 def test_refinement_config_rejects_invalid_controls():

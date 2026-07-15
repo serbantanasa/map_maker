@@ -48,3 +48,6 @@ def test_built_library_exposes_expected_abi_and_fingerprint() -> None:
     assert info["abi_version"] == NATIVE_ABI_VERSION
     assert len(info["sha256"]) == 64
     assert Path(info["path"]).is_file()
+
+    refinement = native_library_info("refinement_native")
+    assert refinement["abi_version"] == 3

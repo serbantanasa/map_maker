@@ -120,6 +120,14 @@ nonglaciated land when much smaller lakes are included in the
 [high-resolution inventory](https://doi.org/10.1002/2014GL060641). It is a
 validation diagnostic, not a global-area clamp.
 
+The canonical face-128 reach graph contains 1,259 physical channel reaches and
+220 zero-width hydrologic connectors. All 369 terminal reaches resolve to 351
+ocean outlets or 18 registered inland sinks; unresolved terminals are zero.
+Connector paths cover 885 coarse reach cells while publishing zero channel
+width, depth, local velocity, stream power, valley/floodplain support, and
+incision. They preserve routed flux and graph continuity without inventing a
+physical river through unresolved waterbody support.
+
 The previous whole-cell lake statistic is retired as an area estimate. Coarse
 support cells now carry `LakeFraction` and `WetlandFraction`; area diagnostics
 weight those fractions by physical cubed-sphere cell area. These ranges remain
@@ -140,19 +148,20 @@ Resolution stability still fails. Fractional area removes whole-cell inflation,
 but face-128 worlds retain materially more lakes and closed drainage than the
 face-64 sweep. Finer elevation exposes additional local depressions that can
 capture drainage which the coarse pass sent onward. Do not tune this away with a
-resolution-specific lake count. The required fix is hierarchical hydrology:
-preserve accepted coarse trunk connectivity and flux while refining local basins,
-tributaries, wetlands, and channels. Until that constraint exists, closed-drainage
-and lake statistics are provisional and Pass 1 is not calibrated for arbitrary
-resolution.
+resolution-specific lake count. The selected-basin prototype now preserves
+accepted coarse trunk connectivity and flux, but the contract is not yet
+generalized to local basins, tributaries, wetlands, and channels at arbitrary
+resolution. Closed-drainage and lake statistics therefore remain provisional.
 
 ## Selected-Basin Refinement
 
 The canonical sparse refinement selects ocean-draining basin 226. Its 1,448
 coarse basin cells plus one inherited ocean boundary cell produce 370,944
 face-2048 child records at factor 16 without allocating a global face-2048
-raster. Twenty-one inherited reaches produce 11,253 km of D4-contiguous fine
-reach paths and 2,613 sparse reach-cell memberships.
+raster. Twenty-one physical channel reaches and 16 zero-width hydrologic
+connectors produce 14,068 km of D4-contiguous topological paths, of which
+10,530 km is physical channel. The physical support catalog contains 3,152
+sparse memberships: 2,442 centerline records and 710 lateral corridor records.
 
 Observed conservation and topology diagnostics:
 
@@ -165,26 +174,35 @@ Observed conservation and topology diagnostics:
 | Downstream-path junction merges | Pass |
 | Reverse directed edges | `0` |
 | Combined path DAG | Pass |
+| Source-to-sink readiness | Pass |
+| Unresolved reach terminals | `0` |
 | Inherited discharge error | `0` |
+| Per-cell corridor capacity | Pass |
+| Nested channel/floodplain/valley support | Pass |
+| Preserved-depression process exclusion | Pass (`127` parents) |
 
-Requested physical channel area is `1,366.835 km2`; centerline-cell fractions
-represent `1,366.835 km2`, or roughly 0.02% of the 6.98 million km2 basin. This
+Requested physical channel area is `1,297.241 km2`; centerline-cell fractions
+represent `1,297.241 km2`, or roughly 0.02% of the 6.98 million km2 basin. This
 demonstrates why river width must remain a fractional/vector property even at
-the refined level. Approximately `157.3 km3` of potential incision is recorded
+the refined level. Approximately `150.20 km3` of potential incision is recorded
 as reach volume and has not been applied to cell-wide elevation.
 
-Broad corridors do not yet fit entirely in their centerline cells. Requested
-valley area is `39,917 km2`, of which `30,347 km2` (76.0%) is currently
-represented; requested floodplain area is `38,043 km2`, of which `29,499 km2`
-(77.5%) is represented. The missing support must be spread laterally into
-neighboring fine cells before erosion rather than hidden by capped fractions.
+Requested valley area is `38,010.699 km2` and represented area is
+`38,010.698 km2`. Requested floodplain area is `36,230.158 km2` and represented
+area is `36,230.157 km2`. The remaining differences are floating-point
+allocation error below `2e-8` relative. Per-cell summed support never exceeds
+one for channel, valley, or floodplain, including cells shared by multiple
+reaches, and every membership preserves channel <= floodplain <= valley.
 
-Source-to-sink readiness currently fails. Of 13 terminal registered reaches,
-one reaches the ocean and 12 end at land cells where Hydrology Pass 1 fell below
-the river extraction threshold. The refinement stage classifies and reports
-these inherited gaps instead of inventing connections. Conservative incision
-and sediment routing remain blocked until the gaps close. These are contract and
-conservation results, not accepted erosion calibration.
+The basin has one terminal reach, which reaches the ocean. Sixteen zero-width
+connectors preserve the accepted drainage path through coarse depression
+support without pretending those cells contain physical channels. They carry no
+physical memberships. Physical channel reaches also stop their process support
+at shared connector endpoints, so no channel, valley, floodplain, or incision
+area enters a connector-owned or preserved-depression parent. The basin
+therefore passes the topology and corridor input gates for conservative
+incision and sediment routing. These are contract and conservation results, not
+accepted erosion calibration.
 
 ## Calibration Rule
 
