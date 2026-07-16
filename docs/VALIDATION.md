@@ -252,6 +252,52 @@ outgoing volume, downstream inputs, parent restrictions, and native totals. A
 face-16 seed-22 regression fixture contains both a connector and an excluded
 parent so the corresponding tests are non-vacuous.
 
+## Sparse Hydrology Pass 2
+
+The canonical pass routes 370,944 sparse face-2048 children without allocating
+a global face-2048 raster. Of these, 338,176 selected-basin cells contribute
+source area, 2,434 are fixed physical trunk anchors, 32,512 remain inherited
+preserved-depression handoffs, and 256 belong to outside-basin terminal support.
+
+Observed stabilization diagnostics:
+
+| Metric | Canonical result |
+| --- | ---: |
+| Physical trunk edges preserved | `2,421 / 2,421` |
+| Cyclic or uncovered cells | `0` |
+| Receiver-change cells | `2,870` (`0.849%`) |
+| Receiver-change area | `53,917 km2` (`0.847%`) |
+| Baseline depression candidates | `9,023` |
+| Stabilized depression candidates | `8,944` |
+| Newly affected depression-candidate area | `37.14 km2` (`0.000583%`) |
+| Wholly new depression components | `0` |
+| Removed depression-candidate area | `13,831 km2` |
+| Maximum stabilized priority-fill depth | `214.14 m` |
+| Independent terminal-area residual | `0 km2` |
+| New candidates intersecting corridor support | `0` |
+| Additional erosion correction required | No |
+
+The 8,944 stabilized candidates cover about 1.46 million km2 and have roughly
+35,663 km3 of potential topographic fill volume. Those numbers are deliberately
+not reported as lake area or lake volume. They include unresolved local storage
+positions in noisy five-kilometre terrain and require runoff, evaporation,
+seepage, hydroperiod, soil, and vegetation tests before any waterbody label.
+
+Pass 2 applies one bounded local receiver correction while preserving every
+physical bed edge, junction, reach identity, and zero-width connector handoff.
+The canonical change is well below the provisional 15% count and area bounds;
+the bounds are rejection guards, not calibration targets. Independent audits
+recomputed from the emitted cell catalog agree with the native correction
+counts and areas.
+
+A preliminary face-16 sweep collected 12 seeds whose upstream basin refinement
+passed. Pass-2 receiver-change area ranged from `1.45-9.93%`, receiver-change
+cell count ranged from `1.50-9.93%`, no wholly new depression component was
+created, and no seed requested another erosion correction. Twenty-three other
+attempted seeds failed the existing refinement routing gate before Pass 2
+executed. That high upstream rejection rate remains a separate refinement
+defect and is not counted as Hydrology Pass-2 instability.
+
 ## Calibration Rule
 
 Do not tighten or loosen a threshold solely to make the current gallery pass.

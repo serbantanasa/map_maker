@@ -246,9 +246,10 @@ conservation error, and artifact semantics.
 - Groundwater, infiltration, losing/intermittent reaches, glaciers, engineered
   channels, and explicit delta distributary growth are absent or represented only
   by coarse reach attributes.
-- Breach erosion is a basin-scale coarse incision event. Detailed gorge evolution,
-  sediment routing, erosion/sedimentation feedback, and Hydrology Pass 2 follow in
-  the next milestone.
+- Breach erosion is a basin-scale coarse incision event. The sparse selected-basin
+  erosion and Hydrology Pass 2 now stabilize one refined basin, but detailed
+  gorge evolution, global sediment feedback, and monthly local lake balance
+  remain future work.
 - Current statistical thresholds are provisional. Multi-seed conditional
   validation against basin, lake, and river distributions is required before the
   Earth-like default is considered calibrated.

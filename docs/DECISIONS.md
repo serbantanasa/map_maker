@@ -1328,3 +1328,60 @@ Failure conditions:
   restriction.
 - Native statistics agreeing internally while emitted catalogs disagree.
 - Treating the canonical seed's potential-incision value as calibration.
+
+## Decision 026: Bounded Sparse Hydrology Pass 2
+
+Status: implemented, provisional
+
+Decision:
+Hydrology Pass 2 is a sparse selected-basin stabilization pass over the refined
+terrain and accepted fluvial graph. It compares local drainage before and after
+erosion, publishes every accepted receiver or depression change, and rejects
+basin-scale reorganization. It is not a second unconstrained global hydrology
+generation and may not silently replace Pass 1 identities.
+
+Routing-surface contract:
+- Ordinary child cells use their volume-adjusted full-cell mean terrain.
+- A physical centerline cell uses its solved float64 channel bed as its subgrid
+  routing surface; incision depth is not applied to the whole cell.
+- Preserved coarse depressions and zero-width connectors remain nonphysical
+  handoffs until dedicated bathymetric refinement resolves them.
+- Outside-basin boundary support remains an inherited terminal and may not open
+  a new lateral leak through the selected watershed boundary.
+
+Topology contract:
+- Physical trunk edges, junction cells, downstream reach references, and
+  connector handoffs are fixed inputs.
+- A deterministic sparse cubed-sphere D4 priority flood routes ordinary child
+  cells to the accepted trunk, preserved waterbody support, or inherited ocean
+  terminal.
+- Every routed child has one receiver, the stabilized graph is acyclic, and
+  contributing area is accumulated exactly once through the graph.
+- Local receiver changes are allowed only within configured area and count
+  bounds. Exceeding either bound rejects the pass instead of iterating.
+
+Depression contract:
+- Priority-fill depth is evaluated on both the pre-erosion and stabilized
+  routing surfaces.
+- Connected cells deeper than the configured minimum become local depression
+  candidates with deterministic IDs, area, potential storage, spill cell, and
+  before/after status.
+- A candidate is not automatically a permanent lake or wetland. Water balance,
+  hydroperiod, soils, and vegetation determine those later.
+- Inherited preserved lakes and depressions are audited as excluded handoffs,
+  not regenerated from incomplete local bathymetry.
+
+Bounded-correction rule:
+Pass 2 itself applies at most one local receiver correction from the pre-erosion
+to post-erosion surface. It reports whether any correction occurred and whether
+additional erosion correction would be required. V1 rejects a result requiring
+another unbounded terrain/hydrology loop.
+
+Failure conditions:
+- A changed physical trunk edge, bed, junction, reach identity, or connector
+  process exclusion.
+- A cycle, uncovered active child, dangling nonterminal receiver, or
+  contributing-area conservation failure.
+- Receiver-change area or count above the configured stability bounds.
+- Process routing through a preserved-depression interior.
+- Treating every priority-fill candidate as standing surface water.

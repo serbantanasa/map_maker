@@ -127,6 +127,8 @@ eroded historical volume.
   settling, competence, or grain-size model.
 - Sediment provenance, lithology, suspended/bed-load partition, transport time,
   avulsion, meander migration, deltas, shelves, and compaction are absent.
-- Hydrology Pass 2 has not yet consumed the altered terrain distribution.
+- The sparse Hydrology Pass 2 consumes the altered terrain distribution and
+  solved channel beds; global refined hydrology and monthly local lake balance
+  remain future work.
 - Repeated geological-time erosion, uplift, sediment loading, flexure, and
   isostatic response remain future passes.

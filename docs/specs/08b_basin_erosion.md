@@ -72,10 +72,10 @@ emptiness, source-to-sink conservation, independent-run determinism, and cache
 reuse. A fixture with real connectors and process-excluded parents prevents
 those gates from passing vacuously.
 
-## Next Step
+## Downstream Stabilization
 
-Hydrology Pass 2 must consume the volume-derived terrain distribution, rerun
-local drainage and depression stability, and decide whether one bounded
-erosion/hydrology correction is required. Calibration of profile depths and
-floodplain retention requires multi-seed distributions and Earth-derived
-benchmarks rather than tuning the canonical seed alone.
+The sparse Hydrology Pass 2 now consumes the volume-derived terrain and solved
+channel beds, applies one bounded local reroute, and reports depression
+stability. Calibration of profile depths and floodplain retention still requires
+multi-seed distributions and Earth-derived benchmarks rather than tuning the
+canonical seed alone.

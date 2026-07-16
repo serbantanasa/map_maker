@@ -49,7 +49,7 @@ Check that Python, Cargo, and all native libraries are ready:
 uv run map-maker doctor
 ```
 
-Generate the implemented world stack through erosion:
+Generate the default configured world stack:
 
 ```bash
 uv run map-maker generate --config configs/pipeline.yaml
@@ -77,8 +77,8 @@ climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
 reaches. Explicit geological event history, spherical
-erosion and sediment feedback, hydrology pass 2, soils, biomes, and complete
-regional terrain remain implementation milestones. A first sparse basin-refinement
+global erosion and sediment feedback, soils, biomes, and complete regional
+terrain remain implementation milestones. A first sparse basin-refinement
 stage now realizes one inherited trunk network at approximately 5 km scale,
 preserves parent terrain means and convergent reach junctions, and stores physical
 channel, valley, and floodplain fractions without carving whole cells. It also
@@ -88,9 +88,11 @@ nearby fine cells. The downstream sparse erosion pass now solves shared-junction
 bed profiles, applies volume-based subgrid incision, routes newly eroded sediment
 through connectors, deposits only on allocated floodplain support, and restricts
 terrain-volume feedback to coarse parents. Its morphology and retention
-parameters remain provisional, and Hydrology Pass 2 has not yet consumed the
-result. The current output is a functional prototype rather than an atlas-grade
-world.
+parameters remain provisional. The bounded sparse Hydrology Pass 2 now consumes
+the volume-adjusted cell means and float64 channel beds, preserves the accepted
+trunk and connector identities, reroutes local child drainage, and persists
+before/after depression candidates without labeling them all as lakes. The
+current output is a functional prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -154,6 +156,9 @@ uv run map-maker-pipeline --stage basin_refinement --config configs/cubed_sphere
 
 # Junction-consistent subgrid incision and conservative sediment routing
 uv run map-maker-pipeline --stage basin_erosion --config configs/cubed_sphere_crust_state.yaml
+
+# Bounded local rerouting and depression stability after erosion
+uv run map-maker-pipeline --stage hydrology_pass2 --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native
