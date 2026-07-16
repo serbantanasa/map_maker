@@ -84,3 +84,8 @@ stage_overrides:
     maximum_deposition_fraction: 0.35
     deposition_slope_scale: 0.001
     maximum_deposition_depth_m: 10.0
+  hydrology_pass2:
+    minimum_depression_depth_m: 5.0
+    maximum_receiver_change_fraction: 0.15
+    maximum_receiver_change_cell_fraction: 0.15
+    maximum_new_depression_area_fraction: 0.02

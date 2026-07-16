@@ -37,16 +37,20 @@
      sediment through connectors, and deposits only on allocated floodplain or
      terminal support.
 10. Hydrology pass 2.
+    - The sparse selected-basin pass uses volume-adjusted terrain means and
+      subgrid channel beds, preserves inherited trunk/connector identities,
+      applies one bounded local reroute, and publishes depression candidates.
 11. Soils and biomes.
 12. Mineral and energy systems.
 13. Selected-region refinement and map export.
 
-The current canonical cubed-sphere implementation reaches the first sparse
-selected-basin erosion and sedimentation pass after Hydrology Pass 1, with a
+The current canonical cubed-sphere implementation reaches the bounded sparse
+selected-basin Hydrology Pass 2 after erosion and sedimentation, with a
 causal, pre-erosion bedrock surface and separate crustal, orogenic, basin, and
 relief-prior artifacts, persisted monthly orbital forcing, and a first seasonal
 climate/orography pass. Bed-profile and sediment budgets are conservative but
-remain uncalibrated and have not yet fed Hydrology Pass 2. The older
+remain uncalibrated. Pass 2 now audits their local routing consequences without
+replacing the accepted coarse trunk graph. The older
 rectangular compatibility path runs directly from world age into provisional
 erosion and final rendering; it is reference behavior, not the canonical stage
 order.
