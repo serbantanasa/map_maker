@@ -9,6 +9,7 @@ from . import hydrology  # noqa: F401
 from . import basin_refinement  # noqa: F401
 from . import basin_erosion  # noqa: F401
 from . import hydrology_pass2  # noqa: F401
+from . import surface_water  # noqa: F401
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
 from . import geology  # noqa: F401
@@ -29,6 +30,7 @@ def ensure_builtin_stages() -> None:
         "basin_refinement": basin_refinement,
         "basin_erosion": basin_erosion,
         "hydrology_pass2": hydrology_pass2,
+        "surface_water": surface_water,
         "tectonics": tectonics,
         "world_age": world_age,
         "geology": geology,

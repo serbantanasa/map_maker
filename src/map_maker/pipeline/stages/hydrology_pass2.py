@@ -44,9 +44,9 @@ class HydrologyPass2Config:
         }
         if (
             not np.isfinite(values["minimum_depression_depth_m"])
-            or values["minimum_depression_depth_m"] < 0.0
+            or values["minimum_depression_depth_m"] <= 0.0
         ):
-            raise ValueError("minimum_depression_depth_m must be finite and non-negative")
+            raise ValueError("minimum_depression_depth_m must be finite and positive")
         for name in (
             "maximum_receiver_change_fraction",
             "maximum_receiver_change_cell_fraction",
@@ -200,11 +200,28 @@ def _depression_catalog(cells: pa.Table) -> tuple[pa.Table, dict[str, float | in
     level = np.asarray(cells["stabilized_hydrologic_elevation_m"], dtype=np.float64)
     receiver_depression = np.full(len(cells), -1, dtype=np.int32)
     routed = receiver_ids >= 0
+    target_rows = np.full(len(cells), -1, dtype=np.int64)
     if np.any(routed):
-        receiver_rows = _lookup_rows(
+        target_rows[routed] = _lookup_rows(
             cell_ids, receiver_ids[routed], label="depression spill receiver"
         )
-        receiver_depression[routed] = stabilized_ids[receiver_rows]
+        receiver_depression[routed] = stabilized_ids[target_rows[routed]]
+    upstream_count = np.zeros(len(cells), dtype=np.int32)
+    np.add.at(upstream_count, target_rows[routed], 1)
+    ready = deque(np.flatnonzero(upstream_count == 0).tolist())
+    downstream_rank = np.full(len(cells), -1, dtype=np.int64)
+    processed = 0
+    while ready:
+        row = ready.popleft()
+        downstream_rank[row] = processed
+        processed += 1
+        target = target_rows[row]
+        if target >= 0:
+            upstream_count[target] -= 1
+            if upstream_count[target] == 0:
+                ready.append(int(target))
+    if processed != len(cells):
+        raise RuntimeError("local depression candidates use a cyclic receiver graph")
 
     rows: list[dict[str, object]] = []
     new_area = float(np.sum(area[(stabilized_ids >= 0) & (baseline_ids < 0)]))
@@ -214,7 +231,12 @@ def _depression_catalog(cells: pa.Table) -> tuple[pa.Table, dict[str, float | in
         boundary_rows = np.flatnonzero(boundary)
         if len(boundary_rows) == 0:
             raise RuntimeError("local depression candidate has no spill receiver")
-        spill_row = min(boundary_rows, key=lambda row: (float(level[row]), int(cell_ids[row])))
+        if float(np.ptp(level[mask])) > 1e-6:
+            raise RuntimeError("local depression candidate does not have a level spill surface")
+        spill_row = max(
+            boundary_rows,
+            key=lambda row: (int(downstream_rank[row]), -int(cell_ids[row])),
+        )
         overlaps = baseline_ids[mask]
         overlap_area = area[mask]
         valid_overlap = overlaps >= 0
@@ -494,7 +516,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "HydrologyCorrectionCatalog",
         "HydrologyPass2Metadata",
     ),
-    version="v1",
+    version="v2",
     native_libraries=("hydrology_pass2_native",),
     visualizer=_cube_net_visualizer,
 )

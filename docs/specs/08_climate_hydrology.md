@@ -248,8 +248,9 @@ conservation error, and artifact semantics.
   by coarse reach attributes.
 - Breach erosion is a basin-scale coarse incision event. The sparse selected-basin
   erosion and Hydrology Pass 2 now stabilize one refined basin, but detailed
-  gorge evolution, global sediment feedback, and monthly local lake balance
-  remain future work.
+  gorge evolution and global sediment feedback remain future work. The refined
+  surface-water stage now solves monthly local lake balance, but its requested
+  outlet incisions have not yet been applied to terrain or routing.
 - Current statistical thresholds are provisional. Multi-seed conditional
   validation against basin, lake, and river distributions is required before the
   Earth-like default is considered calibrated.

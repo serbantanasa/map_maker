@@ -14,6 +14,7 @@ NATIVE_ABI_OVERRIDES = {
     "fluvial_native": 3,
     "hydrology_pass2_native": 1,
     "refinement_native": 3,
+    "surface_water_native": 2,
 }
 SIMULATION_NATIVE_LIBRARIES = (
     "climate_native",
@@ -25,6 +26,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "hydrology_pass2_native",
     "planet_native",
     "refinement_native",
+    "surface_water_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

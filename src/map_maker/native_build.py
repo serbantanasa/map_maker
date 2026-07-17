@@ -18,6 +18,7 @@ NATIVE_LIBRARIES = (
     "hydrology_pass2_native",
     "planet_native",
     "refinement_native",
+    "surface_water_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

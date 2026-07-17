@@ -60,6 +60,7 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
         "hydrology_pass2_native",
         "planet_native",
         "refinement_native",
+        "surface_water_native",
         "tectonics_native",
         "topology_native",
         "world_age_native",

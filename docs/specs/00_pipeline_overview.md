@@ -40,20 +40,24 @@
     - The sparse selected-basin pass uses volume-adjusted terrain means and
       subgrid channel beds, preserves inherited trunk/connector identities,
       applies one bounded local reroute, and publishes depression candidates.
-11. Soils and biomes.
-12. Mineral and energy systems.
-13. Selected-region refinement and map export.
+11. Refined seasonal surface-water balance.
+    - Local candidates receive monthly catchment inflow, fractional inundation,
+      fill/spill propagation, and provisional lake or hydrologic-wetland classes.
+12. Soils and biomes.
+13. Mineral and energy systems.
+14. Selected-region refinement and map export.
 
-The current canonical cubed-sphere implementation reaches the bounded sparse
-selected-basin Hydrology Pass 2 after erosion and sedimentation, with a
-causal, pre-erosion bedrock surface and separate crustal, orogenic, basin, and
-relief-prior artifacts, persisted monthly orbital forcing, and a first seasonal
-climate/orography pass. Bed-profile and sediment budgets are conservative but
-remain uncalibrated. Pass 2 now audits their local routing consequences without
-replacing the accepted coarse trunk graph. The older
-rectangular compatibility path runs directly from world age into provisional
-erosion and final rendering; it is reference behavior, not the canonical stage
-order.
+The current canonical cubed-sphere implementation reaches the refined seasonal
+surface-water balance after erosion, sedimentation, and bounded Hydrology Pass
+2. It includes a causal, pre-erosion bedrock surface; separate crustal,
+orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
+and a first seasonal climate/orography pass. Bed-profile and sediment budgets
+are conservative but remain uncalibrated. Pass 2 audits their local routing
+consequences without replacing the accepted coarse trunk graph; the
+surface-water stage then solves periodic monthly storage and publishes explicit
+outlet-erosion feedback. The older rectangular compatibility path runs directly
+from world age into provisional erosion and final rendering; it is reference
+behavior, not the canonical stage order.
 
 Legacy pipeline remains callable through `map_maker.legacy.*` but does not participate in this DAG.
 

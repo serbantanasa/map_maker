@@ -92,7 +92,10 @@ parameters remain provisional. The bounded sparse Hydrology Pass 2 now consumes
 the volume-adjusted cell means and float64 channel beds, preserves the accepted
 trunk and connector identities, reroutes local child drainage, and persists
 before/after depression candidates without labeling them all as lakes. The
-current output is a functional prototype rather than an atlas-grade world.
+refined seasonal surface-water stage now conserves inherited monthly runoff,
+solves fractional fill/spill states, and separates accepted standing water from
+systems requiring another outlet-incision pass. The current output is a
+functional prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -159,6 +162,9 @@ uv run map-maker-pipeline --stage basin_erosion --config configs/cubed_sphere_cr
 
 # Bounded local rerouting and depression stability after erosion
 uv run map-maker-pipeline --stage hydrology_pass2 --config configs/cubed_sphere_crust_state.yaml
+
+# Monthly fractional lakes, wetlands, transient storage, and outlet feedback
+uv run map-maker-pipeline --stage surface_water --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

@@ -10,7 +10,7 @@ import pytest
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline import _hydrology_pass2_native as native
 from map_maker.pipeline.cubed_sphere import CubedSphereGrid
-from map_maker.pipeline.stages.hydrology_pass2 import HydrologyPass2Config
+from map_maker.pipeline.stages.hydrology_pass2 import HydrologyPass2Config, _depression_catalog
 
 
 @pytest.fixture(autouse=True)
@@ -164,6 +164,28 @@ def test_native_pass2_rejects_nonadjacent_fixed_trunk_edge():
         native.run_hydrology_pass2(**fixture)
 
 
+def test_depression_catalog_uses_final_exit_after_reentry():
+    cells = pa.table(
+        {
+            "fine_cell_id": pa.array([0, 1, 2, 3], type=pa.int32()),
+            "stabilized_receiver_id": pa.array([1, 2, 3, -1], type=pa.int32()),
+            "baseline_depression_id": pa.array([-1, -1, -1, -1], type=pa.int32()),
+            "stabilized_depression_id": pa.array([7, -1, 7, -1], type=pa.int32()),
+            "area_km2": pa.array([1.0, 1.0, 1.0, 1.0], type=pa.float64()),
+            "stabilized_fill_depth_m": pa.array([5.0, 0.0, 4.0, 0.0], type=pa.float64()),
+            "stabilized_hydrologic_elevation_m": pa.array(
+                [10.0, 8.0, 10.0, 7.0], type=pa.float64()
+            ),
+        }
+    )
+
+    catalog, _ = _depression_catalog(cells)
+
+    assert catalog.num_rows == 1
+    assert catalog["spill_cell_id"][0].as_py() == 2
+    assert catalog["spill_receiver_id"][0].as_py() == 3
+
+
 def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
     engine = ExecutionEngine(_config(tmp_path, "pass2"), generate_visuals=True)
     results = engine.run(["basin_erosion", "hydrology_pass2"])
@@ -298,5 +320,7 @@ def test_hydrology_pass2_config_rejects_unknown_and_invalid_controls():
         HydrologyPass2Config.from_mapping({"magic": 1})
     with pytest.raises(ValueError, match="minimum_depression_depth_m"):
         HydrologyPass2Config.from_mapping({"minimum_depression_depth_m": -1.0})
+    with pytest.raises(ValueError, match="minimum_depression_depth_m"):
+        HydrologyPass2Config.from_mapping({"minimum_depression_depth_m": 0.0})
     with pytest.raises(ValueError, match="maximum_receiver_change_fraction"):
         HydrologyPass2Config.from_mapping({"maximum_receiver_change_fraction": 1.1})

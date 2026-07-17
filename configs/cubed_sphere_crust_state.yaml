@@ -89,3 +89,21 @@ stage_overrides:
     maximum_receiver_change_fraction: 0.15
     maximum_receiver_change_cell_fraction: 0.15
     maximum_new_depression_area_fraction: 0.02
+  surface_water:
+    minimum_solver_iterations: 8
+    maximum_solver_iterations: 64
+    transient_max_months: 3
+    permanent_min_months: 12
+    convergence_tolerance_fraction: 0.000001
+    open_water_evaporation_factor: 1.15
+    seepage_mm_year: 30.0
+    subgrid_relief_scale: 1.0
+    minimum_subgrid_relief_m: 10.0
+    maximum_connected_inundation_fraction: 0.25
+    minimum_wet_area_fraction: 0.01
+    wetland_max_mean_depth_m: 3.0
+    outlet_erosion_score_threshold: 0.30
+    outlet_erosion_depth_scale_m: 200.0
+    minimum_outlet_erosion_discharge_m3s: 0.10
+    maximum_water_balance_relative_error: 0.000000001
+    maximum_area_reconstruction_relative_error: 0.000001

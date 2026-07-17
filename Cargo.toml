@@ -9,6 +9,7 @@ members = [
     "src/map_maker/pipeline/native/hydrology_pass2",
     "src/map_maker/pipeline/native/planet",
     "src/map_maker/pipeline/native/refinement",
+    "src/map_maker/pipeline/native/surface_water",
     "src/map_maker/pipeline/native/tectonics",
     "src/map_maker/pipeline/native/topology",
     "src/map_maker/pipeline/native/world_age",
