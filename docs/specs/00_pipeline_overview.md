@@ -43,19 +43,26 @@
 11. Refined seasonal surface-water balance.
     - Local candidates receive monthly catchment inflow, fractional inundation,
       fill/spill propagation, and provisional lake or hydrologic-wetland classes.
-12. Soils and biomes.
-13. Mineral and energy systems.
-14. Selected-region refinement and map export.
+12. Bounded subgrid outlet incision and final surface-water balance.
+    - Narrow outlet beds modify terrain by physical eroded volume, retain
+      ordinary-cell semantics, rerun conservative routing in Rust, and iterate
+      monthly balance until outlet feedback is resolved or the hard round bound
+      is reached.
+13. Soils and biomes.
+14. Mineral and energy systems.
+15. Selected-region refinement and map export.
 
-The current canonical cubed-sphere implementation reaches the refined seasonal
-surface-water balance after erosion, sedimentation, and bounded Hydrology Pass
-2. It includes a causal, pre-erosion bedrock surface; separate crustal,
+The current canonical cubed-sphere implementation reaches converged bounded
+outlet incision and final seasonal surface-water balance after erosion,
+sedimentation, and Hydrology Pass 2. It includes a causal, pre-erosion bedrock
+surface; separate crustal,
 orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
 and a first seasonal climate/orography pass. Bed-profile and sediment budgets
 are conservative but remain uncalibrated. Pass 2 audits their local routing
 consequences without replacing the accepted coarse trunk graph; the
-surface-water stage then solves periodic monthly storage and publishes explicit
-outlet-erosion feedback. The older rectangular compatibility path runs directly
+surface-water stage solves periodic monthly storage, and the outlet stage
+consumes its explicit erosion feedback through bounded persistent corrections.
+The older rectangular compatibility path runs directly
 from world age into provisional erosion and final rendering; it is reference
 behavior, not the canonical stage order.
 

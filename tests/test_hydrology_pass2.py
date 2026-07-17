@@ -186,6 +186,31 @@ def test_depression_catalog_uses_final_exit_after_reentry():
     assert catalog["spill_receiver_id"][0].as_py() == 3
 
 
+def test_depression_catalog_accepts_an_empty_candidate_set():
+    cells = pa.table(
+        {
+            "fine_cell_id": pa.array([0, 1], type=pa.int32()),
+            "stabilized_receiver_id": pa.array([1, -1], type=pa.int32()),
+            "baseline_depression_id": pa.array([7, -1], type=pa.int32()),
+            "stabilized_depression_id": pa.array([-1, -1], type=pa.int32()),
+            "area_km2": pa.array([2.0, 3.0], type=pa.float64()),
+            "stabilized_fill_depth_m": pa.array([0.0, 0.0], type=pa.float64()),
+            "stabilized_hydrologic_elevation_m": pa.array([2.0, 1.0], type=pa.float64()),
+        }
+    )
+
+    catalog, metadata = _depression_catalog(cells)
+
+    assert catalog.num_rows == 0
+    assert metadata == {
+        "new_depression_area_km2": 0.0,
+        "removed_depression_area_km2": 2.0,
+        "new_depression_count": 0,
+        "changed_depression_count": 0,
+        "stable_depression_count": 0,
+    }
+
+
 def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
     engine = ExecutionEngine(_config(tmp_path, "pass2"), generate_visuals=True)
     results = engine.run(["basin_erosion", "hydrology_pass2"])

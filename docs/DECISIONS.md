@@ -1450,3 +1450,71 @@ Failure conditions:
 - Candidate-network water imbalance above the configured tolerance.
 - Treating provisional land evaporation as calibrated open-water potential
   evaporation.
+
+## Decision 028: Bounded Subgrid Outlet Incision
+
+Status: implemented, provisional
+
+Decision:
+Surface-water candidates that request outlet erosion receive one bounded
+subgrid incision and local-routing correction before soils or biomes may run.
+The correction follows the accepted Pass-2 receiver graph from each candidate's
+final spill cell to the first downstream candidate, lower ordinary cell, fixed
+trunk, preserved handoff, or terminal. It does not search globally for a more
+convenient outlet.
+
+Cascade contract:
+- Candidate outlets are planned downstream-to-upstream. An upstream candidate
+  may connect to the corrected level of a downstream candidate in the same
+  bounded pass, which permits linked lake chains to drain coherently.
+- The requested start level is the old spill level minus the published
+  recommended incision. It is raised when necessary to retain a positive
+  downstream bed slope into fixed or uncorrected support.
+- A path that cannot reach valid downstream support within the configured cell
+  bound is reported as blocked. It is not carved speculatively.
+- A candidate whose requested bed cannot descend into its downstream water
+  level is grade-limited, not an unresolved erosion failure. After that bounded
+  feasibility proof it may retain its lake class without blocking soils.
+- Shared path cells receive the lowest compatible requested bed and the widest
+  contributing outlet, while their physical erosion volume is counted once.
+
+Subgrid and terrain contract:
+- Outlet beds are subgrid channel elevations. A 10-100 metre outlet does not
+  lower an entire approximately five-kilometre child by its incision depth.
+- Channel width is a bounded function of pre-incision mean overflow discharge.
+  Eroded volume is incision depth times channel width times the child's
+  representative linear length (`sqrt(area)`); exact channel geometry remains
+  a regional-refinement responsibility.
+- Cell-mean terrain feedback is eroded volume divided by child area. Parent
+  aggregates must reconstruct the exact emitted child volume.
+- Existing physical trunk beds and receivers remain fixed. Outlet paths may
+  join them but may not rewrite them.
+- Applied outlet-path cells remain ordinary terrain cells and persist their
+  accepted downstream receiver as a separate subgrid constraint. They are not
+  promoted to full-cell physical channels, but later priority-flood passes
+  exclude the constrained bed support from depression membership.
+- If local priority flooding would route an unconstrained neighbor back into a
+  fixed outlet and form a cycle, only the cyclic ordinary support is restored
+  to its previously accepted receiver. Repair rounds and total constrained
+  support are bounded explicitly.
+
+Post-correction contract:
+- The Rust Hydrology Pass-2 kernel reruns over the corrected routing surface and
+  must publish an acyclic, conservative receiver graph with valid process
+  exclusions and unchanged physical trunks.
+- Monthly surface-water balance then reruns over the corrected candidates,
+  followed by further bounded incision/balance rounds up to the configured
+  limit.
+- Soils become ready only when that post-incision solve requests no further
+  outlet correction. Grade-limited paths and paths whose persisted bed already
+  satisfies the requested cut are retained as explicit accepted standing-water
+  reasons across rounds. Other residual feedback remains a hard blocker.
+
+Failure conditions:
+- Unknown or cyclic source routing, a mismatched downstream candidate, or a
+  correction through excluded/outside support.
+- A path longer than the configured bound, excessive corrected area or receiver
+  change, or a non-descending emitted outlet bed.
+- Any mismatch among cell, parent, and total eroded volume.
+- A changed physical trunk receiver or bed, invalid terminal, uncovered active
+  cell, or contributing-area conservation failure after rerouting.

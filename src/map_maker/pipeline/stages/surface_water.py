@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import asdict, dataclass
+from types import SimpleNamespace
 from typing import Mapping
 
 import numpy as np
@@ -91,6 +92,34 @@ class SurfaceWaterConfig:
         ):
             raise ValueError("minimum_wet_area_fraction must be finite and in (0, 1]")
         return config
+
+
+@dataclass(frozen=True)
+class SurfaceWaterFinalConfig:
+    maximum_outlet_incision_rounds: int = 8
+    require_soil_readiness: bool = False
+
+    @classmethod
+    def from_mapping(cls, mapping: Mapping[str, object]) -> "SurfaceWaterFinalConfig":
+        known = set(cls.__dataclass_fields__)
+        unknown = set(mapping) - known
+        if unknown:
+            raise ValueError(f"Unknown final surface-water controls: {', '.join(sorted(unknown))}")
+        maximum_rounds = int(
+            mapping.get(
+                "maximum_outlet_incision_rounds",
+                cls.__dataclass_fields__["maximum_outlet_incision_rounds"].default,
+            )
+        )
+        raw_required = mapping.get(
+            "require_soil_readiness",
+            cls.__dataclass_fields__["require_soil_readiness"].default,
+        )
+        if not isinstance(raw_required, bool):
+            raise ValueError("require_soil_readiness must be a boolean")
+        if not 1 <= maximum_rounds <= 32:
+            raise ValueError("maximum_outlet_incision_rounds must be in [1, 32]")
+        return cls(maximum_rounds, raw_required)
 
 
 def _artifact_table(result, name: str) -> pa.Table:
@@ -294,6 +323,7 @@ def _outlet_erosion_feedback(
     cell_records: np.ndarray,
     rock_strength: np.ndarray,
     accommodation: np.ndarray,
+    suppressed_outlet_spill_cell_ids: set[int] | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -340,8 +370,17 @@ def _outlet_erosion_feedback(
     )
     pre_adjustment_codes = candidate_records["class_code"]
     lake_like = (pre_adjustment_codes == 2) | (pre_adjustment_codes == 3)
+    suppressed_spill_ids = suppressed_outlet_spill_cell_ids or set()
+    if suppressed_spill_ids:
+        bounded_outlet_resolved = lake_like & np.isin(
+            np.asarray(candidates["spill_cell_id"], dtype=np.int32),
+            np.fromiter(suppressed_spill_ids, dtype=np.int32),
+        )
+    else:
+        bounded_outlet_resolved = np.zeros(len(candidates), dtype=bool)
     erosion_required = (
         lake_like
+        & ~bounded_outlet_resolved
         & (mean_overflow_m3s > 0.0)
         & (mean_overflow_m3s >= config.minimum_outlet_erosion_discharge_m3s)
         & (erosion_score >= config.outlet_erosion_score_threshold)
@@ -356,6 +395,7 @@ def _outlet_erosion_feedback(
     reasons = np.select(
         [
             erosion_required,
+            bounded_outlet_resolved,
             pre_adjustment_codes == 0,
             pre_adjustment_codes == 1,
             pre_adjustment_codes == 2,
@@ -364,6 +404,7 @@ def _outlet_erosion_feedback(
         ],
         [
             "outlet_erosion_feedback",
+            "bounded_outlet_feedback_resolved",
             "no_material_water",
             "short_hydroperiod",
             "seasonal_hydroperiod",
@@ -376,6 +417,10 @@ def _outlet_erosion_feedback(
     feedback_metadata: dict[str, object] = {
         "outlet_erosion_required_count": int(np.count_nonzero(erosion_required)),
         "outlet_erosion_required_mean_water_area_km2": float(np.sum(mean_area[erosion_required])),
+        "bounded_outlet_feedback_resolved_count": int(np.count_nonzero(bounded_outlet_resolved)),
+        "bounded_outlet_feedback_resolved_mean_water_area_km2": float(
+            np.sum(mean_area[bounded_outlet_resolved])
+        ),
         "maximum_outlet_erosion_score": float(np.max(erosion_score)),
         "maximum_recommended_outlet_incision_m": float(np.max(recommended_incision_m)),
         "outlet_erosion_score_semantics": ("head_weak_rock_low_accommodation_sustained_overflow"),
@@ -617,7 +662,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "SurfaceWaterMonthlyStateCatalog",
         "SurfaceWaterMetadata",
     ),
-    version="v1",
+    version="v3",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -716,6 +761,13 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
         cell_records,
         rock_strength,
         accommodation,
+        {
+            int(value)
+            for value in pass2_metadata.get(
+                "outlet_feedback_suppressed_spill_cell_ids",
+                pass2_metadata.get("grade_blocked_spill_cell_ids", []),
+            )
+        },
     )
     candidate_table = _candidate_table(
         candidates,
@@ -891,9 +943,8 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
         > config.maximum_area_reconstruction_relative_error
     ):
         raise RuntimeError("surface-water cell fractions do not reconstruct candidate area")
-    context.logger.log_event(
-        {"type": "surface_water_summary", "stage": "surface_water", **metadata}
-    )
+    summary_stage = str(pass2_metadata.get("surface_water_stage_name", "surface_water"))
+    context.logger.log_event({"type": "surface_water_summary", "stage": summary_stage, **metadata})
     return {
         "SurfaceWaterCandidateCatalog": candidate_table,
         "SeasonalSurfaceWaterCellCatalog": cell_table,
@@ -902,4 +953,195 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
     }
 
 
-__all__ = ["SurfaceWaterConfig", "surface_water_stage"]
+@stage(
+    "surface_water_final",
+    inputs=("outlet_incision", "climate", "geology", "basin_refinement", "planet"),
+    outputs=(
+        "SurfaceWaterCandidateCatalog",
+        "SeasonalSurfaceWaterCellCatalog",
+        "SurfaceWaterMonthlyStateCatalog",
+        "SurfaceWaterMetadata",
+        "OutletIncisionIterationCatalog",
+        "FinalOutletIncisionCandidateCatalog",
+        "FinalOutletIncisionCellCatalog",
+        "FinalOutletCorrectedBasinCellCatalog",
+        "FinalPostIncisionDepressionCandidateCatalog",
+        "FinalOutletIncisionMetadata",
+    ),
+    version="v3",
+    native_libraries=("surface_water_native",),
+    visualizer=_cube_net_visualizer,
+)
+def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object]):
+    final_config = SurfaceWaterFinalConfig.from_mapping(config_mapping)
+    surface_controls = dict(context.config.stage_config("surface_water"))
+    outlet_controls = dict(context.config.stage_config("outlet_incision"))
+
+    def memory_result(output: Mapping[str, object]):
+        return SimpleNamespace(
+            artifact_records={name: SimpleNamespace(value=value) for name, value in output.items()}
+        )
+
+    def with_iteration(table: pa.Table, iteration: int) -> pa.Table:
+        return table.append_column(
+            "outlet_incision_iteration",
+            pa.array(np.full(table.num_rows, iteration, dtype=np.int32), type=pa.int32()),
+        )
+
+    current_hydrology = deps["outlet_incision"]
+    output = dict(
+        surface_water_stage(
+            context,
+            {
+                "hydrology_pass2": current_hydrology,
+                "climate": deps["climate"],
+                "geology": deps["geology"],
+                "basin_refinement": deps["basin_refinement"],
+            },
+            surface_controls,
+        )
+    )
+    candidate_corrections = [
+        with_iteration(
+            _artifact_table(deps["outlet_incision"], "OutletIncisionCandidateCatalog"), 1
+        )
+    ]
+    cell_corrections = [
+        with_iteration(_artifact_table(deps["outlet_incision"], "OutletIncisionCellCatalog"), 1)
+    ]
+    iteration_rows: list[dict[str, object]] = []
+    iteration = 1
+    outlet_metadata = deps["outlet_incision"].artifact_records["OutletIncisionMetadata"].value
+
+    def record_iteration(
+        iteration_number: int,
+        correction_metadata: Mapping[str, object],
+        balance_metadata: Mapping[str, object],
+    ) -> None:
+        iteration_rows.append(
+            {
+                "iteration": iteration_number,
+                "requested_candidate_count": int(correction_metadata["requested_candidate_count"]),
+                "applied_candidate_count": int(correction_metadata["applied_candidate_count"]),
+                "blocked_candidate_count": int(correction_metadata["blocked_candidate_count"]),
+                "corrected_cell_count": int(correction_metadata["corrected_cell_count"]),
+                "eroded_volume_m3": float(correction_metadata["total_eroded_volume_m3"]),
+                "post_correction_candidate_count": int(balance_metadata["candidate_count"]),
+                "residual_feedback_candidate_count": int(
+                    balance_metadata["outlet_erosion_required_count"]
+                ),
+                "accepted_standing_water_mean_area_km2": float(
+                    balance_metadata["accepted_standing_water_mean_area_km2"]
+                ),
+                "water_balance_relative_error": float(
+                    balance_metadata["independent_water_balance_relative_error"]
+                ),
+            }
+        )
+
+    record_iteration(iteration, outlet_metadata, output["SurfaceWaterMetadata"])
+    while (
+        int(output["SurfaceWaterMetadata"]["outlet_erosion_required_count"]) > 0
+        and iteration < final_config.maximum_outlet_incision_rounds
+    ):
+        from .outlet_incision import outlet_incision_stage
+
+        iteration += 1
+        correction_output = dict(
+            outlet_incision_stage(
+                context,
+                {
+                    "surface_water": memory_result(output),
+                    "hydrology_pass2": current_hydrology,
+                    "planet": deps["planet"],
+                },
+                outlet_controls,
+            )
+        )
+        current_hydrology = memory_result(correction_output)
+        outlet_metadata = correction_output["OutletIncisionMetadata"]
+        candidate_corrections.append(
+            with_iteration(correction_output["OutletIncisionCandidateCatalog"], iteration)
+        )
+        cell_corrections.append(
+            with_iteration(correction_output["OutletIncisionCellCatalog"], iteration)
+        )
+        output = dict(
+            surface_water_stage(
+                context,
+                {
+                    "hydrology_pass2": current_hydrology,
+                    "climate": deps["climate"],
+                    "geology": deps["geology"],
+                    "basin_refinement": deps["basin_refinement"],
+                },
+                surface_controls,
+            )
+        )
+        record_iteration(iteration, outlet_metadata, output["SurfaceWaterMetadata"])
+
+    metadata = dict(output["SurfaceWaterMetadata"])
+    metadata.update(
+        {
+            "surface_water_phase": "post_outlet_incision",
+            "outlet_incision_iteration_count": iteration,
+            "maximum_outlet_incision_rounds": final_config.maximum_outlet_incision_rounds,
+            "total_requested_outlet_corrections": int(
+                sum(row["requested_candidate_count"] for row in iteration_rows)
+            ),
+            "total_applied_outlet_corrections": int(
+                sum(row["applied_candidate_count"] for row in iteration_rows)
+            ),
+            "total_blocked_outlet_corrections": int(
+                sum(row["blocked_candidate_count"] for row in iteration_rows)
+            ),
+            "total_outlet_eroded_volume_m3": float(
+                sum(row["eroded_volume_m3"] for row in iteration_rows)
+            ),
+            "outlet_correction_converged": int(metadata["outlet_erosion_required_count"] == 0),
+            "model": "bounded_iterative_outlet_candidate_monthly_balance_v1",
+        }
+    )
+    output["SurfaceWaterMetadata"] = metadata
+    output["OutletIncisionIterationCatalog"] = pa.Table.from_pylist(
+        iteration_rows,
+        schema=pa.schema(
+            [
+                ("iteration", pa.int32()),
+                ("requested_candidate_count", pa.int32()),
+                ("applied_candidate_count", pa.int32()),
+                ("blocked_candidate_count", pa.int32()),
+                ("corrected_cell_count", pa.int32()),
+                ("eroded_volume_m3", pa.float64()),
+                ("post_correction_candidate_count", pa.int32()),
+                ("residual_feedback_candidate_count", pa.int32()),
+                ("accepted_standing_water_mean_area_km2", pa.float64()),
+                ("water_balance_relative_error", pa.float64()),
+            ]
+        ),
+    )
+    output["FinalOutletIncisionCandidateCatalog"] = pa.concat_tables(candidate_corrections)
+    output["FinalOutletIncisionCellCatalog"] = pa.concat_tables(cell_corrections)
+    output["FinalOutletCorrectedBasinCellCatalog"] = _artifact_table(
+        current_hydrology, "OutletCorrectedBasinCellCatalog"
+    )
+    output["FinalPostIncisionDepressionCandidateCatalog"] = _artifact_table(
+        current_hydrology, "PostIncisionDepressionCandidateCatalog"
+    )
+    output["FinalOutletIncisionMetadata"] = dict(outlet_metadata)
+    if final_config.require_soil_readiness and not metadata["surface_water_ready_for_soils"]:
+        raise RuntimeError(
+            "bounded outlet-incision rounds ended with residual surface-water feedback"
+        )
+    context.logger.log_event(
+        {"type": "surface_water_final_summary", "stage": "surface_water_final", **metadata}
+    )
+    return output
+
+
+__all__ = [
+    "SurfaceWaterConfig",
+    "SurfaceWaterFinalConfig",
+    "surface_water_stage",
+    "surface_water_final_stage",
+]

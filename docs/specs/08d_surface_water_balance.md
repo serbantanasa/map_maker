@@ -116,3 +116,5 @@ stabilization.
   do not yet exist.
 - Hydrologic wetland output is an input to future soils and biomes, not their
   final classification.
+- Candidate classes are provisional until `surface_water_final` consumes outlet
+  feedback through bounded incision and publishes a zero residual count.

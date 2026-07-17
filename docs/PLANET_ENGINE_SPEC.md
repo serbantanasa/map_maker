@@ -96,6 +96,14 @@ Current approved/provisional decisions:
 - Decision 018: Truth And Atlas Rendering.
 - Decision 019: Gate Then Score Realism Evaluation.
 - Decision 020: Rust Computational Core With Python Orchestration.
+- Decision 021: Causal Pre-Erosion Elevation Components.
+- Decision 022: Fractional Coarse Surface Coverage.
+- Decision 023: Hierarchical Rivers And Subgrid Fluvial Incision.
+- Decision 024: Hydrologic Connectors And Conservative Corridor Support.
+- Decision 025: Junction Beds And Conservative First-Pass Fluvial Budgets.
+- Decision 026: Bounded Sparse Hydrology Pass 2.
+- Decision 027: Refined Seasonal Surface-Water Balance.
+- Decision 028: Bounded Subgrid Outlet Incision.
 
 Accepted only as tentative prototype hypotheses:
 - Decision 010: Explicit History Window And Adaptive Nested Sweeps.

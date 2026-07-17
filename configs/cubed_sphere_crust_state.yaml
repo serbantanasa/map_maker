@@ -107,3 +107,22 @@ stage_overrides:
     minimum_outlet_erosion_discharge_m3s: 0.10
     maximum_water_balance_relative_error: 0.000000001
     maximum_area_reconstruction_relative_error: 0.000001
+  outlet_incision:
+    minimum_outlet_width_m: 5.0
+    outlet_width_coefficient: 8.0
+    outlet_width_exponent: 0.5
+    maximum_outlet_width_m: 500.0
+    minimum_outlet_bed_slope: 0.00001
+    maximum_outlet_path_cells: 64
+    maximum_reroute_repair_rounds: 64
+    maximum_incision_depth_m: 250.0
+    maximum_cell_mean_lowering_m: 5.0
+    minimum_depression_depth_m: 5.0
+    maximum_corrected_area_fraction: 0.10
+    maximum_receiver_change_area_fraction: 0.15
+    maximum_receiver_change_cell_fraction: 0.15
+    maximum_reroute_constraint_cell_fraction: 0.15
+    maximum_volume_relative_error: 0.0000000001
+  surface_water_final:
+    maximum_outlet_incision_rounds: 8
+    require_soil_readiness: true
