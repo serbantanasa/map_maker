@@ -2,7 +2,9 @@
 
 ## Status
 
-Planned. Execution is blocked while `surface_water_ready_for_soils` is false.
+Planned. The canonical fixed-seed outlet-incision run now publishes
+`surface_water_ready_for_soils = 1`; future soil execution must still refuse any
+world whose final surface-water artifact leaves this gate false.
 
 ## Objectives
 - Translate geology + climate into soil properties.

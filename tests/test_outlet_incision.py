@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import importlib
+from pathlib import Path
+
+import numpy as np
+import pyarrow as pa
+import pytest
+
+from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
+from map_maker.pipeline.stages.hydrology_pass2 import NO_FIXED_RECEIVER
+from map_maker.pipeline.stages.outlet_incision import OutletIncisionConfig, _cyclic_rows
+
+
+@pytest.fixture(autouse=True)
+def _ensure_stages_registered():
+    registry().clear()
+    for module_name in (
+        "geometry",
+        "planet",
+        "tectonics",
+        "world_age",
+        "geology",
+        "elevation",
+        "climate",
+        "hydrology",
+        "basin_refinement",
+        "basin_erosion",
+        "hydrology_pass2",
+        "surface_water",
+        "outlet_incision",
+    ):
+        module = importlib.import_module(f"map_maker.pipeline.stages.{module_name}")
+        importlib.reload(module)
+    yield
+
+
+def _config(
+    tmp_path: Path, run_id: str, *, minimum_outlet_discharge_m3s: float = 0.10
+) -> PipelineConfig:
+    return PipelineConfig.from_mapping(
+        {
+            "topology": "cubed_sphere",
+            "resolutions": [{"face_resolution": 16}],
+            "rng_seed": 22,
+            "run_id": run_id,
+            "output_dir": str(tmp_path / "out"),
+            "cache_dir": str(tmp_path / "cache"),
+            "log_dir": str(tmp_path / "logs"),
+            "stage_overrides": {
+                "tectonics": {
+                    "num_plates": 14,
+                    "continental_fraction": 0.35,
+                    "lloyd_iterations": 3,
+                },
+                "world_age": {"world_age": 4.1},
+                "climate": {
+                    "spinup_years": 10,
+                    "moisture_spinup_years": 2,
+                    "moisture_steps_per_month_at_face_128": 16,
+                },
+                "basin_refinement": {
+                    "refinement_factor": 4,
+                    "terrain_noise_fraction": 0.4,
+                },
+                "basin_erosion": {
+                    "minimum_bed_slope": 1e-5,
+                    "maximum_deposition_fraction": 0.35,
+                    "deposition_slope_scale": 0.001,
+                    "maximum_deposition_depth_m": 10.0,
+                },
+                "hydrology_pass2": {
+                    "minimum_depression_depth_m": 5.0,
+                    "maximum_receiver_change_fraction": 0.15,
+                    "maximum_receiver_change_cell_fraction": 0.15,
+                    "maximum_new_depression_area_fraction": 0.02,
+                },
+                "surface_water": {
+                    "minimum_solver_iterations": 8,
+                    "maximum_solver_iterations": 64,
+                    "maximum_connected_inundation_fraction": 0.25,
+                    "outlet_erosion_score_threshold": 0.30,
+                    "outlet_erosion_depth_scale_m": 200.0,
+                    "minimum_outlet_erosion_discharge_m3s": minimum_outlet_discharge_m3s,
+                },
+                "outlet_incision": {
+                    "maximum_outlet_path_cells": 64,
+                    "maximum_reroute_repair_rounds": 64,
+                    "maximum_corrected_area_fraction": 0.10,
+                    "maximum_receiver_change_area_fraction": 0.15,
+                    "maximum_receiver_change_cell_fraction": 0.15,
+                    "maximum_reroute_constraint_cell_fraction": 0.15,
+                },
+                "surface_water_final": {
+                    "maximum_outlet_incision_rounds": 8,
+                    "require_soil_readiness": True,
+                },
+            },
+        }
+    )
+
+
+def _table(result, name: str) -> pa.Table:
+    value = result.artifact_records[name].value
+    assert isinstance(value, pa.Table)
+    return value
+
+
+def test_cycle_detector_returns_only_cyclic_support():
+    cell_ids = np.array([10, 11, 12, 13, 14], dtype=np.int32)
+    receivers = np.array([11, 12, 11, 12, -1], dtype=np.int32)
+
+    assert _cyclic_rows(cell_ids, receivers).tolist() == [1, 2]
+
+
+def test_outlet_config_rejects_invalid_bounds():
+    with pytest.raises(ValueError, match="Unknown outlet-incision controls"):
+        OutletIncisionConfig.from_mapping({"magic": 1})
+    with pytest.raises(ValueError, match="maximum_reroute_repair_rounds"):
+        OutletIncisionConfig.from_mapping({"maximum_reroute_repair_rounds": 0})
+    with pytest.raises(ValueError, match="maximum_reroute_constraint_cell_fraction"):
+        OutletIncisionConfig.from_mapping({"maximum_reroute_constraint_cell_fraction": 1.1})
+
+
+def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path: Path):
+    config = _config(tmp_path, "outlet-final")
+    results = ExecutionEngine(config).run(["surface_water_final"])
+    outlet = results["outlet_incision"]
+    final = results["surface_water_final"]
+    outlet_metadata = outlet.artifact_records["OutletIncisionMetadata"].value
+    final_metadata = final.artifact_records["SurfaceWaterMetadata"].value
+    cells = _table(final, "FinalOutletCorrectedBasinCellCatalog")
+    iterations = _table(final, "OutletIncisionIterationCatalog")
+
+    assert outlet_metadata["graph_valid"] == 1
+    assert outlet_metadata["independent_graph_valid"] == 1
+    assert outlet_metadata["trunk_preserved_valid"] == 1
+    assert outlet_metadata["process_exclusion_valid"] == 1
+    assert outlet_metadata["corrected_area_fraction"] <= 0.10
+    assert outlet_metadata["independent_receiver_changed_area_fraction"] <= 0.15
+    assert final_metadata["outlet_erosion_required_count"] == 0
+    assert final_metadata["outlet_correction_converged"] == 1
+    assert final_metadata["surface_water_ready_for_soils"] == 1
+    assert iterations["residual_feedback_candidate_count"][-1].as_py() == 0
+    assert len(cells.column_names) == len(set(cells.column_names))
+
+    fixed = np.asarray(cells["outlet_fixed_receiver_id"], dtype=np.int32)
+    constrained = fixed != NO_FIXED_RECEIVER
+    anchors = np.asarray(cells["routing_anchor_kind"].to_pylist())
+    assert np.any(constrained)
+    assert np.all(anchors[constrained] == "ordinary")
+    assert np.all(
+        np.asarray(cells["stabilized_receiver_id"], dtype=np.int32)[constrained]
+        == fixed[constrained]
+    )
+
+    cached = ExecutionEngine(config).run(["surface_water_final"])["surface_water_final"]
+    assert cached.stats is not None and cached.stats.cache_hit
+
+
+def test_final_surface_water_accepts_a_zero_correction_world(tmp_path: Path):
+    config = _config(
+        tmp_path,
+        "outlet-noop",
+        minimum_outlet_discharge_m3s=100_000.0,
+    )
+
+    results = ExecutionEngine(config).run(["surface_water_final"])
+    outlet_metadata = results["outlet_incision"].artifact_records["OutletIncisionMetadata"].value
+    final = results["surface_water_final"]
+    final_metadata = final.artifact_records["SurfaceWaterMetadata"].value
+    iterations = _table(final, "OutletIncisionIterationCatalog")
+
+    assert outlet_metadata["requested_candidate_count"] == 0
+    assert outlet_metadata["corrected_cell_count"] == 0
+    assert final_metadata["outlet_incision_iteration_count"] == 1
+    assert final_metadata["outlet_erosion_required_count"] == 0
+    assert final_metadata["surface_water_ready_for_soils"] == 1
+    assert iterations["residual_feedback_candidate_count"].to_pylist() == [0]

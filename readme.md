@@ -94,7 +94,10 @@ trunk and connector identities, reroutes local child drainage, and persists
 before/after depression candidates without labeling them all as lakes. The
 refined seasonal surface-water stage now conserves inherited monthly runoff,
 solves fractional fill/spill states, and separates accepted standing water from
-systems requiring another outlet-incision pass. The current output is a
+systems requiring outlet incision. The bounded outlet stage cuts narrow subgrid
+beds by physical volume, preserves ordinary-cell and physical-trunk identities,
+reruns routing in Rust, and repeats monthly balance to a zero-feedback gate. The
+canonical seed currently converges in seven rounds. The current output is a
 functional prototype rather than an atlas-grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
@@ -165,6 +168,12 @@ uv run map-maker-pipeline --stage hydrology_pass2 --config configs/cubed_sphere_
 
 # Monthly fractional lakes, wetlands, transient storage, and outlet feedback
 uv run map-maker-pipeline --stage surface_water --config configs/cubed_sphere_crust_state.yaml
+
+# One bounded outlet-incision and local-reroute pass
+uv run map-maker-pipeline --stage outlet_incision --config configs/cubed_sphere_crust_state.yaml
+
+# Iterative incision plus final zero-feedback monthly surface-water balance
+uv run map-maker-pipeline --stage surface_water_final --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

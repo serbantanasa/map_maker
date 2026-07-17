@@ -225,6 +225,13 @@ fn validate_inputs(
                     return Err(3);
                 }
             }
+            ANCHOR_NORMAL => {
+                if inputs.fixed_receiver_ids[row] != NO_FIXED_RECEIVER
+                    && inputs.fixed_receiver_ids[row] < TERMINAL_HANDOFF
+                {
+                    return Err(3);
+                }
+            }
             _ if inputs.fixed_receiver_ids[row] != NO_FIXED_RECEIVER => return Err(3),
             _ => {}
         }
@@ -238,15 +245,21 @@ fn validate_inputs(
     }
     let adjacency = build_adjacency(resolution, inputs.cell_ids, &row_by_id);
     for (row, neighbors) in adjacency.iter().enumerate() {
-        if inputs.anchor_kinds[row] != ANCHOR_CHANNEL || inputs.fixed_receiver_ids[row] < 0 {
+        if inputs.fixed_receiver_ids[row] < 0 {
             continue;
         }
         let target_id = inputs.fixed_receiver_ids[row];
-        let Some(&target_row) = row_by_id.get(&target_id) else {
+        if !row_by_id.contains_key(&target_id) {
             return Err(3);
-        };
-        if inputs.anchor_kinds[target_row] != ANCHOR_CHANNEL || !neighbors.contains(&target_id) {
+        }
+        if !neighbors.contains(&target_id) {
             return Err(3);
+        }
+        if inputs.anchor_kinds[row] == ANCHOR_CHANNEL {
+            let target_row = row_by_id[&target_id];
+            if inputs.anchor_kinds[target_row] != ANCHOR_CHANNEL {
+                return Err(3);
+            }
         }
     }
     Ok(RoutingDomain {
@@ -308,6 +321,42 @@ fn route_surface(
         }
     }
 
+    for row in 0..cell_count {
+        if inputs.anchor_kinds[row] == ANCHOR_NORMAL
+            && inputs.fixed_receiver_ids[row] != NO_FIXED_RECEIVER
+        {
+            receiver[row] = inputs.fixed_receiver_ids[row];
+        }
+    }
+    let mut upstream_count = vec![0usize; cell_count];
+    for &receiver_id in &receiver {
+        if let Some(&target) = row_by_id.get(&receiver_id) {
+            upstream_count[target] += 1;
+        }
+    }
+    let mut ready = (0..cell_count)
+        .filter(|row| upstream_count[*row] == 0)
+        .collect::<VecDeque<_>>();
+    let mut order = Vec::with_capacity(cell_count);
+    while let Some(row) = ready.pop_front() {
+        order.push(row);
+        if let Some(&target) = row_by_id.get(&receiver[row]) {
+            upstream_count[target] -= 1;
+            if upstream_count[target] == 0 {
+                ready.push_back(target);
+            }
+        }
+    }
+    if order.len() == cell_count {
+        for &row in order.iter().rev() {
+            if let Some(&target) = row_by_id.get(&receiver[row]) {
+                hydrologic_elevation_m[row] = surface[row].max(hydrologic_elevation_m[target]);
+            } else {
+                hydrologic_elevation_m[row] = surface[row];
+            }
+        }
+    }
+
     let uncovered_count = visited.iter().filter(|value| !**value).count();
     let fill_depth_m = hydrologic_elevation_m
         .iter()
@@ -319,6 +368,7 @@ fn route_surface(
         .map(|row| {
             visited[row]
                 && inputs.anchor_kinds[row] == ANCHOR_NORMAL
+                && inputs.fixed_receiver_ids[row] == NO_FIXED_RECEIVER
                 && fill_depth_m[row] >= config.minimum_depression_depth_m
         })
         .collect::<Vec<_>>();
@@ -756,6 +806,41 @@ mod tests {
         assert_eq!(outcome.cells[1].stabilized_receiver_id, ids[4]);
         assert_eq!(outcome.cells[4].stabilized_receiver_id, ids[7]);
         assert_eq!(outcome.cells[7].stabilized_receiver_id, TERMINAL_OCEAN);
+    }
+
+    #[test]
+    fn constrained_subgrid_outlet_may_discharge_to_an_ordinary_cell() {
+        let (ids, xyz) = grid_fixture();
+        let terrain = vec![6.0, 5.0, 6.0, 5.0, 4.0, 5.0, 6.0, 3.0, 6.0];
+        let mut anchors = vec![ANCHOR_NORMAL; 9];
+        let mut fixed = vec![NO_FIXED_RECEIVER; 9];
+        anchors[7] = ANCHOR_CHANNEL;
+        fixed[1] = ids[4];
+        fixed[7] = TERMINAL_OCEAN;
+        let inputs = Inputs {
+            cell_ids: &ids,
+            terrain_before_m: &terrain,
+            routing_surface_after_m: &terrain,
+            cell_areas_km2: &[1.0; 9],
+            cell_xyz: &xyz,
+            anchor_kinds: &anchors,
+            source_active: &[1; 9],
+            fixed_receiver_ids: &fixed,
+        };
+        let outcome = run_pass(
+            HydrologyPass2Config {
+                fine_resolution: 4,
+                minimum_depression_depth_m: 0.5,
+                planet_radius_m: 6_371_000.0,
+            },
+            &inputs,
+        )
+        .expect("valid outlet-to-terrain handoff");
+        assert_eq!(outcome.stats.graph_valid, 1);
+        assert_eq!(outcome.cells[1].stabilized_receiver_id, ids[4]);
+        assert_eq!(outcome.cells[1].anchor_kind, ANCHOR_NORMAL);
+        assert_eq!(outcome.cells[4].anchor_kind, ANCHOR_NORMAL);
+        assert!(outcome.cells[1].stabilized_depression_id < 0);
     }
 
     #[test]

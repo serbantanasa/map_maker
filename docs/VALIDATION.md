@@ -334,6 +334,46 @@ false until a bounded outlet-incision and local reroute pass consumes all 3,125
 feedback records. The current class and area distribution is provisional; it
 has not passed a multi-seed Earth-derived lake and wetland calibration.
 
+## Bounded Outlet Incision And Final Surface Water
+
+The canonical correction follows the accepted receiver graph with narrow
+subgrid beds. It changes cell-mean terrain only by reconstructed eroded volume,
+keeps physical channel anchors unchanged, and retains corrected ordinary cells
+through explicit receiver constraints. The first correction pass reports:
+
+| Metric | Canonical result |
+| --- | ---: |
+| Requested candidates | `3,125` |
+| Applied / bounded-accepted | `2,942 / 183` |
+| Corrected cells | `8,885` |
+| Corrected active area | `167,290 km2` (`2.627%`) |
+| Subgrid eroded volume | `13.918 km3` |
+| Maximum bed incision | `160.65 m` |
+| Maximum cell-mean lowering | `4.04 m` |
+| Receiver-change area | `359,457 km2` (`5.644%`) |
+| Cycle repair | `1` round, `1` ordinary cell |
+| Physical trunk anchors preserved | `2,434 / 2,434` |
+
+Monthly balance and correction then converge in seven rounds. Residual feedback
+counts are `2,181, 671, 109, 22, 3, 1, 0`; cumulative outlet erosion is about
+`16.491 km3`. The final graph retains 10,857 ordinary routing constraints and
+publishes `surface_water_ready_for_soils = 1`. Annual candidate-network water
+balance closes to `2.8e-16` relative error.
+
+Final accepted standing-water mean area is `238,049 km2`, or `3.74%` of the
+selected basin's active area. The area fraction is inside the earlier
+provisional Earth-like lake-area envelope, but morphology is not calibrated:
+10,062 candidates are permanent lakes, seven are hydrologic wetlands, and none
+are seasonal. Multi-seed and multi-resolution comparison must test candidate
+count, size distribution, hydroperiod, and bathymetry before these labels are
+treated as Earth-like.
+
+The original Python depression-catalog builder scaled as cells times
+candidates. Grouped aggregation preserves byte-identical canonical output and
+measured `4.77 s` before versus `0.17 s` after on the development machine
+(approximately 28x for that operation). This is a local benchmark, not a
+cross-platform performance guarantee.
+
 ## Calibration Rule
 
 Do not tighten or loosen a threshold solely to make the current gallery pass.

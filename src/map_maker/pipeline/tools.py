@@ -275,6 +275,8 @@ def main(args: Iterable[str] | None = None) -> int:
             "basin_erosion",
             "hydrology_pass2",
             "surface_water",
+            "outlet_incision",
+            "surface_water_final",
         ],
         default="topology",
     )
@@ -349,8 +351,12 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "basin_erosion"
         elif parsed.stage == "hydrology_pass2":
             stage_name = "hydrology_pass2"
-        else:
+        elif parsed.stage == "surface_water":
             stage_name = "surface_water"
+        elif parsed.stage == "outlet_incision":
+            stage_name = "outlet_incision"
+        else:
+            stage_name = "surface_water_final"
         started = time.perf_counter()
         ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run([stage_name])
         elapsed_ms = (time.perf_counter() - started) * 1000.0
@@ -378,6 +384,8 @@ def main(args: Iterable[str] | None = None) -> int:
         "basin_erosion",
         "hydrology_pass2",
         "surface_water",
+        "outlet_incision",
+        "surface_water_final",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

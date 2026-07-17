@@ -191,6 +191,21 @@ def _cell_table(source: pa.Table, records: np.ndarray, routing_surface: np.ndarr
 
 
 def _depression_catalog(cells: pa.Table) -> tuple[pa.Table, dict[str, float | int]]:
+    schema = pa.schema(
+        [
+            ("depression_id", pa.int32()),
+            ("spill_cell_id", pa.int32()),
+            ("spill_receiver_id", pa.int32()),
+            ("cell_count", pa.int32()),
+            ("area_km2", pa.float64()),
+            ("potential_fill_volume_km3", pa.float64()),
+            ("maximum_fill_depth_m", pa.float64()),
+            ("spill_elevation_m", pa.float64()),
+            ("dominant_baseline_depression_id", pa.int32()),
+            ("baseline_overlap_fraction", pa.float64()),
+            ("status", pa.string()),
+        ]
+    )
     cell_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
     receiver_ids = np.asarray(cells["stabilized_receiver_id"], dtype=np.int32)
     baseline_ids = np.asarray(cells["baseline_depression_id"], dtype=np.int32)
@@ -223,73 +238,136 @@ def _depression_catalog(cells: pa.Table) -> tuple[pa.Table, dict[str, float | in
     if processed != len(cells):
         raise RuntimeError("local depression candidates use a cyclic receiver graph")
 
-    rows: list[dict[str, object]] = []
     new_area = float(np.sum(area[(stabilized_ids >= 0) & (baseline_ids < 0)]))
-    for depression_id in np.unique(stabilized_ids[stabilized_ids >= 0]):
-        mask = stabilized_ids == depression_id
-        boundary = mask & (receiver_depression != depression_id)
-        boundary_rows = np.flatnonzero(boundary)
-        if len(boundary_rows) == 0:
-            raise RuntimeError("local depression candidate has no spill receiver")
-        if float(np.ptp(level[mask])) > 1e-6:
-            raise RuntimeError("local depression candidate does not have a level spill surface")
-        spill_row = max(
-            boundary_rows,
-            key=lambda row: (int(downstream_rank[row]), -int(cell_ids[row])),
+    candidate_rows = np.flatnonzero(stabilized_ids >= 0)
+    if not len(candidate_rows):
+        removed_area = float(np.sum(area[baseline_ids >= 0]))
+        return pa.Table.from_pylist([], schema=schema), {
+            "new_depression_area_km2": new_area,
+            "removed_depression_area_km2": removed_area,
+            "new_depression_count": 0,
+            "changed_depression_count": 0,
+            "stable_depression_count": 0,
+        }
+    grouped_rows = candidate_rows[np.argsort(stabilized_ids[candidate_rows], kind="stable")]
+    group_ids, group_starts, group_counts = np.unique(
+        stabilized_ids[grouped_rows], return_index=True, return_counts=True
+    )
+    group_ends = group_starts + group_counts
+    group_slices = [grouped_rows[start:end] for start, end in zip(group_starts, group_ends)]
+    candidate_area = np.array([np.sum(area[rows]) for rows in group_slices], dtype=np.float64)
+    candidate_volume = np.array(
+        [np.sum(area[rows] * depth[rows]) / 1_000.0 for rows in group_slices],
+        dtype=np.float64,
+    )
+    candidate_maximum_depth = np.array(
+        [np.max(depth[rows]) for rows in group_slices], dtype=np.float64
+    )
+    group_level_minimum = np.array([np.min(level[rows]) for rows in group_slices], dtype=np.float64)
+    group_level_maximum = np.array([np.max(level[rows]) for rows in group_slices], dtype=np.float64)
+    if np.any(group_level_maximum - group_level_minimum > 1e-6):
+        raise RuntimeError("local depression candidate does not have a level spill surface")
+
+    boundary_rows = candidate_rows[
+        receiver_depression[candidate_rows] != stabilized_ids[candidate_rows]
+    ]
+    boundary_order = np.lexsort(
+        (
+            cell_ids[boundary_rows],
+            -downstream_rank[boundary_rows],
+            stabilized_ids[boundary_rows],
         )
-        overlaps = baseline_ids[mask]
-        overlap_area = area[mask]
-        valid_overlap = overlaps >= 0
-        dominant_baseline = -1
-        dominant_overlap_area = 0.0
-        if np.any(valid_overlap):
-            overlap_totals: dict[int, float] = defaultdict(float)
-            for inherited_id, cell_area in zip(
-                overlaps[valid_overlap], overlap_area[valid_overlap], strict=True
-            ):
-                overlap_totals[int(inherited_id)] += float(cell_area)
-            dominant_baseline, dominant_overlap_area = max(
-                overlap_totals.items(), key=lambda item: (item[1], -item[0])
+    )
+    ordered_boundary_rows = boundary_rows[boundary_order]
+    ordered_boundary_ids = stabilized_ids[ordered_boundary_rows]
+    first_boundary = np.r_[True, ordered_boundary_ids[1:] != ordered_boundary_ids[:-1]]
+    spill_rows = ordered_boundary_rows[first_boundary]
+    if not np.array_equal(stabilized_ids[spill_rows], group_ids):
+        raise RuntimeError("local depression candidate has no spill receiver")
+
+    dominant_baseline = np.full(len(group_ids), -1, dtype=np.int32)
+    dominant_overlap_area = np.zeros(len(group_ids), dtype=np.float64)
+    overlap_rows = candidate_rows[baseline_ids[candidate_rows] >= 0]
+    if len(overlap_rows):
+        overlap_order = np.lexsort(
+            (
+                overlap_rows,
+                baseline_ids[overlap_rows],
+                stabilized_ids[overlap_rows],
             )
-        candidate_area = float(np.sum(area[mask]))
-        if dominant_baseline < 0:
+        )
+        ordered_overlap_rows = overlap_rows[overlap_order]
+        overlap_pairs = np.column_stack(
+            (
+                stabilized_ids[ordered_overlap_rows],
+                baseline_ids[ordered_overlap_rows],
+            )
+        )
+        first_pair = np.r_[True, np.any(overlap_pairs[1:] != overlap_pairs[:-1], axis=1)]
+        pair_starts = np.flatnonzero(first_pair)
+        pair_candidate_ids = overlap_pairs[pair_starts, 0]
+        pair_baseline_ids = overlap_pairs[pair_starts, 1]
+        pair_ends = np.r_[pair_starts[1:], len(ordered_overlap_rows)]
+        pair_areas = np.zeros(len(pair_starts), dtype=np.float64)
+        for pair_row, (start, end) in enumerate(zip(pair_starts, pair_ends, strict=True)):
+            for cell_row in ordered_overlap_rows[start:end]:
+                pair_areas[pair_row] += float(area[cell_row])
+        best_pair_order = np.lexsort((pair_baseline_ids, -pair_areas, pair_candidate_ids))
+        ordered_pair_candidate_ids = pair_candidate_ids[best_pair_order]
+        first_best_pair = np.r_[
+            True,
+            ordered_pair_candidate_ids[1:] != ordered_pair_candidate_ids[:-1],
+        ]
+        best_pairs = best_pair_order[first_best_pair]
+        best_group_rows = np.searchsorted(group_ids, pair_candidate_ids[best_pairs])
+        dominant_baseline[best_group_rows] = pair_baseline_ids[best_pairs]
+        dominant_overlap_area[best_group_rows] = pair_areas[best_pairs]
+
+    forward_stable = np.logical_and.reduceat(
+        baseline_ids[grouped_rows] == stabilized_ids[grouped_rows], group_starts
+    )
+    baseline_rows = np.flatnonzero(baseline_ids >= 0)
+    ordered_baseline_rows = baseline_rows[np.argsort(baseline_ids[baseline_rows], kind="stable")]
+    baseline_group_ids, baseline_group_starts = np.unique(
+        baseline_ids[ordered_baseline_rows], return_index=True
+    )
+    baseline_group_stable = np.logical_and.reduceat(
+        stabilized_ids[ordered_baseline_rows] == baseline_ids[ordered_baseline_rows],
+        baseline_group_starts,
+    )
+    reverse_stable = np.zeros(len(group_ids), dtype=bool)
+    baseline_positions = np.searchsorted(baseline_group_ids, group_ids)
+    baseline_present = baseline_positions < len(baseline_group_ids)
+    baseline_present[baseline_present] &= (
+        baseline_group_ids[baseline_positions[baseline_present]] == group_ids[baseline_present]
+    )
+    reverse_stable[baseline_present] = baseline_group_stable[baseline_positions[baseline_present]]
+
+    rows: list[dict[str, object]] = []
+    for group_row, depression_id in enumerate(group_ids):
+        if dominant_baseline[group_row] < 0:
             status = "new"
-        elif np.all(baseline_ids[mask] == depression_id) and np.all(
-            stabilized_ids[baseline_ids == depression_id] == depression_id
-        ):
+        elif forward_stable[group_row] and reverse_stable[group_row]:
             status = "stable"
         else:
             status = "changed"
+        spill_row = spill_rows[group_row]
         rows.append(
             {
                 "depression_id": int(depression_id),
                 "spill_cell_id": int(cell_ids[spill_row]),
                 "spill_receiver_id": int(receiver_ids[spill_row]),
-                "cell_count": int(np.count_nonzero(mask)),
-                "area_km2": candidate_area,
-                "potential_fill_volume_km3": float(np.sum(area[mask] * depth[mask]) / 1_000.0),
-                "maximum_fill_depth_m": float(np.max(depth[mask])),
+                "cell_count": int(group_counts[group_row]),
+                "area_km2": float(candidate_area[group_row]),
+                "potential_fill_volume_km3": float(candidate_volume[group_row]),
+                "maximum_fill_depth_m": float(candidate_maximum_depth[group_row]),
                 "spill_elevation_m": float(level[spill_row]),
-                "dominant_baseline_depression_id": dominant_baseline,
-                "baseline_overlap_fraction": dominant_overlap_area / max(candidate_area, 1e-12),
+                "dominant_baseline_depression_id": int(dominant_baseline[group_row]),
+                "baseline_overlap_fraction": float(dominant_overlap_area[group_row])
+                / max(float(candidate_area[group_row]), 1e-12),
                 "status": status,
             }
         )
-    schema = pa.schema(
-        [
-            ("depression_id", pa.int32()),
-            ("spill_cell_id", pa.int32()),
-            ("spill_receiver_id", pa.int32()),
-            ("cell_count", pa.int32()),
-            ("area_km2", pa.float64()),
-            ("potential_fill_volume_km3", pa.float64()),
-            ("maximum_fill_depth_m", pa.float64()),
-            ("spill_elevation_m", pa.float64()),
-            ("dominant_baseline_depression_id", pa.int32()),
-            ("baseline_overlap_fraction", pa.float64()),
-            ("status", pa.string()),
-        ]
-    )
     catalog = pa.Table.from_pylist(rows, schema=schema)
     removed_area = float(np.sum(area[(baseline_ids >= 0) & (stabilized_ids < 0)]))
     return catalog, {
