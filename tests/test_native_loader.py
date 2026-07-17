@@ -57,3 +57,6 @@ def test_built_library_exposes_expected_abi_and_fingerprint() -> None:
 
     hydrology_pass2 = native_library_info("hydrology_pass2_native")
     assert hydrology_pass2["abi_version"] == 1
+
+    surface_water = native_library_info("surface_water_native")
+    assert surface_water["abi_version"] == 2

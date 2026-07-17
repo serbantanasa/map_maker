@@ -1,11 +1,20 @@
-# Stage 8 – Soil Formation & Biome Classification
+# Soil Formation And Biome Classification
+
+## Status
+
+Planned. Execution is blocked while `surface_water_ready_for_soils` is false.
 
 ## Objectives
 - Translate geology + climate into soil properties.
 - Classify land cover/biomes and agricultural suitability.
 
 ## Inputs
-- `Elevation`, `TemperatureMean`, `TemperatureSeasonal`, `PrecipitationMean`, `PrecipitationSeasonal`, `CatchmentMetadata`, `SedimentDepth`.
+- Accepted post-incision terrain and drainage, seasonal temperature and
+  precipitation, sediment depth and lithology, river corridor fractions, and
+  accepted `SurfaceWaterCandidateCatalog` and
+  `SeasonalSurfaceWaterCellCatalog` records.
+- Hydrologic wetlands are evidence for soil and vegetation processes, not final
+  ecological wetland labels.
 - Config:
   - Soil: `weathering_rate`, `organic_input`, `soil_texture_map`, `tile_size`.
   - Biome: `classification_table`, `snowline`, `aridity_thresholds`, `gpu_backend` (optional for large grids).
@@ -43,6 +52,7 @@
 - Tile throughput metrics to diagnose hotspots.
 
 ## Testing
+- Refuse to execute while upstream surface-water outlet corrections are pending.
 - Soil depth non-negative, fertility bounded [0,1].
 - Floodplain/delta enrichment increases fertility near major rivers while conserving total sediment; swamp deltas reduce suitability as expected.
 - Biome classification matches reference cases (e.g., desert climate).

@@ -74,7 +74,9 @@ seasonal, wetland, or no surface water.
 ## Current Limits
 
 - D4 routing is retained to match the accepted topology contract.
-- Local depression candidates do not yet run monthly lake water balance.
+- The downstream surface-water stage now runs monthly balance for local
+  depression candidates. Outlet-incision feedback from that balance still
+  requires another bounded terrain and routing correction.
 - Preserved coarse waterbodies still require bathymetric refinement before their
   inlet, lake-crossing, and outlet geometry becomes physical.
 - The pass stabilizes one selected basin, not the entire planet at refined

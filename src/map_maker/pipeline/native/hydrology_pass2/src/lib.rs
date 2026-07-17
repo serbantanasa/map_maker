@@ -183,7 +183,7 @@ fn validate_inputs(
     if resolution == 0
         || cell_count == 0
         || !config.minimum_depression_depth_m.is_finite()
-        || config.minimum_depression_depth_m < 0.0
+        || config.minimum_depression_depth_m <= 0.0
         || !config.planet_radius_m.is_finite()
         || config.planet_radius_m <= 0.0
         || inputs.terrain_before_m.len() != cell_count

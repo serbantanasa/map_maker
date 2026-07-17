@@ -298,6 +298,42 @@ attempted seeds failed the existing refinement routing gate before Pass 2
 executed. That high upstream rejection rate remains a separate refinement
 defect and is not counted as Hydrology Pass-2 instability.
 
+## Refined Seasonal Surface Water
+
+The canonical surface-water pass consumes all 8,944 Pass-2 candidates and
+77,525 candidate-support children. It assigns 320,751 active source children to
+disjoint first-downstream-candidate catchments and solves the periodic monthly
+state of the acyclic candidate graph upstream-to-downstream.
+
+| Metric | Canonical result |
+| --- | ---: |
+| Represented parent runoff volume | `346.298 km3/year` |
+| Candidate-network direct inflow | `281.000 km3/year` |
+| Parent-to-child runoff inheritance error | `0` |
+| Maximum fixed-point iterations | `19` |
+| Potential connected water area at all spills | `365,195 km2` |
+| Pre-adjustment permanent-lake candidates | `8,936` |
+| Outlet-erosion feedback candidates | `3,125` |
+| Pre-incision transient-storage area | `242,636 km2` |
+| Accepted permanent-lake candidates | `5,811` |
+| Hydrologic-wetland candidates | `8` |
+| Accepted standing-water mean area | `120,063 km2` (`1.885%`) |
+| Independent annual water-balance error | `2.49e-15` |
+| Maximum cell-to-candidate area reconstruction error | `5.77e-8` relative |
+
+The first unconstrained audit classified nearly every local candidate as a
+permanent lake and produced about 909,000 km2 of mean water area. That failed
+the realism review. Two structural corrections were made rather than loosening
+a validation bound: local subcell low terrain now has a connected-basin cap,
+and sustained overflow produces explicit outlet-erosion feedback based on head,
+rock strength, sediment accommodation, and discharge.
+
+The 242,636 km2 transient figure is the conservative pre-incision fill/spill
+state, not accepted standing water. `surface_water_ready_for_soils` remains
+false until a bounded outlet-incision and local reroute pass consumes all 3,125
+feedback records. The current class and area distribution is provisional; it
+has not passed a multi-seed Earth-derived lake and wetland calibration.
+
 ## Calibration Rule
 
 Do not tighten or loosen a threshold solely to make the current gallery pass.

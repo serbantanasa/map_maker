@@ -128,7 +128,8 @@ eroded historical volume.
 - Sediment provenance, lithology, suspended/bed-load partition, transport time,
   avulsion, meander migration, deltas, shelves, and compaction are absent.
 - The sparse Hydrology Pass 2 consumes the altered terrain distribution and
-  solved channel beds; global refined hydrology and monthly local lake balance
-  remain future work.
+  solved channel beds, and the surface-water stage now solves monthly local
+  balance. Global refined hydrology and the requested local outlet-incision
+  feedback remain future work.
 - Repeated geological-time erosion, uplift, sediment loading, flexure, and
   isostatic response remain future passes.

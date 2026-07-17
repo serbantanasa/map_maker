@@ -1366,6 +1366,9 @@ Depression contract:
 - Connected cells deeper than the configured minimum become local depression
   candidates with deterministic IDs, area, potential storage, spill cell, and
   before/after status.
+- On a flat priority-fill component, the persisted spill is the component's
+  final downstream exit in the accepted receiver DAG. This prevents arbitrary
+  equal-level tree tie-breaking from creating self-edges or candidate cycles.
 - A candidate is not automatically a permanent lake or wetland. Water balance,
   hydroperiod, soils, and vegetation determine those later.
 - Inherited preserved lakes and depressions are audited as excluded handoffs,
@@ -1385,3 +1388,65 @@ Failure conditions:
 - Receiver-change area or count above the configured stability bounds.
 - Process routing through a preserved-depression interior.
 - Treating every priority-fill candidate as standing surface water.
+
+## Decision 027: Refined Seasonal Surface-Water Balance
+
+Status: implemented, provisional
+
+Decision:
+New local depression candidates from Hydrology Pass 2 receive a deterministic
+monthly storage balance before any lake or wetland label is accepted. The
+balance runs only on resolved ordinary child cells. Inherited coarse lakes and
+preserved depressions remain excluded handoffs until their bathymetry is
+refined explicitly.
+
+Catchment contract:
+- Parent monthly runoff and evaporation depths are copied to refined children;
+  physical child areas therefore conserve each represented parent's water
+  volume without inventing unsupported fine-scale climate.
+- Every active source child belongs to its first downstream local candidate, if
+  one exists. Direct candidate catchments are disjoint.
+- Candidate spill receivers define an acyclic upstream-to-downstream candidate
+  graph. Monthly overflow is transferred through that graph once; it is not
+  counted as new runoff at the downstream candidate.
+- Candidate-network direct inflow equals evaporation, seepage, terminal
+  overflow, and storage change within floating-point tolerance.
+
+Fractional-water contract:
+- A refined child is still a container, not an atomic water label.
+- Parent relief is scaled to unresolved child relief. A uniform subcell
+  elevation distribution provides deterministic area and volume curves between
+  the local bottom and the Pass-2 spill elevation.
+- Because these candidates were unresolved at the parent scale, a configured
+  connected-basin fraction caps how much low subcell terrain may belong to one
+  local waterbody. Inherited resolved lakes are outside this pass.
+- The monthly balance publishes storage, water area, overflow, evaporation,
+  seepage, and fractional inundation for every participating candidate and
+  child.
+
+Classification contract:
+- `dry_depression`: no material surface-water month.
+- `transient_storage`: short-hydroperiod inundation, or a filled local candidate
+  whose sustained overflow requires outlet-incision feedback before standing
+  water can be accepted.
+- `seasonal_lake`: deeper material inundation that is not present year-round.
+- `permanent_lake`: material water area in every climatological month and mean
+  depth above the wetland threshold.
+- `hydrologic_wetland`: recurrent material inundation whose annual wetted mean
+  depth remains below the wetland threshold.
+- A hydrologic wetland is a surface-water and hydroperiod result, not a final
+  ecological biome. Soil saturation, vegetation, and groundwater may revise it
+  later.
+- Sustained overflow, available head, weak rock, and low sediment accommodation
+  produce an explicit outlet-erosion score. The pre-incision monthly state is
+  retained for conservation auditing, while the accepted class is transient
+  until a later bounded incision/reroute pass resolves the outlet.
+
+Failure conditions:
+- A cyclic candidate graph, overlapping direct catchments, unknown receiver or
+  candidate identity, or process-excluded candidate support.
+- Fractional inundation outside `[0, 1]`, storage above candidate capacity, or a
+  non-finite monthly state.
+- Candidate-network water imbalance above the configured tolerance.
+- Treating provisional land evaporation as calibrated open-water potential
+  evaporation.
