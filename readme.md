@@ -77,8 +77,13 @@ climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
 reaches. Explicit geological event history, spherical
-global erosion and sediment feedback, soils, biomes, and complete regional
-terrain remain implementation milestones. A first sparse basin-refinement
+global erosion and sediment feedback, functional vegetation/biomes, and complete
+regional terrain remain implementation milestones. The canonical path now also
+publishes fractional L2 surface materials, initial mineral-soil properties, and
+a conservative monthly soil-water partition. Atmospheric composition and
+hydrostatic pressure are now explicit pre-climate artifacts, and the post-soil
+`biosphere_envelope` stage publishes raw light, thermal, water, carbon, oxygen,
+nutrient, and surface-support fields without assigning vegetation or biomes. A first sparse basin-refinement
 stage now realizes one inherited trunk network at approximately 5 km scale,
 preserves parent terrain means and convergent reach junctions, and stores physical
 channel, valley, and floodplain fractions without carving whole cells. It also
@@ -151,8 +156,14 @@ uv run map-maker-pipeline --stage elevation --config configs/cubed_sphere_crust_
 # Canonical planetary boundary conditions and monthly orbital forcing
 uv run map-maker-pipeline --stage planet --config configs/cubed_sphere_crust_state.yaml
 
-# Canonical seasonal temperature, wind, precipitation, snow, and runoff potential
+# Atmospheric composition, hydrostatic pressure, and CO2 forcing
+uv run map-maker-pipeline --stage atmosphere --config configs/cubed_sphere_crust_state.yaml
+
+# Canonical seasonal temperature, wind, precipitation, and evaporation
 uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_state.yaml
+
+# Seasonal snow, firn/ice mass balance, glacier melt, and canonical runoff
+uv run map-maker-pipeline --stage cryosphere --config configs/cubed_sphere_crust_state.yaml
 
 # Canonical lakes, breaches, drainage graph, basins, and vector river reaches
 uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_state.yaml
@@ -174,6 +185,18 @@ uv run map-maker-pipeline --stage outlet_incision --config configs/cubed_sphere_
 
 # Iterative incision plus final zero-feedback monthly surface-water balance
 uv run map-maker-pipeline --stage surface_water_final --config configs/cubed_sphere_crust_state.yaml
+
+# Final lake storage and overflow coupled into monthly reach hydrographs
+uv run map-maker-pipeline --stage lake_hydrographs --config configs/cubed_sphere_crust_state.yaml
+
+# Hard hydrology invariants plus scale-aware Earth-reference diagnostics
+uv run map-maker-pipeline --stage hydrology_validation --config configs/cubed_sphere_crust_state.yaml
+
+# Fractional L2 surface materials, initial soils, and monthly soil water
+uv run map-maker-pipeline --stage surface_materials --config configs/cubed_sphere_crust_state.yaml
+
+# Raw environmental resources for later trait-first vegetation and ecosystems
+uv run map-maker-pipeline --stage biosphere_envelope --config configs/cubed_sphere_crust_state.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

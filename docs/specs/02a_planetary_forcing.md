@@ -16,9 +16,15 @@ orbital migration, atmospheric composition, tides, or obliquity evolution.
   perihelion date, and northern vernal equinox date.
 - Moon mass and orbital distance.
 
-The V1 parameter bounds deliberately cover only plausible Earth-like water-world
-experiments. Mean incident flux is restricted to `0.65-1.5` times the Earth
-baseline. Atmospheric habitability is not implied by passing these bounds.
+The currently executable parameter bounds deliberately cover only plausible
+Earth-like water-world experiments. Mean incident flux is restricted to
+`0.65-1.5` times the Earth baseline. These bounds describe the implemented and
+tested envelope, not the permanent architecture. Atmospheric habitability is
+not implied by passing them.
+
+Atmospheric composition and pressure belong to the separate `atmosphere`
+stage. Orbital forcing remains top-of-atmosphere energy and does not infer a
+surface climate or biological suitability.
 
 ## Approximation
 
@@ -66,3 +72,11 @@ Modern climate consumes the twelve monthly forcing fields directly. Paleoclimate
 may consume annual mean and seasonality plus a configured geological warm/cold
 offset. All forcing arrays remain persisted so climate training examples can be
 reconstructed without rerunning orbital calculations.
+
+## Open-Envelope Boundary
+
+Decision 032 requires later work to widen or profile the current radius,
+gravity, stellar-flux, rotation, and temperature bounds. Widening a config
+range is not sufficient by itself: each new region needs an explicit scenario,
+diagnostic expectations, and a statement of which missing physics limit its
+interpretation.

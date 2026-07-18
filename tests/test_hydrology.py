@@ -21,11 +21,13 @@ def _ensure_hydrology_registered():
     for module_name in (
         "geometry",
         "planet",
+        "atmosphere",
         "tectonics",
         "world_age",
         "geology",
         "elevation",
         "climate",
+        "cryosphere",
         "hydrology",
     ):
         module = importlib.import_module(f"map_maker.pipeline.stages.{module_name}")

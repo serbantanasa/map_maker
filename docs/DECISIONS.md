@@ -1518,3 +1518,219 @@ Failure conditions:
 - Any mismatch among cell, parent, and total eroded volume.
 - A changed physical trunk receiver or bed, invalid terminal, uncovered active
   cell, or contributing-area conservation failure after rerouting.
+
+## Decision 029: Scale-Aware Hydrology KPIs And Cryosphere Boundary
+
+Status: implemented, provisional
+
+Decision:
+Hydrology validation publishes a persistent KPI catalog after final outlet
+incision. Every KPI identifies its spatial scope, unit, reference envelope,
+comparison status, and whether it is a hard invariant, an Earth diagnostic, or
+an implementation-capability marker. A global Earth statistic may inform a
+single-basin result but may not hard-fail it without matching climate, relief,
+geology, scale, and inventory threshold.
+
+Hard invariants:
+- Candidate and river graphs are acyclic, closed over known identifiers, and
+  reach only allowed terminals.
+- Every major river has a resolved source-to-terminal path.
+- Mean and monthly reach discharge do not decrease downstream unless the loss
+  is represented by an explicit water-storage or loss node.
+- Candidate-network water balance and outlet-correction convergence remain
+  hard gates.
+
+Earth diagnostics:
+- Global lake area, closed-drainage area, and runoff depth are compared with a
+  versioned Earth reference profile.
+- Selected-basin standing water, runoff, lake throughflow, and seasonality are
+  reported without a global pass/fail interpretation.
+- Wetlands and floodplains are definition-sensitive. Hydrologic wetness,
+  ecological wetland, geomorphic floodplain, and monthly inundation remain
+  separate products.
+
+Cryosphere boundary:
+- Seasonal snowfall, snow-water equivalent, melt, and melt-fed runoff are
+  existing monthly climate products and receive explicit KPIs.
+- Seasonal snow cover means the annual maximum snowpack exceeds a threshold;
+  perennial snow means the annual minimum exceeds a threshold. These terms may
+  not be interchanged.
+- Persistent snow is not a glacier. Glacier ice requires a separate firn/ice
+  reservoir, multi-year mass balance, downslope ice transport, and snow-versus-
+  ice meltwater provenance.
+- Terrain above the local climatic snowline with sustained positive
+  accumulation must be able to retain a multi-year firn/ice reservoir. The
+  reservoir gains mass primarily during its cold season and can release melt
+  through the spring, summer, and fall without resetting to zero each year.
+  Elevation alone is not sufficient: temperature, snowfall, sublimation, and
+  exposure determine whether high terrain actually carries persistent ice.
+- Seasonal snowmelt and glacier-ice melt remain separate hydrology inputs so
+  long-lived ice can buffer river flow across dry or warm seasons.
+- The V1 subsystem now supplies an age-tracked snow reservoir, firn conversion,
+  separate ice storage and melt, and conservative parameterized downslope ice
+  transfer. `glacier_mass_balance_implemented` is therefore one, while dynamic
+  ice-stress flow and calibrated glacier runoff remain explicitly incomplete.
+
+Known capability gates:
+- Final terminal lake-network overflow and consumptive losses are coupled into
+  monthly reach-entry and reach-exit hydrographs with a persistent adjustment
+  audit catalog.
+- Floodplain widths exist, but monthly inundation depth and duration do not.
+- Hydrologic wetland candidates await groundwater, soil, and vegetation
+  confirmation.
+
+## Decision 030: Bounded V1 Lake Hydrographs And Cryosphere
+
+Status: implemented, provisional calibration
+
+Decision:
+The V1 hydrology stack closes two causal gaps without attempting research-grade
+limnology or glaciology.
+
+Lake hydrographs:
+- Final surface-water candidates form terminal lake networks. Their summed
+  direct runoff is replaced downstream by the network's solved monthly terminal
+  overflow, rather than added to inherited discharge and counted twice.
+- Coupling preserves both pre-lake hydrographs and final reach-entry and
+  reach-exit hydrographs. Every terminal-network/month adjustment records its
+  nominal and effective reach.
+- If coarse inherited discharge has not yet accumulated a fine tributary's
+  water, a negative adjustment moves to the first downstream reach where it can
+  be applied without negative flow. This scale-remapping event remains visible
+  in metadata and may not silently clamp or discard water.
+- Lake-network balance, nonnegative discharge, and accounted downstream losses
+  remain hard validation gates.
+
+Cryosphere:
+- The atmosphere stage remains responsible for temperature, precipitation, and
+  evaporation. A separate Rust cryosphere stage owns canonical seasonal snow,
+  firn, glacier ice, glacier melt, and melt-inclusive runoff potential.
+- Snow age is tracked as a reservoir age moment. Long-lived snow converts to
+  firn/ice gradually; seasonal snowmelt and glacier-ice melt remain separate
+  outputs and training targets.
+- Coarse-cell unresolved relief defines an upper-terrain climate sample using a
+  configurable relief multiplier and bounded highland fraction. It is not a
+  fixed altitude or latitude glacier mask.
+- Ice above a storage threshold transfers conservatively toward the lowest
+  neighboring bedrock cell; transfer into ocean is calving. This is a
+  parameterized V1 spreading rule, not stress-driven glacier dynamics.
+- Glaciers affect runoff immediately. Dynamic ice flow, ice sheets, glacial
+  erosion, moraines, and calibrated equilibrium-line statistics remain later
+  milestones.
+
+Reason:
+Lake regulation is necessary for correct river continuity. A bounded glacier
+reservoir is necessary for persistent high-mountain ice and seasonal meltwater,
+but a full ice-dynamics solver would exceed V1's structural-realism target.
+
+## Decision 031: Fractional Surface Materials Before Functional Biomes
+
+Status: implemented, provisional calibration
+
+Decision:
+The first post-hydrology land-surface milestone is a property-first L2 surface-
+material and initial-soil model. Functional vegetation, familiar biome labels,
+and the optional bounded soil-to-hydrology feedback remain later work.
+
+Scale contract:
+- Each L2 land cell stores mutually exclusive area fractions of exposed
+  bedrock, residual regolith, colluvium, alluvium, lacustrine sediment, glacial
+  deposit, and volcaniclastic material. Fractions sum to one on land and zero
+  on ocean.
+- A coarse cell is a map unit containing component mixtures, not one atomic
+  soil polygon. L3 refinement will place those components deterministically
+  along ridge, slope, footslope, floodplain, wetland, and closed-basin catenas.
+- Fine selected-basin erosion, deposition, and final surface water restrict to
+  L2 parent cells by physical area or volume. Unrefined parents retain the
+  accepted global hydrology priors.
+
+Property contract:
+- Sand, silt, and clay are normalized fine-earth fractions. Coarse fragments
+  remain a separate fraction.
+- Regolith depth and pedogenic soil depth are separate. Soil depth may not
+  exceed regolith depth.
+- Initial properties include bulk density, potential organic carbon, pH,
+  carbonate, salinity, drainage, available water capacity, nutrient and
+  fertility potential, erodibility, reset age, and confidence.
+- Province class is evidence for parent-material priors, not a direct soil-class
+  lookup. Climate, relief, drainage, erosion, deposition, water persistence,
+  and exposure age all modify the result.
+
+Water contract:
+- A Rust kernel partitions monthly rain and snow/glacier melt over non-open
+  land into soil storage, actual evapotranspiration, quick runoff, and deep
+  drainage after a bounded periodic spinup.
+- Monthly fluxes and storage are L2-cell-equivalent water depths. A persisted
+  soil-bearing fraction separates open water, active ice, and substantially
+  exposed bedrock from soil-supporting area.
+- Input equals evapotranspiration plus runoff plus deep drainage plus storage
+  change within the configured tolerance.
+- Hydric-soil fraction is physical saturation evidence. It is not yet an
+  ecological wetland, swamp biome, or vegetation label.
+
+V1 boundaries:
+- No canonical soil taxonomy or biome is painted by this stage.
+- No routed groundwater aquifer, lateral soil-water flow, permafrost physics,
+  soil horizons, or explicit chemical reaction network is claimed.
+- Potential organic carbon and fertility are pre-vegetation estimates and must
+  remain distinct from their later vegetation-adjusted canonical values.
+- Soil-derived runoff does not modify the accepted hydrology in this milestone.
+  A later stage may apply at most the one bounded feedback allowed by Decision
+  015, with a new validation pass.
+
+Reason:
+Surface materials close the causal path from geology, erosion, climate, and
+hydrology into land properties needed by vegetation and the simulation game.
+Fractional map units preserve subgrid floodplains and catenas without inventing
+false L2 precision.
+
+## Decision 032: Earth Calibration Profile And Open Environmental Envelope
+
+Status: implemented, provisional calibration
+
+Decision:
+Earth is the V1 default calibration profile, not the permanent validity
+boundary of the simulator. The artifact contracts must support later dense
+rocky water-world experiments including snowball climates, continentless or
+island-dominated worlds, ice-free hothouses, and high-CO2/high-productivity
+scenarios without requiring a new architecture.
+
+Validation contract:
+- Hard failures enforce physical, numerical, topology, and conservation
+  invariants.
+- Earth-relative ranges and morphology statistics are versioned diagnostics
+  attached to the `earthlike` profile.
+- Named non-Earth profiles select diagnostic expectations and scenario tests;
+  they do not alter conservation laws or silently clamp state into Earth
+  ranges.
+- A scenario outside the calibrated envelope must identify its missing physics
+  and reduced confidence rather than being called realistic by configuration
+  alone.
+
+State contract:
+- Atmospheric pressure and composition, light, temperature, liquid-water
+  opportunity, oxygen support, carbon substrate, nutrient/surface support, and
+  stress remain inspectable fields.
+- Canonical biosphere state is continuous and trait-first. Earth plant
+  functional types and biome names are derived products.
+- High CO2 alone is not a proxy for biological productivity or organism size.
+  Energy, oxygen, pressure, gravity, temperature, water, nutrients, and
+  organism physiology remain separate constraints.
+- Cross-scenario neural surrogates must receive the planetary/environmental
+  conditioning vector. Training only on Earth defaults cannot produce a
+  general planetary surrogate.
+
+Implementation boundary:
+- Milestone 15b0 adds a pre-climate atmosphere contract and a post-soil raw
+  biosphere-resource envelope.
+- Current Earthlike planet bounds, climate-temperature bounds, atomic coastal
+  cells, fixed albedo, incomplete sea/land ice, and absent non-Earth calibration
+  remain explicit capability gaps.
+- Generalizing those systems is staged work; this decision prevents new stages
+  from making the current limitations permanent.
+
+Reason:
+Earth calibration gives V1 measurable targets, while raw causal state keeps the
+world stack useful for future climate and biosphere regimes. Separating hard
+physics gates from profile diagnostics prevents both false generality and an
+unnecessary Earth-only rewrite later.

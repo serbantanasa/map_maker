@@ -512,7 +512,7 @@ ARRAY_DTYPES = {
 
 @stage(
     "hydrology",
-    inputs=("climate", "elevation", "geology", "world_age", "planet"),
+    inputs=("climate", "cryosphere", "elevation", "geology", "world_age", "planet"),
     outputs=(
         *ARRAY_DTYPES,
         "DepressionCatalog",
@@ -525,7 +525,7 @@ ARRAY_DTYPES = {
         "RiverReachCatalog",
         "HydrologyMetadata",
     ),
-    version="v6",
+    version="v7",
     native_libraries=("hydrology_native",),
     visualizer=_hydrology_visualizer,
 )
@@ -574,7 +574,7 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             rock_strength=_artifact_array(deps["geology"], "RockStrength"),
             accommodation=_artifact_array(deps["geology"], "SedimentAccommodation"),
             ocean=ocean,
-            runoff=_artifact_array(deps["climate"], "MonthlyRunoffPotentialMm"),
+            runoff=_artifact_array(deps["cryosphere"], "MonthlyRunoffPotentialMm"),
             evaporation=_artifact_array(deps["climate"], "MonthlyEvaporationMm"),
             aridity=_artifact_array(deps["climate"], "AnnualAridityIndex"),
             outputs=views,

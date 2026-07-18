@@ -2,11 +2,12 @@
 
 ## Status
 
-Canonical seasonal climate V1 and the first depression-aware modern hydrology
-pass are implemented on the cubed sphere. Climate supplies monthly runoff
-potential but does not pre-route water or draw rivers. Hydrology consumes that
-handoff and writes persistent lakes, breaches, drainage topology, discharge,
-basins, and vector river reaches.
+Canonical seasonal climate V1, a bounded V1 cryosphere, and the first
+depression-aware modern hydrology pass are implemented on the cubed sphere.
+Climate supplies atmospheric forcing. Cryosphere supplies canonical snow,
+glacier storage and melt-aware runoff potential but does not pre-route water or
+draw rivers. Hydrology consumes that handoff and writes persistent lakes,
+breaches, drainage topology, discharge, basins, and vector river reaches.
 
 ## Scientific Intent
 
@@ -68,11 +69,13 @@ becoming a false coastal atmospheric wall while preserving broad mountain belts.
 ### Snow, Evaporation, And Runoff Potential
 
 - Precipitation partitions smoothly into rain and snow from monthly temperature.
-- A bounded multi-year snow store produces snowfall, melt, and snow-water
-  equivalent fields; explicit glaciers and ice sheets are not yet modeled.
+- Climate's bounded snow store remains a provisional atmospheric diagnostic.
+  The downstream cryosphere stage publishes the canonical age-tracked seasonal
+  snow, firn, glacier ice, and separate snow/ice melt fields.
 - Ocean evaporation and provisional land evaporation feed the moisture cycle.
-- Runoff potential removes bounded evaporation and applies relief/storm runoff
-  tendencies. It is a hydrology input, not discharge.
+- Canonical runoff potential removes bounded evaporation, includes glacier
+  melt, and applies relief/storm runoff tendencies. It is a hydrology input,
+  not discharge.
 
 ## Outputs
 
@@ -111,8 +114,8 @@ contract for inspection and surrogate training.
 ## Current Limits
 
 - Prescribed circulation tendencies replace a primitive-equation atmosphere.
-- Ocean currents, sea ice, clouds, vegetation feedback, glaciers, monsoonal land
-  pressure, and transient storms are simplified or absent.
+- Ocean currents, sea ice, clouds, vegetation feedback, dynamic ice sheets,
+  monsoonal land pressure, and transient storms are simplified or absent.
 - Land evaporation precedes explicit soils and is therefore provisional.
 - Monthly precipitation mixing is a deliberate unresolved-weather approximation.
 - All monthly fields are currently resident in memory during the stage. Face-128
@@ -123,7 +126,8 @@ contract for inspection and surrogate training.
 
 ### Inputs
 
-- Climate: monthly runoff potential and evaporation plus annual aridity index.
+- Cryosphere: monthly melt-aware runoff potential.
+- Climate: monthly evaporation plus annual aridity index.
 - Elevation: pre-erosion bedrock elevation and terrain relief.
 - Geology: rock strength and sediment accommodation.
 - World age: provisional ocean mask.

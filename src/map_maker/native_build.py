@@ -9,7 +9,9 @@ from collections.abc import Sequence
 from ._native import library_filename, workspace_root
 
 NATIVE_LIBRARIES = (
+    "biosphere_envelope_native",
     "climate_native",
+    "cryosphere_native",
     "elevation_native",
     "erosion_native",
     "fluvial_native",
@@ -19,6 +21,7 @@ NATIVE_LIBRARIES = (
     "planet_native",
     "refinement_native",
     "surface_water_native",
+    "surface_materials_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

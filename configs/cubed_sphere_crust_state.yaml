@@ -22,6 +22,16 @@ stage_overrides:
     northern_vernal_equinox_day: 79.0
     moon_mass_lunar: 1.0
     moon_distance_km: 384400.0
+  atmosphere:
+    validation_profile: earthlike
+    mean_surface_pressure_kpa: 101.325
+    oxygen_dry_fraction: 0.20946
+    carbon_dioxide_ppm: 280.0
+    methane_ppm: 0.70
+    mean_molar_mass_g_mol: 28.965
+    reference_temperature_k: 288.15
+    reference_co2_ppm: 280.0
+    climate_sensitivity_c_per_co2_doubling: 3.0
   tectonics:
     num_plates: 24
     continental_fraction: 0.35
@@ -62,6 +72,21 @@ stage_overrides:
     orographic_factor: 0.18
     rain_shadow_factor: 0.70
     runoff_base_fraction: 0.35
+  cryosphere:
+    spinup_years: 120
+    lapse_rate_c_per_km: 6.5
+    relief_elevation_multiplier: 3.0
+    maximum_highland_fraction: 0.40
+    snow_degree_day_melt_mm_c_month: 12.0
+    glacier_degree_day_melt_mm_c_month: 16.0
+    firn_conversion_fraction_year: 0.65
+    snow_sublimation_fraction_month: 0.004
+    glacier_sublimation_fraction_month: 0.0002
+    glacier_flow_activation_mm: 1000.0
+    glacier_flow_fraction_year: 0.08
+    glacier_reference_thickness_mm: 100000.0
+    runoff_base_fraction: 0.35
+    maximum_mass_balance_relative_error: 0.00001
   hydrology:
     minimum_depression_depth_m: 20.0
     wetland_mean_depth_m: 35.0
@@ -126,3 +151,33 @@ stage_overrides:
   surface_water_final:
     maximum_outlet_incision_rounds: 8
     require_soil_readiness: true
+  lake_hydrographs:
+    maximum_balance_relative_error: 0.000000001
+    maximum_negative_discharge_m3s: 0.000001
+  surface_materials:
+    spinup_years: 24
+    maximum_regolith_depth_m: 20.0
+    maximum_soil_depth_m: 3.0
+    maximum_alluvial_fraction: 0.65
+    maximum_lacustrine_fraction: 0.85
+    maximum_glacial_fraction: 0.80
+    weathering_temperature_scale_c: 22.0
+    weathering_precipitation_scale_mm: 1600.0
+    soil_evaporation_factor: 1.0
+    monthly_deep_drainage_fraction: 0.06
+    maximum_component_balance_error: 0.00001
+    maximum_water_balance_relative_error: 0.00001
+  biosphere_envelope:
+    par_fraction: 0.43
+    shortwave_transmission: 0.65
+    thermal_minimum_c: -10.0
+    thermal_optimum_low_c: 15.0
+    thermal_optimum_high_c: 30.0
+    thermal_maximum_c: 50.0
+    water_input_half_saturation_mm: 50.0
+    co2_half_saturation_pa: 20.0
+    reference_oxygen_partial_pressure_kpa: 21.22
+    photosynthetic_conversion_efficiency: 0.02
+    minimum_productive_energy_mj_m2_year: 5.0
+    nonreference_profile_confidence_multiplier: 0.75
+    maximum_annual_aggregation_relative_error: 0.00001

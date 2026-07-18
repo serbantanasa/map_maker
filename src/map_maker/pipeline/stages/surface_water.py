@@ -655,14 +655,14 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
 
 @stage(
     "surface_water",
-    inputs=("hydrology_pass2", "climate", "geology", "basin_refinement"),
+    inputs=("hydrology_pass2", "climate", "cryosphere", "geology", "basin_refinement"),
     outputs=(
         "SurfaceWaterCandidateCatalog",
         "SeasonalSurfaceWaterCellCatalog",
         "SurfaceWaterMonthlyStateCatalog",
         "SurfaceWaterMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -693,7 +693,7 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
         raise RuntimeError("local surface-water candidates must use active ordinary child support")
 
     monthly_runoff_parent = np.asarray(
-        _artifact_array(deps["climate"], "MonthlyRunoffPotentialMm"), dtype=np.float32
+        _artifact_array(deps["cryosphere"], "MonthlyRunoffPotentialMm"), dtype=np.float32
     ).reshape(MONTHS, -1)
     monthly_evaporation_parent = np.asarray(
         _artifact_array(deps["climate"], "MonthlyEvaporationMm"), dtype=np.float32
@@ -955,7 +955,14 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
 
 @stage(
     "surface_water_final",
-    inputs=("outlet_incision", "climate", "geology", "basin_refinement", "planet"),
+    inputs=(
+        "outlet_incision",
+        "climate",
+        "cryosphere",
+        "geology",
+        "basin_refinement",
+        "planet",
+    ),
     outputs=(
         "SurfaceWaterCandidateCatalog",
         "SeasonalSurfaceWaterCellCatalog",
@@ -968,7 +975,7 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
         "FinalPostIncisionDepressionCandidateCatalog",
         "FinalOutletIncisionMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -995,6 +1002,7 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
             {
                 "hydrology_pass2": current_hydrology,
                 "climate": deps["climate"],
+                "cryosphere": deps["cryosphere"],
                 "geology": deps["geology"],
                 "basin_refinement": deps["basin_refinement"],
             },
@@ -1072,6 +1080,7 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
                 {
                     "hydrology_pass2": current_hydrology,
                     "climate": deps["climate"],
+                    "cryosphere": deps["cryosphere"],
                     "geology": deps["geology"],
                     "basin_refinement": deps["basin_refinement"],
                 },

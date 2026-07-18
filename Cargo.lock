@@ -3,6 +3,10 @@
 version = 3
 
 [[package]]
+name = "biosphere_envelope_native"
+version = "0.1.0"
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -36,6 +40,10 @@ name = "crossbeam-utils"
 version = "0.8.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
+
+[[package]]
+name = "cryosphere_native"
+version = "0.1.0"
 
 [[package]]
 name = "either"
@@ -174,6 +182,10 @@ version = "0.1.0"
 dependencies = [
  "topology_native",
 ]
+
+[[package]]
+name = "surface_materials_native"
+version = "0.1.0"
 
 [[package]]
 name = "surface_water_native"

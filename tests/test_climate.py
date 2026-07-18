@@ -19,6 +19,7 @@ def _ensure_climate_registered():
     for module_name in (
         "geometry",
         "planet",
+        "atmosphere",
         "tectonics",
         "world_age",
         "geology",
@@ -172,7 +173,9 @@ def test_climate_outputs_seasonal_causal_fields_and_visuals(tmp_path: Path):
     assert _cross_face_gradient_ratio(annual_temperature, grid.neighbor_indices) < 2.5
     assert _cross_face_gradient_ratio(annual_precipitation, grid.neighbor_indices) < 3.0
     metadata = climate.artifact_records["ClimateMetadata"].value
-    assert metadata["model"] == "seasonal_energy_moisture_climate_v1"
+    assert metadata["model"] == "seasonal_energy_moisture_climate_v2"
+    assert metadata["composition_greenhouse_offset_c"] == pytest.approx(0.0)
+    assert metadata["effective_greenhouse_offset_c"] == pytest.approx(0.0)
     assert metadata["effective_moisture_steps_per_month"] == 2
     assert metadata["transport_reference_face_resolution"] == 128
     assert -10.0 < metadata["global_mean_temperature_c"] < 30.0

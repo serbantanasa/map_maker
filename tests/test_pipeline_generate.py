@@ -51,7 +51,9 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
     assert list(manifest["stages"]) == ["erosion", "geometry", "tectonics", "world_age"]
     assert manifest["statistics"]["land_fraction"] > 0.0
     assert set(manifest["native_libraries"]) == {
+        "biosphere_envelope_native",
         "climate_native",
+        "cryosphere_native",
         "elevation_native",
         "erosion_native",
         "fluvial_native",
@@ -60,6 +62,7 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
         "hydrology_pass2_native",
         "planet_native",
         "refinement_native",
+        "surface_materials_native",
         "surface_water_native",
         "tectonics_native",
         "topology_native",

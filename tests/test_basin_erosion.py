@@ -18,11 +18,13 @@ def _ensure_stages_registered():
     for module_name in (
         "geometry",
         "planet",
+        "atmosphere",
         "tectonics",
         "world_age",
         "geology",
         "elevation",
         "climate",
+        "cryosphere",
         "hydrology",
         "basin_refinement",
         "basin_erosion",

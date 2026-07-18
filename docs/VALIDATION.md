@@ -386,3 +386,127 @@ Changes require at least one of:
 
 No composite realism score is reported yet. The prototype lacks enough causal
 subsystems and calibrated dimensions for such a number to be meaningful.
+
+## Executable Hydrology KPI Profile
+
+The `hydrology_validation` stage converts the hydrology review into persistent,
+machine-readable rows. Hard topology and conservation failures are kept
+separate from provisional Earth comparisons and from known missing capability.
+The Earth profile currently references HydroLAKES and the high-resolution lake
+inventory for lake area, MERIT-Plus for endorheic area, observed continental
+discharge for runoff depth, and separate wetland and floodplain inventories.
+
+Seasonal snow and spring melt are implemented. A separate Rust cryosphere
+kernel now spins age-tracked snow and firn/ice reservoirs, transfers excess ice
+downslope with area-weighted conservation, and feeds separately reported snow
+and glacier melt into runoff potential. The KPI profile distinguishes seasonal
+snow, perennial snow, and fractional glacier ice. Stress-driven ice flow,
+ice-sheet dynamics, and glacial erosion remain outside V1.
+
+The canonical KPI report contains 44 rows. All hard invariants pass. It finds
+51 monthly reach-to-reach discharge decreases after final lake coupling; all
+51 are attributed to registered coarse or refined surface-water storage, while
+unaccounted decreases are zero. The global lake-area diagnostic is within its
+reference envelope. Closed-drainage land (`24.7%`) is above the provisional
+Earth envelope, and generated runoff depth (`144 mm/year`) is below it. These
+are calibration findings, not permission to tune one seed directly.
+
+The selected basin receives about 31% of its pre-soil liquid input from
+snowmelt, with peak melt and runoff in month 11 for its generated seasonal
+phase; it currently contains no glacier melt. Globally, `57.5%` of land exceeds
+10 mm snow-water equivalent in at least one month and `0.074%` retains it
+through every month. Fractional glacier ice appears on the upper terrain of the
+tallest tropical range and a smaller midlatitude highland rather than from a
+latitude mask.
+
+The final lake coupling profiles 683 terminal candidate networks into 8,196
+monthly adjustment records. It conserves network water to machine precision
+and keeps all reach entry and exit discharge nonnegative. Scale mismatch moves
+373 monthly losses downstream to the first inherited reach that actually
+contains the corresponding fine tributary flow; each remap remains persisted
+for later calibration.
+
+## Surface Materials And Initial Soils
+
+The canonical `surface_materials` run consumes the passing hydrology report and
+restricts selected-basin final water, erosion, and deposition onto 1,449 L2
+parents. Material and fine-earth texture mixtures close to better than `5e-8`;
+the persisted monthly soil-water budget closes to `7.6e-9` relative error.
+
+| Metric | Canonical result |
+| --- | ---: |
+| Exposed bedrock fraction of land | `18.09%` |
+| Residual regolith fraction | `64.32%` |
+| Colluvium fraction | `6.44%` |
+| Alluvium fraction | `6.03%` |
+| Lacustrine sediment fraction | `4.90%` |
+| Glacial deposit fraction | `0.109%` |
+| Volcaniclastic fraction | `0.105%` |
+| Soil-bearing fraction of land | `79.27%` |
+| Hydric-soil fraction of land | `5.15%` |
+| Mean regolith / soil depth | `1.37 m / 0.74 m` |
+| Mean available water capacity | `93.89 mm` |
+| Mean potential organic carbon | `1.61 kg C/m2` |
+| Mean initial soil pH | `5.69` |
+| Annual modeled soil liquid input | `436.64 mm` |
+| Actual evapotranspiration | `150.73 mm` |
+| Quick soil runoff | `275.23 mm` |
+| Deep drainage proxy | `10.69 mm` |
+
+These are one-seed structural diagnostics, not accepted Earth calibration.
+Glacial deposits are especially incomplete because there is no paleoglacial
+history, and parent chemistry remains a geological-province prior without a
+stratigraphic lithology ledger. The soil runoff partition is persisted for the
+future bounded feedback pass but does not modify accepted river hydrographs.
+Hydric soil is saturation evidence; ecological wetlands still require
+functional vegetation and groundwater interpretation.
+
+## Atmosphere And Biosphere Resource Envelope
+
+Milestone 15b0 separates hard physical gates from profile diagnostics. The
+`earthlike` atmosphere profile supplies provisional reference diagnostics; it
+does not claim that the downstream biological response has been calibrated.
+Named non-Earth profiles remain executable when they miss Earth ranges.
+
+Hard atmosphere gates require finite nonnegative gas quantities, a dry
+composition no greater than one, positive pressure, and a valid hydrostatic
+scale height. The climate metadata records configured and composition-derived
+greenhouse offsets separately.
+
+Hard biosphere-envelope gates require:
+
+- monthly water and thermal opportunity in `[0, 1]`,
+- annual fields that reproduce monthly aggregates,
+- primary-energy potential no greater than PAR times the configured conversion
+  efficiency,
+- zero terrestrial primary-energy potential over ocean,
+- finite nonnegative carbon and oxygen support fields.
+
+The combined energy product is a provisional Earth-photosynthesis diagnostic,
+not a universal habitability or biomass score. PAR fraction, mean atmospheric
+transmission, response temperatures, water and CO2 half-saturation controls,
+and photosynthetic conversion efficiency still require calibration against
+accepted reference datasets. Ocean productivity, chemosynthesis, vegetation,
+biome labels, and atmosphere-biosphere feedback are not implemented.
+
+The canonical face-128 seed currently reports:
+
+| Metric | Canonical result |
+| --- | ---: |
+| Area-mean surface pressure | `99.70 kPa` |
+| Minimum high-terrain pressure | `69.91 kPa` |
+| Atmospheric scale height | `8.43 km` |
+| Composition-derived climate offset | `0 C` at the reference `280 ppm CO2` |
+| Mean terrestrial surface PAR | `3,037.94 MJ/m2/year` |
+| Mean terrestrial primary-energy proxy | `2.85 MJ/m2/year` |
+| Mean thermal opportunity | `0.698` |
+| Mean liquid-water opportunity | `0.466` |
+| Mean carbon-substrate support | `0.980` relative to reference |
+| Mean aerobic-oxygen support | `0.954` relative to reference |
+| Land above provisional `5 MJ/m2/year` threshold | `15.56%` |
+| Annual aggregation error | `5.40e-8` relative |
+
+The low energy proxy and productive-area fraction are calibration findings.
+They currently reflect restrictive initial nutrient support and uncalibrated
+conversion controls; they are not accepted estimates of Earth net primary
+productivity. The values must not be tuned from this one seed alone.

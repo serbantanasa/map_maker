@@ -17,7 +17,9 @@ NATIVE_ABI_OVERRIDES = {
     "surface_water_native": 2,
 }
 SIMULATION_NATIVE_LIBRARIES = (
+    "biosphere_envelope_native",
     "climate_native",
+    "cryosphere_native",
     "elevation_native",
     "erosion_native",
     "fluvial_native",
@@ -27,6 +29,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "planet_native",
     "refinement_native",
     "surface_water_native",
+    "surface_materials_native",
     "tectonics_native",
     "topology_native",
     "world_age_native",

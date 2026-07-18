@@ -265,11 +265,13 @@ def main(args: Iterable[str] | None = None) -> int:
         choices=[
             "topology",
             "planet",
+            "atmosphere",
             "tectonics",
             "world_age",
             "geology",
             "elevation",
             "climate",
+            "cryosphere",
             "hydrology",
             "basin_refinement",
             "basin_erosion",
@@ -277,6 +279,10 @@ def main(args: Iterable[str] | None = None) -> int:
             "surface_water",
             "outlet_incision",
             "surface_water_final",
+            "lake_hydrographs",
+            "hydrology_validation",
+            "surface_materials",
+            "biosphere_envelope",
         ],
         default="topology",
     )
@@ -333,6 +339,8 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "geometry"
         elif parsed.stage == "planet":
             stage_name = "planet"
+        elif parsed.stage == "atmosphere":
+            stage_name = "atmosphere"
         elif parsed.stage == "tectonics":
             stage_name = _register_tectonics_stage()
         elif parsed.stage == "world_age":
@@ -343,6 +351,8 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = _register_elevation_stage()
         elif parsed.stage == "climate":
             stage_name = "climate"
+        elif parsed.stage == "cryosphere":
+            stage_name = "cryosphere"
         elif parsed.stage == "hydrology":
             stage_name = "hydrology"
         elif parsed.stage == "basin_refinement":
@@ -355,6 +365,14 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "surface_water"
         elif parsed.stage == "outlet_incision":
             stage_name = "outlet_incision"
+        elif parsed.stage == "lake_hydrographs":
+            stage_name = "lake_hydrographs"
+        elif parsed.stage == "hydrology_validation":
+            stage_name = "hydrology_validation"
+        elif parsed.stage == "surface_materials":
+            stage_name = "surface_materials"
+        elif parsed.stage == "biosphere_envelope":
+            stage_name = "biosphere_envelope"
         else:
             stage_name = "surface_water_final"
         started = time.perf_counter()
@@ -375,10 +393,12 @@ def main(args: Iterable[str] | None = None) -> int:
 
     if parsed.stage in {
         "planet",
+        "atmosphere",
         "world_age",
         "geology",
         "elevation",
         "climate",
+        "cryosphere",
         "hydrology",
         "basin_refinement",
         "basin_erosion",
@@ -386,6 +406,10 @@ def main(args: Iterable[str] | None = None) -> int:
         "surface_water",
         "outlet_incision",
         "surface_water_final",
+        "lake_hydrographs",
+        "hydrology_validation",
+        "surface_materials",
+        "biosphere_envelope",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

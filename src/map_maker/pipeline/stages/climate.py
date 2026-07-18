@@ -267,7 +267,7 @@ MONTHLY_SCALAR_OUTPUTS = (
 
 @stage(
     "climate",
-    inputs=("planet", "elevation", "world_age"),
+    inputs=("planet", "atmosphere", "elevation", "world_age"),
     outputs=(
         *MONTHLY_SCALAR_OUTPUTS,
         "MonthlyWindVectorXYZMps",
@@ -277,7 +277,7 @@ MONTHLY_SCALAR_OUTPUTS = (
         "AnnualAridityIndex",
         "ClimateMetadata",
     ),
-    version="v1",
+    version="v2",
     native_libraries=("climate_native",),
     visualizer=_climate_visualizer,
 )
@@ -302,6 +302,7 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
     }
     views = {name: handle.mutable_view() for name, handle in handles.items()}
     planet = deps["planet"]
+    atmosphere = deps["atmosphere"]
     elevation = deps["elevation"]
     world_age = deps["world_age"]
     effective_moisture_steps = max(
@@ -310,6 +311,16 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
     )
     kernel_controls = asdict(config)
     kernel_controls.pop("moisture_steps_per_month_at_face_128")
+    atmosphere_metadata = atmosphere.artifact_records["AtmosphereMetadata"].value
+    if not isinstance(atmosphere_metadata, Mapping):
+        raise TypeError("AtmosphereMetadata must be a mapping")
+    composition_greenhouse_offset = float(
+        atmosphere_metadata["co2_greenhouse_temperature_offset_c"]
+    )
+    effective_greenhouse_offset = config.greenhouse_offset_c + composition_greenhouse_offset
+    if not np.isfinite(effective_greenhouse_offset):
+        raise RuntimeError("effective greenhouse offset is not finite")
+    kernel_controls["greenhouse_offset_c"] = effective_greenhouse_offset
 
     with context.timed("seasonal_climate_kernel"):
         metadata = run_cubed_sphere_climate(
@@ -349,13 +360,18 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
             "effective_moisture_steps_per_month": effective_moisture_steps,
             "transport_reference_face_resolution": 128,
             "topology": "cubed_sphere",
-            "model": "seasonal_energy_moisture_climate_v1",
+            "model": "seasonal_energy_moisture_climate_v2",
             "month_semantics": planet_metadata["forcing_semantics"],
             "temperature_semantics": "surface_air_energy_balance_with_elevation_lapse",
             "wind_semantics": "global_xyz_tangent_vector",
             "precipitation_semantics": "advected_moisture_with_orographic_condensation",
             "evaporation_semantics": "ocean_actual_and_provisional_land_actual",
             "runoff_semantics": "pre_soil_routing_potential",
+            "configured_climate_greenhouse_offset_c": config.greenhouse_offset_c,
+            "composition_greenhouse_offset_c": composition_greenhouse_offset,
+            "effective_greenhouse_offset_c": effective_greenhouse_offset,
+            "atmosphere_validation_profile": atmosphere_metadata["validation_profile"],
+            "composition_dependent_radiative_transfer_implemented": 0,
         }
     )
     context.logger.log_event({"type": "climate_summary", "stage": "climate", **metadata})

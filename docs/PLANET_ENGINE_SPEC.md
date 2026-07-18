@@ -57,18 +57,32 @@ Examples:
 
 ## Initial Scope
 
-V1 targets Earth-like dense rocky water worlds:
+V1 is calibrated first against Earth-like dense rocky water worlds:
 - Earth-like radius, gravity, and density.
 - Liquid oceans.
 - Active tectonics.
 - Silicate crust.
-- Earth-like atmosphere.
+- An Earth-like atmosphere as the default profile.
 - Stable main-sequence star in a conservative habitable range.
 - Configurable but bounded obliquity, eccentricity, rotation, and moon
   parameters.
 
+Earth is a calibration profile, not the engine's permanent operating boundary.
+The causal state and artifact contracts must remain usable for snowball worlds,
+ice-cap-free hothouses, oceanic archipelagos, high-CO2 worlds, and other dense
+rocky water-world experiments. Earth-relative ranges are versioned diagnostics;
+they are not physical validity gates. Physical/accounting invariants remain
+hard gates.
+
+That distinction does not imply that every such world is already simulated
+credibly. Current implementation limits include Earthlike planet-config bounds,
+a bounded climate-temperature kernel, atomic L2 land/ocean cells, incomplete
+sea-ice and ice-sheet dynamics, and no calibrated non-Earth scenario suite.
+These are capability gaps to expose and remove, not assumptions to embed in
+downstream artifacts.
+
 V1 non-goals:
-- Arbitrary exotic planets.
+- Arbitrary planet chemistry, gas giants, and unconstrained exotic physics.
 - Human/civilization simulation.
 - Local human-scale tactical maps as part of the core planet engine.
 - Research-grade physical simulation.
@@ -104,6 +118,9 @@ Current approved/provisional decisions:
 - Decision 026: Bounded Sparse Hydrology Pass 2.
 - Decision 027: Refined Seasonal Surface-Water Balance.
 - Decision 028: Bounded Subgrid Outlet Incision.
+- Decision 030: Bounded V1 Lake Hydrographs And Cryosphere.
+- Decision 031: Fractional Surface Materials Before Functional Biomes.
+- Decision 032: Earth Calibration Profile And Open Environmental Envelope.
 
 Accepted only as tentative prototype hypotheses:
 - Decision 010: Explicit History Window And Adaptive Nested Sweeps.
@@ -182,6 +199,11 @@ Implication:
 Stage outputs should be deterministic, versioned, inspectable, and stored in
 training-friendly arrays/tables with config, seed, and software version
 metadata.
+
+Any surrogate that crosses planetary scenarios must also receive the planetary
+and environmental conditioning vector used by the simulator. A model trained
+only on Earth-default outputs is an Earth-profile emulator, not a general world
+generator.
 
 ## Mineral Systems And Energy Resources
 

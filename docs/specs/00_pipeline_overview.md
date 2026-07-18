@@ -25,37 +25,62 @@
 4. Connected geological provinces and boundary segments.
 5. Initial elevation and tectonic morphology.
 6. Planetary boundary conditions and monthly orbital forcing.
-7. Climate pass 1.
-8. Hydrology pass 1.
+7. Atmospheric composition, pressure, and greenhouse forcing.
+   - Earth is the default validation profile, not a hard operating boundary.
+   - Composition and pressure remain explicit conditioning artifacts rather
+     than being folded irreversibly into climate labels.
+8. Climate pass 1.
+9. Seasonal snow, firn, and glacier mass balance.
+   - A Rust kernel separates seasonal snow and glacier ice, transfers ice
+     conservatively downslope, and publishes melt-aware runoff potential.
+10. Hydrology pass 1.
    - A sparse selected-basin refinement gate proves inherited river topology,
      subgrid physical width, lateral corridor capacity, and parent/child
      conservation before erosion. It reports complete source-to-sink readiness
      through physical channels and zero-width hydrologic connectors.
-9. Erosion and sedimentation.
+11. Erosion and sedimentation.
    - The sparse selected-basin pass now solves junction-consistent physical bed
      profiles, applies volume-based subgrid incision, routes newly eroded
      sediment through connectors, and deposits only on allocated floodplain or
      terminal support.
-10. Hydrology pass 2.
+12. Hydrology pass 2.
     - The sparse selected-basin pass uses volume-adjusted terrain means and
       subgrid channel beds, preserves inherited trunk/connector identities,
       applies one bounded local reroute, and publishes depression candidates.
-11. Refined seasonal surface-water balance.
+13. Refined seasonal surface-water balance.
     - Local candidates receive monthly catchment inflow, fractional inundation,
       fill/spill propagation, and provisional lake or hydrologic-wetland classes.
-12. Bounded subgrid outlet incision and final surface-water balance.
+14. Bounded subgrid outlet incision and final surface-water balance.
     - Narrow outlet beds modify terrain by physical eroded volume, retain
       ordinary-cell semantics, rerun conservative routing in Rust, and iterate
       monthly balance until outlet feedback is resolved or the hard round bound
       is reached.
-13. Soils and biomes.
-14. Mineral and energy systems.
-15. Selected-region refinement and map export.
+15. Final lake-to-reach hydrograph coupling and hydrology validation.
+    - Solved terminal lake-network overflow replaces its inherited runoff
+      component in reach-entry and reach-exit monthly hydrographs.
+16. Surface materials and initial soils.
+    - Mutually exclusive L2 component fractions preserve exposed bedrock,
+      residual regolith, colluvium, alluvium, lacustrine sediment, glacial
+      deposit, and volcaniclastic material without pretending each coarse cell
+      is homogeneous.
+    - A Rust kernel derives mineral-soil properties and a conservative monthly
+      soil-water partition. Hydric-soil evidence is not yet an ecological
+      wetland label.
+17. Environmental and biosphere resource envelope.
+   - Monthly light, liquid-water opportunity, thermal opportunity, atmospheric
+     substrates, oxygen support, and land-surface support remain separate raw
+     fields plus diagnostics.
+18. Functional vegetation and biomes.
+19. Mineral and energy systems.
+20. Selected-region refinement and map export.
 
 The current canonical cubed-sphere implementation reaches converged bounded
-outlet incision and final seasonal surface-water balance after erosion,
-sedimentation, and Hydrology Pass 2. It includes a causal, pre-erosion bedrock
-surface; separate crustal,
+outlet incision, final lake-coupled river hydrographs, and a bounded V1
+cryosphere after erosion, sedimentation, and Hydrology Pass 2. It now reaches
+fractional L2 surface materials, property-first initial soils, explicit
+atmospheric composition and pressure, and a Rust-backed environmental resource
+envelope for later trait-first biosphere work. It includes a
+causal, pre-erosion bedrock surface; separate crustal,
 orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
 and a first seasonal climate/orography pass. Bed-profile and sediment budgets
 are conservative but remain uncalibrated. Pass 2 audits their local routing
