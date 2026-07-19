@@ -5,6 +5,7 @@ use std::slice;
 use topology_native::cubed_sphere_neighbor_index;
 
 const D4_NEIGHBORS: usize = 4;
+const DEPRESSION_LEVEL_TOLERANCE_M: f64 = 1e-6;
 const ANCHOR_NORMAL: u8 = 0;
 const ANCHOR_CHANNEL: u8 = 1;
 const ANCHOR_EXCLUDED: u8 = 2;
@@ -381,6 +382,7 @@ fn route_surface(
         }
         let mut queue = VecDeque::from([start]);
         let mut component = Vec::new();
+        let component_level_m = hydrologic_elevation_m[start];
         depression_id[start] = -2;
         let mut identifier = inputs.cell_ids[start];
         while let Some(row) = queue.pop_front() {
@@ -390,7 +392,11 @@ fn route_surface(
                 let Some(&neighbor) = row_by_id.get(&neighbor_id) else {
                     continue;
                 };
-                if eligible[neighbor] && depression_id[neighbor] == -1 {
+                if eligible[neighbor]
+                    && depression_id[neighbor] == -1
+                    && (hydrologic_elevation_m[neighbor] - component_level_m).abs()
+                        <= DEPRESSION_LEVEL_TOLERANCE_M
+                {
                     depression_id[neighbor] = -2;
                     queue.push_back(neighbor);
                 }
@@ -806,6 +812,19 @@ mod tests {
         assert_eq!(outcome.cells[1].stabilized_receiver_id, ids[4]);
         assert_eq!(outcome.cells[4].stabilized_receiver_id, ids[7]);
         assert_eq!(outcome.cells[7].stabilized_receiver_id, TERMINAL_OCEAN);
+        let mut level_by_depression = HashMap::<i32, f64>::new();
+        for cell in &outcome.cells {
+            if cell.stabilized_depression_id < 0 {
+                continue;
+            }
+            let level = level_by_depression
+                .entry(cell.stabilized_depression_id)
+                .or_insert(cell.stabilized_hydrologic_elevation_m);
+            assert!(
+                (cell.stabilized_hydrologic_elevation_m - *level).abs()
+                    <= DEPRESSION_LEVEL_TOLERANCE_M
+            );
+        }
     }
 
     #[test]

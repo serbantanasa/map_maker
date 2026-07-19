@@ -261,8 +261,18 @@ def _profile_audit(
     edge_mask = (sorted_reaches[1:] == sorted_reaches[:-1]) & (
         sorted_paths[1:] == sorted_paths[:-1] + 1
     )
-    edge_sources = sort_order[:-1][edge_mask]
-    edge_targets = sort_order[1:][edge_mask]
+    reach_edge_sources = sort_order[:-1][edge_mask]
+    reach_edge_targets = sort_order[1:][edge_mask]
+    edge_pairs = np.column_stack(
+        (cell_ids[reach_edge_sources], cell_ids[reach_edge_targets])
+    )
+    if len(edge_pairs):
+        _, unique_edge_indices = np.unique(edge_pairs, axis=0, return_index=True)
+        edge_sources = reach_edge_sources[unique_edge_indices]
+        edge_targets = reach_edge_targets[unique_edge_indices]
+    else:
+        edge_sources = reach_edge_sources
+        edge_targets = reach_edge_targets
     if len(edge_sources):
         source_xyz = profile_xyz[edge_sources]
         target_xyz = profile_xyz[edge_targets]
@@ -281,6 +291,10 @@ def _profile_audit(
 
     return {
         "emitted_physical_edge_count": int(len(edge_sources)),
+        "emitted_reach_edge_count": int(len(reach_edge_sources)),
+        "shared_directed_edge_occurrence_count": int(
+            len(reach_edge_sources) - len(edge_sources)
+        ),
         "emitted_minimum_realized_slope": minimum_slope,
         "maximum_junction_bed_error_m": _maximum_junction_error(profiles),
         "maximum_bed_above_terrain_error_m": float(
@@ -603,7 +617,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "BasinErosionParentCatalog",
         "BasinErosionMetadata",
     ),
-    version="v1",
+    version="v2",
     native_libraries=("fluvial_native",),
     visualizer=_cube_net_visualizer,
 )

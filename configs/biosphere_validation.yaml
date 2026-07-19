@@ -1,0 +1,21 @@
+format_version: 1
+reference_profile: earth_biosphere_v1
+base_config: cubed_sphere_crust_state.yaml
+output_dir: ../out/biosphere_validation
+
+# This is the coarse screening ensemble. Earth-profile changes must also be
+# confirmed on the canonical face-128 seed before calibration is accepted.
+face_resolution: 64
+seeds: [42, 101, 202, 303, 404, 505]
+
+ensemble_tolerances:
+  minimum_seed_count: 5
+  minimum_earth_diagnostic_pass_fraction: 0.80
+  maximum_land_fraction_absolute_range: 0.08
+  maximum_global_npp_coefficient_of_variation: 0.35
+  maximum_global_biomass_coefficient_of_variation: 0.40
+  maximum_mean_cover_coefficient_of_variation: 0.25
+  maximum_vegetated_fraction_coefficient_of_variation: 0.20
+  minimum_zone_presence_seed_fraction: 0.60
+  maximum_zone_area_fraction_absolute_range: 0.20
+  maximum_zone_mean_npp_coefficient_of_variation: 0.60

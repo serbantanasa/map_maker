@@ -9,7 +9,7 @@ from cffi import FFI
 
 from .._native import NativeLibraryAbiError, native_library_info, native_library_path
 
-CUBED_SPHERE_CLIMATE_ABI_VERSION = 1
+CUBED_SPHERE_CLIMATE_ABI_VERSION = 2
 
 _CDEF = """
 typedef struct {
@@ -32,6 +32,7 @@ int32_t climate_run_cubed_sphere(
     int32_t spinup_years,
     int32_t moisture_spinup_years,
     int32_t moisture_steps_per_month,
+    int32_t synoptic_mixing_passes,
     double greenhouse_offset_c,
     double land_albedo,
     double ocean_albedo,
@@ -127,6 +128,7 @@ def run_cubed_sphere_climate(
     spinup_years: int,
     moisture_spinup_years: int,
     moisture_steps_per_month: int,
+    synoptic_mixing_passes: int,
     greenhouse_offset_c: float,
     land_albedo: float,
     ocean_albedo: float,
@@ -249,6 +251,7 @@ def run_cubed_sphere_climate(
             int(spinup_years),
             int(moisture_spinup_years),
             int(moisture_steps_per_month),
+            int(synoptic_mixing_passes),
             float(greenhouse_offset_c),
             float(land_albedo),
             float(ocean_albedo),

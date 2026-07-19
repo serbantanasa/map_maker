@@ -283,6 +283,8 @@ def main(args: Iterable[str] | None = None) -> int:
             "hydrology_validation",
             "surface_materials",
             "biosphere_envelope",
+            "potential_biosphere",
+            "biosphere_validation",
         ],
         default="topology",
     )
@@ -373,6 +375,10 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "surface_materials"
         elif parsed.stage == "biosphere_envelope":
             stage_name = "biosphere_envelope"
+        elif parsed.stage == "potential_biosphere":
+            stage_name = "potential_biosphere"
+        elif parsed.stage == "biosphere_validation":
+            stage_name = "biosphere_validation"
         else:
             stage_name = "surface_water_final"
         started = time.perf_counter()
@@ -410,6 +416,8 @@ def main(args: Iterable[str] | None = None) -> int:
         "hydrology_validation",
         "surface_materials",
         "biosphere_envelope",
+        "potential_biosphere",
+        "biosphere_validation",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

@@ -83,7 +83,11 @@ publishes fractional L2 surface materials, initial mineral-soil properties, and
 a conservative monthly soil-water partition. Atmospheric composition and
 hydrostatic pressure are now explicit pre-climate artifacts, and the post-soil
 `biosphere_envelope` stage publishes raw light, thermal, water, carbon, oxygen,
-nutrient, and surface-support fields without assigning vegetation or biomes. A first sparse basin-refinement
+nutrient, and surface-support fields without assigning vegetation or biomes.
+The Rust-backed `potential_biosphere` stage converts that envelope into bounded
+potential NPP, cover, biomass, growing season, adaptation pressure, rooting,
+canopy, leaf-area, and fuel-continuity fields while deliberately withholding
+species, functional types, and biome labels. A first sparse basin-refinement
 stage now realizes one inherited trunk network at approximately 5 km scale,
 preserves parent terrain means and convergent reach junctions, and stores physical
 channel, valley, and floodplain fractions without carving whole cells. It also
@@ -101,9 +105,11 @@ refined seasonal surface-water stage now conserves inherited monthly runoff,
 solves fractional fill/spill states, and separates accepted standing water from
 systems requiring outlet incision. The bounded outlet stage cuts narrow subgrid
 beds by physical volume, preserves ordinary-cell and physical-trunk identities,
-reruns routing in Rust, and repeats monthly balance to a zero-feedback gate. The
-canonical seed currently converges in seven rounds. The current output is a
-functional prototype rather than an atlas-grade world.
+reruns routing in Rust, and repeats monthly balance to a zero-feedback gate.
+Final lake coupling keeps losses on their owning branch and records unresolved
+coarse/fine discharge mismatch instead of borrowing flow from a sibling
+tributary. The current output is a functional prototype rather than an atlas-
+grade world.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -197,6 +203,15 @@ uv run map-maker-pipeline --stage surface_materials --config configs/cubed_spher
 
 # Raw environmental resources for later trait-first vegetation and ecosystems
 uv run map-maker-pipeline --stage biosphere_envelope --config configs/cubed_sphere_crust_state.yaml
+
+# Continuous potential producer-community traits without biome labels
+uv run map-maker-pipeline --stage potential_biosphere --config configs/cubed_sphere_crust_state.yaml
+
+# Per-world global totals and climate-stratum Earth diagnostics
+uv run map-maker-pipeline --stage biosphere_validation --config configs/cubed_sphere_crust_state.yaml
+
+# Fixed-seed earth_biosphere_v1 ensemble and dispersion tolerances
+uv run map-maker validate-biosphere --config configs/biosphere_validation.yaml
 ```
 
 Built wheels currently contain the Python orchestration package only. Until native

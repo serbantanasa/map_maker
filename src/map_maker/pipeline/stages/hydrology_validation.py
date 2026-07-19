@@ -344,11 +344,7 @@ def _reach_loss_catalog(
         if lake_id >= 0
     }
     parent_paths = reaches["parent_cell_path"].to_pylist()
-    local_storage_by_edge_month: dict[tuple[int, int, int], set[int]] = {}
-    sources_by_target: dict[int, list[int]] = {}
-    for source_id, target_id in zip(reach_ids, downstream_ids, strict=True):
-        if target_id >= 0:
-            sources_by_target.setdefault(int(target_id), []).append(int(source_id))
+    storage_by_reach_entry_month: dict[tuple[int, int], set[int]] = {}
     for adjustment in lake_adjustments.select(
         [
             "terminal_depression_id",
@@ -363,16 +359,19 @@ def _reach_loss_catalog(
         effective_id = int(adjustment["effective_reach_id"])
         if effective_id < 0 or effective_id not in row_by_id:
             continue
-        if adjustment["joins_at_effective_entry"]:
-            edges = [
-                (source_id, effective_id) for source_id in sources_by_target.get(effective_id, [])
-            ]
-        else:
-            target_id = int(downstream_ids[row_by_id[effective_id]])
-            edges = [(effective_id, target_id)] if target_id >= 0 else []
-        for source_id, target_id in edges:
-            key = (source_id, target_id, int(adjustment["month"]))
-            local_storage_by_edge_month.setdefault(key, set()).add(
+        affected_reaches: list[int] = []
+        seen: set[int] = set()
+        reach_id = effective_id
+        while reach_id >= 0:
+            if reach_id in seen or reach_id not in row_by_id:
+                raise RuntimeError("lake adjustment references an invalid downstream reach path")
+            seen.add(reach_id)
+            affected_reaches.append(reach_id)
+            reach_id = int(downstream_ids[row_by_id[reach_id]])
+        entry_start = 0 if adjustment["joins_at_effective_entry"] else 1
+        for affected_reach in affected_reaches[entry_start:]:
+            key = (affected_reach, int(adjustment["month"]))
+            storage_by_reach_entry_month.setdefault(key, set()).add(
                 int(adjustment["terminal_depression_id"])
             )
     rows: list[dict[str, object]] = []
@@ -401,11 +400,14 @@ def _reach_loss_catalog(
         drops = np.maximum(monthly[source] - monthly[target], 0.0)
         drop_fractions = drops / np.maximum(monthly[source], 1e-12)
         for month in np.flatnonzero(drop_fractions > maximum_drop_fraction):
-            local_depressions = sorted(
-                local_storage_by_edge_month.get(
-                    (int(reach_ids[source]), int(downstream_id), int(month) + 1), set()
-                )
+            month_number = int(month) + 1
+            target_storage = storage_by_reach_entry_month.get(
+                (int(downstream_id), month_number), set()
             )
+            source_storage = storage_by_reach_entry_month.get(
+                (int(reach_ids[source]), month_number), set()
+            )
+            local_depressions = sorted(target_storage - source_storage)
             accounted = bool(crossed_waterbodies or local_depressions)
             accounted_count += int(accounted)
             unaccounted_count += int(not accounted)
@@ -436,7 +438,7 @@ def _reach_loss_catalog(
     )
 
 
-@stage(  # type: ignore[untyped-decorator]
+@stage(
     "hydrology_validation",
     inputs=(
         "surface_water_final",
@@ -454,7 +456,7 @@ def _reach_loss_catalog(
         "HydrologyReachLossCatalog",
         "HydrologyValidationMetadata",
     ),
-    version="v6",
+    version="v8",
 )
 def hydrology_validation_stage(
     context: PipelineContext,
@@ -703,7 +705,6 @@ def hydrology_validation_stage(
         "reach_graph_issue_count",
         "reach_dead_end_count",
         "major_river_dead_end_count",
-        "mean_downstream_discharge_regression_count",
     ):
         add(
             kpi_id,
@@ -714,6 +715,17 @@ def hydrology_validation_stage(
             gate_kind="hard_invariant",
             maximum=0.0,
         )
+    add(
+        "mean_downstream_discharge_regression_count",
+        "river_continuity",
+        "selected_basin",
+        reach_metrics["mean_downstream_discharge_regression_count"],
+        "count",
+        note=(
+            "Raw mean reach-entry regressions are diagnostic; the monthly storage-aware "
+            "audit is the executable continuity gate."
+        ),
+    )
     add(
         "unaccounted_monthly_downstream_discharge_regression_count",
         "river_continuity",

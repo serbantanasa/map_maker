@@ -56,6 +56,21 @@ def _validation_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _biosphere_validation_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "validate-biosphere",
+        help="Run the cubed-sphere earth_biosphere_v1 multi-seed profile.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/biosphere_validation.yaml"),
+        help="Biosphere ensemble YAML (default: configs/biosphere_validation.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override biosphere validation output root.")
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -179,6 +194,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     _generate_parser(subparsers)
     _validation_parser(subparsers)
+    _biosphere_validation_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -220,6 +236,48 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"  seed {world.seed}.{gate.name}: {gate.value} "
                         f"(expected {gate.expectation})"
                     )
+        return 1
+
+    if args.command == "validate-biosphere":
+        try:
+            from .pipeline.biosphere_ensemble import (
+                BiosphereEnsembleConfig,
+                run_biosphere_ensemble,
+            )
+
+            ensemble_config = BiosphereEnsembleConfig.from_file(
+                args.config, output_dir=args.output_dir
+            )
+            biosphere_validation = run_biosphere_ensemble(ensemble_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Biosphere validation report: {biosphere_validation.report_path}")
+        print(f"Ensemble KPI catalog: {biosphere_validation.metric_catalog_path}")
+        if biosphere_validation.passed:
+            print(
+                f"PASS: {biosphere_validation.seed_count} worlds satisfy earth_biosphere_v1 "
+                "and ensemble tolerances."
+            )
+            return 0
+        if biosphere_validation.execution_valid:
+            print(
+                "OUTSIDE REFERENCE: simulation invariants and ensemble tolerances pass, "
+                "but Earth calibration does not."
+            )
+        else:
+            print("FAIL: a hard invariant or ensemble stability tolerance failed.")
+        for gate in biosphere_validation.gates:
+            if not gate.passed:
+                print(f"  {gate.name}: {gate.value} (expected {gate.expectation})")
         return 1
 
     if args.command == "topology":

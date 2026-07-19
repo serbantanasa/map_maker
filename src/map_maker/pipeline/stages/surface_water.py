@@ -96,7 +96,7 @@ class SurfaceWaterConfig:
 
 @dataclass(frozen=True)
 class SurfaceWaterFinalConfig:
-    maximum_outlet_incision_rounds: int = 8
+    maximum_outlet_incision_rounds: int = 12
     require_soil_readiness: bool = False
 
     @classmethod
@@ -662,7 +662,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "SurfaceWaterMonthlyStateCatalog",
         "SurfaceWaterMetadata",
     ),
-    version="v4",
+    version="v5",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )

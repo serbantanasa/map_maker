@@ -121,6 +121,8 @@ Current approved/provisional decisions:
 - Decision 030: Bounded V1 Lake Hydrographs And Cryosphere.
 - Decision 031: Fractional Surface Materials Before Functional Biomes.
 - Decision 032: Earth Calibration Profile And Open Environmental Envelope.
+- Decision 033: Trait-First Potential Biosphere Before Functional Types.
+- Decision 034: Earth Biosphere Profile Before Functional Types.
 
 Accepted only as tentative prototype hypotheses:
 - Decision 010: Explicit History Window And Adaptive Nested Sweeps.

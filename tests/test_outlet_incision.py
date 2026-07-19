@@ -10,7 +10,10 @@ import pytest
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline.stages.hydrology_pass2 import NO_FIXED_RECEIVER
 from map_maker.pipeline.stages.hydrology_validation import HydrologyValidationConfig
-from map_maker.pipeline.stages.lake_hydrographs import LakeHydrographConfig
+from map_maker.pipeline.stages.lake_hydrographs import (
+    LakeHydrographConfig,
+    _find_effective_start,
+)
 from map_maker.pipeline.stages.outlet_incision import OutletIncisionConfig, _cyclic_rows
 
 
@@ -37,6 +40,8 @@ def _ensure_stages_registered():
         "hydrology_validation",
         "surface_materials",
         "biosphere_envelope",
+        "potential_biosphere",
+        "biosphere_validation",
     ):
         module = importlib.import_module(f"map_maker.pipeline.stages.{module_name}")
         importlib.reload(module)
@@ -144,15 +149,53 @@ def test_lake_hydrograph_config_rejects_invalid_controls():
         LakeHydrographConfig.from_mapping({"maximum_negative_discharge_m3s": 2.0})
 
 
+def test_lake_loss_projection_is_bounded_by_available_channel_discharge():
+    base_entry = np.full((2, 12), 8.0)
+    base_exit = np.vstack((np.full(12, 4.0), np.full(12, 8.0)))
+    adjustment = np.zeros((2, 12), dtype=np.float64)
+
+    limited = _find_effective_start(
+        [0, 1],
+        0,
+        -10.0,
+        False,
+        base_entry,
+        base_exit,
+        adjustment,
+        adjustment,
+        1e-6,
+    )
+    represented = _find_effective_start(
+        [0, 1],
+        0,
+        -3.0,
+        False,
+        base_entry,
+        base_exit,
+        adjustment,
+        adjustment,
+        1e-6,
+    )
+
+    assert limited.start_index == 0
+    assert limited.applied_delta_m3s == -4.0
+    assert not limited.fully_represented
+    assert represented.start_index == 0
+    assert represented.applied_delta_m3s == -3.0
+    assert represented.fully_represented
+
+
 def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path: Path):
     config = _config(tmp_path, "outlet-final")
-    results = ExecutionEngine(config).run(["biosphere_envelope"])
+    results = ExecutionEngine(config).run(["biosphere_validation"])
     outlet = results["outlet_incision"]
     final = results["surface_water_final"]
     lake_hydrographs = results["lake_hydrographs"]
     validation = results["hydrology_validation"]
     surface_materials = results["surface_materials"]
     biosphere_envelope = results["biosphere_envelope"]
+    potential_biosphere = results["potential_biosphere"]
+    biosphere_validation = results["biosphere_validation"]
     outlet_metadata = outlet.artifact_records["OutletIncisionMetadata"].value
     final_metadata = final.artifact_records["SurfaceWaterMetadata"].value
     cells = _table(final, "FinalOutletCorrectedBasinCellCatalog")
@@ -165,6 +208,14 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     validation_metadata = validation.artifact_records["HydrologyValidationMetadata"].value
     soil_metadata = surface_materials.artifact_records["SurfaceMaterialsMetadata"].value
     envelope_metadata = biosphere_envelope.artifact_records["BiosphereEnvelopeMetadata"].value
+    potential_metadata = potential_biosphere.artifact_records["PotentialBiosphereMetadata"].value
+    biosphere_validation_metadata = biosphere_validation.artifact_records[
+        "BiosphereValidationMetadata"
+    ].value
+    biosphere_kpis = _table(biosphere_validation, "BiosphereKpiCatalog")
+    biosphere_distributions = _table(
+        biosphere_validation, "BiosphereClimateDistributionCatalog"
+    )
 
     assert outlet_metadata["graph_valid"] == 1
     assert outlet_metadata["independent_graph_valid"] == 1
@@ -187,6 +238,12 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     assert hydrograph_adjustments.num_rows == 12 * int(
         lake_hydrograph_metadata["terminal_lake_network_count"]
     )
+    assert {
+        "requested_hydrograph_adjustment_m3s",
+        "pre_channel_interception_km3",
+        "fully_represented_in_channel",
+    }.issubset(hydrograph_adjustments.column_names)
+    assert lake_hydrograph_metadata["pre_channel_interception_km3"] >= 0.0
     coupled_monthly = np.asarray(
         coupled_reaches["discharge_seasonal"].combine_chunks().values,
         dtype=np.float64,
@@ -215,6 +272,37 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     assert envelope_metadata["hard_gate_pass"] == 1
     assert envelope_metadata["biosphere_envelope_ready_for_traits"] == 1
     assert envelope_metadata["combined_energy_is_universal_habitability_score"] == 0
+    assert potential_metadata["hard_gate_pass"] == 1
+    assert potential_metadata["potential_biosphere_ready_for_functional_types"] == 1
+    assert potential_metadata["actual_vegetation_state_implemented"] == 0
+    assert potential_metadata["actual_maximum_rooting_depth_m"] <= potential_metadata[
+        "maximum_rooting_depth_m"
+    ]
+    assert potential_metadata["actual_maximum_canopy_height_m"] <= potential_metadata[
+        "maximum_canopy_height_m"
+    ]
+    assert biosphere_validation_metadata["reference_profile_version"] == "earth_biosphere_v1"
+    assert biosphere_validation_metadata["hard_gate_pass"] == 1
+    assert biosphere_validation_metadata["earth_profile_status"] in {
+        "within_reference",
+        "outside_reference",
+    }
+    assert biosphere_kpis.num_rows == biosphere_validation_metadata["kpi_count"]
+    assert biosphere_distributions.num_rows == biosphere_validation_metadata[
+        "climate_distribution_row_count"
+    ]
+    biosphere_kpi_by_id = {
+        row["kpi_id"]: row
+        for row in biosphere_kpis.select(
+            ["kpi_id", "value", "gate_kind", "comparison_status"]
+        ).to_pylist()
+    }
+    assert biosphere_kpi_by_id["finite_nonnegative_biosphere_fields"][
+        "comparison_status"
+    ] == "hard_pass"
+    assert biosphere_kpi_by_id["global_potential_npp_pg_c_year"]["gate_kind"] == (
+        "earth_diagnostic"
+    )
     annual_energy = np.asarray(
         biosphere_envelope.artifact_records[
             "AnnualTerrestrialPrimaryEnergyPotentialMJm2"
@@ -223,6 +311,11 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     ocean = np.asarray(results["world_age"].artifact_records["BaseOceanMask"].value.array()) >= 0.5
     assert np.all(annual_energy[ocean] == 0.0)
     assert np.any(annual_energy[~ocean] > 0.0)
+    potential_cover = np.asarray(
+        potential_biosphere.artifact_records["PotentialVegetationCoverFraction"].value.array()
+    )
+    assert np.all(potential_cover[ocean] == 0.0)
+    assert np.any(potential_cover[~ocean] > 0.0)
 
     fixed = np.asarray(cells["outlet_fixed_receiver_id"], dtype=np.int32)
     constrained = fixed != NO_FIXED_RECEIVER

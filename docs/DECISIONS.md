@@ -1734,3 +1734,227 @@ Earth calibration gives V1 measurable targets, while raw causal state keeps the
 world stack useful for future climate and biosphere regimes. Separating hard
 physics gates from profile diagnostics prevents both false generality and an
 unnecessary Earth-only rewrite later.
+
+## Decision 033: Trait-First Potential Biosphere Before Functional Types
+
+Status: implemented, provisional calibration
+
+Decision:
+Milestone 15b1 predicts continuous terrestrial producer-community potentials
+before assigning plant functional types or biome labels.
+
+Interpretation contract:
+- Outputs describe equilibrium potential under an explicit carbon-based,
+  photosynthetic-colonization assumption. They are not actual vegetation or an
+  evolutionary-history simulation.
+- Environmental adaptation pressures remain separate from predicted community
+  traits. Similar pressure does not guarantee convergent organisms.
+- Potential NPP is auditably bounded by the 15b0 chemical-energy artifact through
+  a configured energy-per-carbon conversion.
+- Cover, biomass, woody allocation, resource-conservation strategy, rooting,
+  canopy, leaf area, and fuel continuity remain continuous fields.
+- Species, PFT fractions, biome labels, consumers, disturbance events, and
+  vegetation feedback are not emitted by 15b1.
+
+Validation contract:
+- Hard gates enforce energy bounds, monthly/annual aggregation, normalized
+  traits and pressures, regolith-bounded roots, configured morphology bounds,
+  finite state, and zero terrestrial production over ocean.
+- Earth trait databases and land-model relationships feed the separate
+  `earth_biosphere_v1` calibration profile; they are not categorical lookup
+  tables or generation-time physical gates.
+- Non-Earth validation profiles reduce confidence where calibration is absent;
+  they do not clamp physical inputs or force Earth vegetation.
+
+Reason:
+The game needs productivity, biomass, cover, and terrain-scale ecological
+constraints before it needs named biomes. Continuous, inspectable potentials
+also preserve useful training targets and leave room for later Earth and
+non-Earth functional models without rerunning the physical world stack.
+
+## Decision 034: Earth Biosphere Profile Before Functional Types
+
+Status: implemented and passing at both screening scales
+
+Decision:
+Establish the versioned `earth_biosphere_v1` profile before tuning or
+implementing 15b2 functional vegetation mixtures and biome labels.
+
+Validation contract:
+- Per-world hard gates cover finite state, exclusive climate-stratum area, and
+  reconstruction of global NPP and biomass from area-weighted strata.
+- Earth comparison uses physical global totals. The initial potential-natural
+  targets are `50-75 Pg C/year` NPP and `771-1,107 Pg C` vegetation biomass.
+- Cover, canopy, LAI, rooting, and latent trait state are distributional
+  outputs until an accepted reference transformation gives them comparable
+  semantics; they may not receive arbitrary one-number targets.
+- Exclusive polar, cold, cool-dry, cool-moist, warm-dry, warm-seasonal, and
+  warm-humid strata are derived only from upstream climate. They are validation
+  bins, not canonical biomes.
+- Fixed-seed evaluation reports hard execution, Earth agreement, and ensemble
+  dispersion separately. Failed worlds remain failed observations and may not
+  be removed from the seed set to improve the score.
+
+Scale contract:
+- Face-64 fixed seeds are the coarse screening ensemble.
+- The canonical face-128 seed confirms high-resolution behavior.
+- A model change is not calibrated from one scale or one seed alone.
+
+Scenario contract:
+- Earth ranges are calibration diagnostics for the `earthlike` profile, not
+  physical clamps and not validity rules for snowball, hothouse, archipelago,
+  or future non-Earth biospheres.
+- Ordinary generation can complete outside Earth ranges while preserving a
+  visible `outside_reference` status. The dedicated Earth validation command
+  passes only when hard gates, ensemble tolerances, and Earth diagnostics pass.
+
+Reason:
+15b2 labels could make an underproductive or seed-fragile biosphere look
+finished while preserving the wrong underlying carbon cycle. A source-backed,
+multi-seed profile makes calibration failures explicit before categorical
+vegetation is added and creates stable training-data acceptance metadata for
+future surrogate models.
+
+## Decision 035: Convergent Fine Routing And Branch-Local Lake Losses
+
+Status: implemented
+
+Decision:
+Refined reaches may share an already occupied directed fine edge when they
+continue in the same downstream direction. They may not reuse the reverse edge,
+cross an occupied edge, or leave a shared node through different downstream
+targets. Shared directed edges represent unresolved co-routing or parallel
+subgrid channels inside an approximately 10 km fine cell; they are not evidence
+that the modeled rivers have cell-scale width.
+
+Hydrology contract:
+- Refinement persists directed-edge multiplicity and separates all shared edges
+  from shared physical-channel edges. Fluvial erosion deduplicates the shared
+  bed edge while retaining each reach's subgrid erosion width and discharge.
+- Hydrology Pass 2 assigns one spill-surface level to each depression ID. Cells
+  at different filled levels cannot be merged merely because they are adjacent.
+- A negative terminal-lake hydrograph adjustment remains on its own downstream
+  branch and is bounded by discharge physically represented there. Any
+  unprojectable part is persisted as `pre_channel_interception_km3`; it may not
+  be silently discarded or consume water from a sibling tributary.
+- Monthly storage-aware downstream regressions remain hard-gated. Raw
+  annual-mean regressions are diagnostic because legitimate lake storage can
+  reduce mean flow.
+
+This decision supersedes Decision 030's provisional rule that moved a negative
+lake adjustment to the first downstream reach with sufficient inherited flow.
+That remapping could incorrectly debit a sibling branch after confluence.
+
+Validation:
+All six fixed face-64 seeds and the canonical face-128 seed now reach final
+hydrology with zero unaccounted monthly reach losses. Directed reuse is audited,
+reverse-edge conflicts remain forbidden, lake-network balance closes, and
+projected discharge remains nonnegative.
+
+Reason:
+At coarse resolution, distinct tributaries can be narrower than one fine cell
+and cannot always be embedded as disjoint raster paths. Directed convergence
+preserves the drainage DAG without inventing crossings. Branch-local bounded
+lake losses preserve causal ownership when inherited coarse discharge does not
+resolve every fine tributary.
+
+## Decision 036: Calibrate Carbon Amplitude Without Hiding Climate Errors
+
+Status: implemented across the coarse ensemble and canonical resolution
+
+Decision:
+The Earthlike 15b1 amplitude calibration retains `39.9 MJ/kg C` as the chemical
+energy-per-carbon conversion. Nutrient support uses a normalized saturating
+response
+
+`response = (1 + K) * support / (support + K)`
+
+with `K = 0.5`, so zero and full support remain fixed at zero and one while
+moderate nutrient supply is not treated as a linearly proportional carbon
+ceiling. The upstream peak PAR-to-chemical efficiency is `0.043`. Biomass uses
+a bounded residence-time response rather than a single multiplier:
+
+- residence bounds are `0.5-50 years`;
+- the normalized response has a `0.10` baseline;
+- woody and resource-conservative structure weights are `0.60` and `0.40`;
+- low productivity has weight `2.50`, representing slower turnover under
+  resource-limited conditions;
+- standing biomass remains capped at `40 kg C/m2`.
+
+The six-seed face-64 screen completes every world. NPP is `60.75-74.60 Pg
+C/year`, biomass is `975.93-1,104.27 Pg C`, NPP coefficient of variation is
+`0.074`, and biomass coefficient of variation is `0.046`. All six global and
+land-mean NPP and biomass diagnostics pass. The configured `35.0%` landmass is
+inside the approved generated-Earthlike profile.
+
+The canonical face-128 world produces `57.28 Pg C/year` NPP, `0.321 kg
+C/m2/year` land-mean NPP, `950.75 Pg C` biomass, and `5.33 kg C/m2` land-mean
+biomass. It therefore passes all four carbon-amplitude diagnostics. Functional
+types and biome labels may build on these continuous outputs without treating
+their Earth calibration as a universal biological law.
+
+Reason:
+Calibration must preserve causal information. A biosphere scalar that forces a
+dry generated climate to reproduce Earth totals would make the final map look
+plausible while corrupting both simulation state and future surrogate-training
+targets.
+
+## Decision 037: Resolution-Aware Climate Transport Controls
+
+Status: implemented
+
+Decision:
+Climate transport controls are defined relative to face resolution 128 and
+converted to numerical work at the active cubed-sphere resolution:
+
+- physical transport steps scale linearly with face resolution;
+- moisture-diffusion substeps scale linearly, while advection per numerical
+  substep is divided by the substep count;
+- supersaturation removal and maximum condensation are converted to equivalent
+  per-step fractions that preserve the same monthly relaxation; and
+- synoptic smoothing passes scale with the square of face resolution so their
+  physical mixing length remains approximately stable.
+
+These conversions are persisted in climate metadata. They are numerical-
+resolution controls, not Earth-profile productivity multipliers.
+
+Validation:
+For seed 42, face-64 and face-128 land precipitation are `505.39` and `497.92
+mm/year`, respectively, after the correction. Face 64 uses eight transport
+steps, one diffusion substep, `0.38` advection, and four synoptic passes. Face
+128 uses 16 transport steps, two diffusion substeps, 32 numerical moisture
+steps, `0.19` advection, and 16 synoptic passes. The resulting carbon state
+passes Decision 036 at both resolutions.
+
+Reason:
+Applying per-cell and per-timestep coefficients unchanged at multiple grid
+resolutions changes physical transport distance and monthly condensation. That
+numerical artifact made the canonical world appear substantially drier and
+could not be repaired honestly in the biosphere stage.
+
+## Decision 038: Accept 35 Percent Land In The Earthlike World Profile
+
+Status: approved and implemented
+
+Decision:
+`earth_biosphere_v1` accepts generated Earthlike land fractions from `27%` to
+`36%`. Earth's observed approximately `29%` emerged-land fraction remains the
+reference point, but a generated world with the canonical `35%` landmass is an
+accepted game-world variant rather than a calibration failure.
+
+This decision changes only the profile diagnostic. It does not retune
+tectonics, move coastlines, alter carbon output, or constrain non-Earth
+scenarios. A future model that separates continental crust, shelf, sea level,
+and emerged land must rerun this profile instead of assuming the current mask
+semantics are permanent.
+
+Validation:
+All six face-64 worlds and the canonical face-128 world now satisfy the full
+`earth_biosphere_v1` profile, including land fraction, carbon amplitude,
+directional climate response, hard invariants, and ensemble stability.
+
+Reason:
+The target is a plausible and useful simulation world, not an exact copy of
+modern Earth. The user explicitly accepted `35%` landmass, and the profile
+should not reject an approved scenario characteristic while all causal carbon
+and climate checks pass.

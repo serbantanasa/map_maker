@@ -64,9 +64,10 @@ class BiosphereEnvelopeConfig:
     thermal_optimum_high_c: float = 30.0
     thermal_maximum_c: float = 50.0
     water_input_half_saturation_mm: float = 50.0
+    nutrient_half_saturation_index: float = 0.5
     co2_half_saturation_pa: float = 20.0
     reference_oxygen_partial_pressure_kpa: float = 21.22
-    photosynthetic_conversion_efficiency: float = 0.02
+    photosynthetic_conversion_efficiency: float = 0.043
     minimum_productive_energy_mj_m2_year: float = 5.0
     nonreference_profile_confidence_multiplier: float = 0.75
     maximum_annual_aggregation_relative_error: float = 1e-5
@@ -105,6 +106,7 @@ class BiosphereEnvelopeConfig:
             raise ValueError("thermal response temperatures must be ordered")
         positive = (
             "water_input_half_saturation_mm",
+            "nutrient_half_saturation_index",
             "co2_half_saturation_pa",
             "reference_oxygen_partial_pressure_kpa",
             "maximum_annual_aggregation_relative_error",
@@ -175,7 +177,7 @@ def _visualizer(
         output = request.output_dir / filename
         Image.fromarray(_cube_net_rgb(image), mode="RGB").save(output)
         outputs.append(
-            VisualizationResult(output, artifact, {"model": "biosphere_resource_envelope_v1"})
+            VisualizationResult(output, artifact, {"model": "biosphere_resource_envelope_v2"})
         )
     return outputs
 
@@ -194,7 +196,7 @@ def _visualizer(
         *ANNUAL_ENVELOPE_OUTPUTS,
         "BiosphereEnvelopeMetadata",
     ),
-    version="v2",
+    version="v3",
     native_libraries=("biosphere_envelope_native",),
     visualizer=_visualizer,
 )
@@ -264,6 +266,7 @@ def biosphere_envelope_stage(
             thermal_optimum_high_c=config.thermal_optimum_high_c,
             thermal_maximum_c=config.thermal_maximum_c,
             water_input_half_saturation_mm=config.water_input_half_saturation_mm,
+            nutrient_half_saturation_index=config.nutrient_half_saturation_index,
             co2_half_saturation_pa=config.co2_half_saturation_pa,
             reference_co2_partial_pressure_pa=reference_co2_partial_pressure_pa,
             reference_oxygen_partial_pressure_kpa=(config.reference_oxygen_partial_pressure_kpa),
@@ -351,7 +354,7 @@ def biosphere_envelope_stage(
     metadata.update(
         {
             **asdict(config),
-            "model": "biosphere_resource_envelope_v1",
+            "model": "biosphere_resource_envelope_v2",
             "topology": "cubed_sphere",
             "validation_profile": atmosphere_metadata["validation_profile"],
             "validation_profile_version": atmosphere_metadata["validation_profile_version"],

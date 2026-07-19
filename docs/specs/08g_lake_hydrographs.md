@@ -18,13 +18,16 @@ For each terminal candidate network, the stage:
 2. Subtracts that source hydrograph from solved terminal overflow.
 3. Routes the resulting monthly delta from the final spill receiver to a fine
    channel, a preserved coarse handoff, or an allowed outside terminal.
-4. Applies the delta through the downstream reach DAG.
-5. Preserves separate pre-lake, coupled-entry, and coupled-exit hydrographs.
+4. Applies as much of the delta as the owning downstream branch can physically
+   represent without negative discharge.
+5. Persists any unresolved negative adjustment as pre-channel interception.
+6. Preserves separate pre-lake, coupled-entry, and coupled-exit hydrographs.
 
 If a negative fine-scale adjustment reaches a coarse reach before the inherited
-hydrograph contains that tributary flow, it moves downstream to the first
-nonnegative application point. Every remap is persisted; no adjustment is
-silently clamped.
+hydrograph contains that tributary flow, it remains on the nominal branch and is
+bounded by available discharge there. The unprojected volume is explicit in
+both the adjustment catalog and metadata. It may not move through a confluence
+and consume water represented only on a sibling tributary.
 
 ## Hard Gates
 
@@ -32,6 +35,8 @@ silently clamped.
 - Final entry and exit discharge is finite and nonnegative in every month.
 - Candidate-network direct runoff equals terminal overflow plus evaporation,
   seepage, and periodic storage change.
+- Requested adjustment equals applied channel adjustment plus pre-channel
+  interception.
 - Every downstream discharge decrease is attributable to registered coarse
   storage or a final refined surface-water network.
 

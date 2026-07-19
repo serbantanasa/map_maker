@@ -54,6 +54,12 @@ class _ReachTarget(NamedTuple):
     routed_cell_id: int
 
 
+class _EffectiveAdjustment(NamedTuple):
+    start_index: int
+    applied_delta_m3s: float
+    fully_represented: bool
+
+
 def _artifact_table(result: StageResult, name: str) -> pa.Table:
     record = result.artifact_records.get(name)
     if record is None or not isinstance(record.value, pa.Table):
@@ -66,17 +72,17 @@ def _artifact_array(result: StageResult, name: str) -> np.ndarray:
     if record is None or record.value is None:
         raise KeyError(f"Missing dependency artifact '{name}'")
     value = record.value
-    return np.asarray(value.array() if hasattr(value, "array") else value)  # type: ignore[no-any-return]
+    return np.asarray(value.array() if hasattr(value, "array") else value)
 
 
 def _column(table: pa.Table, name: str, dtype: np.dtype) -> np.ndarray:
-    return np.ascontiguousarray(  # type: ignore[no-any-return]
+    return np.ascontiguousarray(
         table[name].combine_chunks().to_numpy(zero_copy_only=False), dtype=dtype
     )
 
 
 def _fixed_list(table: pa.Table, name: str) -> np.ndarray:
-    return np.asarray(table[name].combine_chunks().values, dtype=np.float64).reshape(  # type: ignore[no-any-return]
+    return np.asarray(table[name].combine_chunks().values, dtype=np.float64).reshape(
         table.num_rows, MONTHS
     )
 
@@ -250,25 +256,25 @@ def _find_effective_start(
     entry_adjustment: np.ndarray,
     exit_adjustment: np.ndarray,
     tolerance_m3s: float,
-) -> int:
+) -> _EffectiveAdjustment:
     if delta_m3s >= 0.0:
-        return 0
+        return _EffectiveAdjustment(0, delta_m3s, True)
     required = -delta_m3s
-    for start in range(len(path_rows)):
-        exit_available = min(
-            base_exit[row, month] + exit_adjustment[row, month] for row in path_rows[start:]
-        )
-        entry_start = start if joins_at_entry and start == 0 else start + 1
-        entry_available = min(
-            (
-                base_entry[row, month] + entry_adjustment[row, month]
-                for row in path_rows[entry_start:]
-            ),
-            default=np.inf,
-        )
-        if min(exit_available, entry_available) + tolerance_m3s >= required:
-            return start
-    raise RuntimeError("lake loss exceeds available downstream river discharge")
+    exit_available = min(
+        base_exit[row, month] + exit_adjustment[row, month] for row in path_rows
+    )
+    entry_start = 0 if joins_at_entry else 1
+    entry_available = min(
+        (
+            base_entry[row, month] + entry_adjustment[row, month]
+            for row in path_rows[entry_start:]
+        ),
+        default=np.inf,
+    )
+    available = max(0.0, min(exit_available, entry_available))
+    if available + tolerance_m3s >= required:
+        return _EffectiveAdjustment(0, delta_m3s, True)
+    return _EffectiveAdjustment(0, -available, False)
 
 
 def _couple_hydrographs(
@@ -327,6 +333,9 @@ def _couple_hydrographs(
     outside_target_count = 0
     applied_adjustment_km3 = 0.0
     outside_adjustment_km3 = 0.0
+    pre_channel_interception_km3 = 0.0
+    limited_loss_month_count = 0
+    maximum_pre_channel_interception_m3s = 0.0
     for terminal_row in terminal_rows:
         target = _route_target(
             int(spill_receiver_ids[terminal_row]),
@@ -357,11 +366,15 @@ def _couple_hydrographs(
             overflow_km3 = float(overflow[terminal_row, month])
             delta_km3 = overflow_km3 - source_km3
             delta_m3s = delta_km3 * 1e9 / SECONDS_PER_MONTH
+            applied_delta_m3s = 0.0
+            applied_delta_km3 = 0.0
+            interception_km3 = 0.0
+            fully_represented = False
             effective_index = -1
             effective_reach_id = -1
             joins_at_effective_entry = False
             if path_rows:
-                effective_index = _find_effective_start(
+                adjustment = _find_effective_start(
                     path_rows,
                     month,
                     delta_m3s,
@@ -372,15 +385,26 @@ def _couple_hydrographs(
                     exit_adjustment,
                     config.maximum_negative_discharge_m3s,
                 )
+                effective_index = adjustment.start_index
+                applied_delta_m3s = adjustment.applied_delta_m3s
+                applied_delta_km3 = applied_delta_m3s * SECONDS_PER_MONTH / 1e9
+                fully_represented = adjustment.fully_represented
                 effective_reach_id = path_ids[effective_index]
                 joins_at_effective_entry = target.joins_at_entry and effective_index == 0
                 remapped_month_count += int(effective_index > 0)
                 for row in path_rows[effective_index:]:
-                    exit_adjustment[row, month] += delta_m3s
+                    exit_adjustment[row, month] += applied_delta_m3s
                 entry_start = effective_index if joins_at_effective_entry else effective_index + 1
                 for row in path_rows[entry_start:]:
-                    entry_adjustment[row, month] += delta_m3s
-                applied_adjustment_km3 += delta_km3
+                    entry_adjustment[row, month] += applied_delta_m3s
+                applied_adjustment_km3 += applied_delta_km3
+                interception_km3 = max(applied_delta_km3 - delta_km3, 0.0)
+                pre_channel_interception_km3 += interception_km3
+                limited_loss_month_count += int(not fully_represented)
+                maximum_pre_channel_interception_m3s = max(
+                    maximum_pre_channel_interception_m3s,
+                    max(applied_delta_m3s - delta_m3s, 0.0),
+                )
             else:
                 outside_adjustment_km3 += delta_km3
             rows.append(
@@ -389,8 +413,12 @@ def _couple_hydrographs(
                     "month": month + 1,
                     "source_runoff_km3": source_km3,
                     "overflow_km3": overflow_km3,
-                    "hydrograph_adjustment_km3": delta_km3,
-                    "hydrograph_adjustment_m3s": delta_m3s,
+                    "requested_hydrograph_adjustment_km3": delta_km3,
+                    "requested_hydrograph_adjustment_m3s": delta_m3s,
+                    "hydrograph_adjustment_km3": applied_delta_km3,
+                    "hydrograph_adjustment_m3s": applied_delta_m3s,
+                    "pre_channel_interception_km3": interception_km3,
+                    "fully_represented_in_channel": fully_represented,
                     "nominal_reach_id": target.reach_id,
                     "effective_reach_id": effective_reach_id,
                     "joins_at_effective_entry": joins_at_effective_entry,
@@ -458,8 +486,12 @@ def _couple_hydrographs(
                 ("month", pa.int8()),
                 ("source_runoff_km3", pa.float64()),
                 ("overflow_km3", pa.float64()),
+                ("requested_hydrograph_adjustment_km3", pa.float64()),
+                ("requested_hydrograph_adjustment_m3s", pa.float64()),
                 ("hydrograph_adjustment_km3", pa.float64()),
                 ("hydrograph_adjustment_m3s", pa.float64()),
+                ("pre_channel_interception_km3", pa.float64()),
+                ("fully_represented_in_channel", pa.bool_()),
                 ("nominal_reach_id", pa.int32()),
                 ("effective_reach_id", pa.int32()),
                 ("joins_at_effective_entry", pa.bool_()),
@@ -471,7 +503,7 @@ def _couple_hydrographs(
     )
     metadata: dict[str, object] = {
         **asdict(config),
-        "model": "conservative_terminal_lake_delta_hydrographs_v1",
+        "model": "bounded_terminal_lake_delta_hydrographs_v2",
         "terminal_lake_network_count": len(terminal_rows),
         "fine_channel_target_count": fine_target_count,
         "preserved_handoff_target_count": handoff_target_count,
@@ -485,6 +517,9 @@ def _couple_hydrographs(
         "network_balance_relative_error": balance_relative_error,
         "applied_reach_adjustment_km3": applied_adjustment_km3,
         "outside_terminal_adjustment_km3": outside_adjustment_km3,
+        "pre_channel_interception_km3": pre_channel_interception_km3,
+        "channel_limited_loss_month_count": limited_loss_month_count,
+        "maximum_pre_channel_interception_m3s": maximum_pre_channel_interception_m3s,
         "minimum_coupled_discharge_m3s": minimum_discharge,
         "entry_semantics": "reach_start_after_final_lake_storage_and_loss",
         "exit_semantics": "reach_end_after_final_lake_storage_and_loss",
@@ -493,7 +528,7 @@ def _couple_hydrographs(
     return coupled, adjustment_catalog, metadata
 
 
-@stage(  # type: ignore[untyped-decorator]
+@stage(
     "lake_hydrographs",
     inputs=("surface_water_final", "outlet_incision", "hydrology"),
     outputs=(
@@ -501,7 +536,7 @@ def _couple_hydrographs(
         "LakeHydrographAdjustmentCatalog",
         "LakeHydrographMetadata",
     ),
-    version="v1",
+    version="v3",
 )
 def lake_hydrograph_stage(
     context: PipelineContext,

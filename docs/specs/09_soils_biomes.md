@@ -4,9 +4,12 @@
 
 Split into bounded milestones. Fractional surface materials and initial soils
 are implemented in `09a_surface_materials_initial_soils.md`. The environmental
-and biosphere resource envelope is specified in
-`09b_environmental_biosphere_envelope.md`. Functional vegetation, biome labels,
-and the optional one-pass feedback remain planned.
+and biosphere resource envelope is implemented in
+`09b_environmental_biosphere_envelope.md`. The trait-first potential biosphere
+is implemented in `09c_trait_first_potential_biosphere.md`. Functional vegetation
+mixtures, biome labels, and the optional one-pass feedback remain later work.
+The pre-15b2 Earth calibration contract is implemented in
+`09d_earth_biosphere_validation.md`.
 
 ## Implemented Foundation
 
@@ -25,7 +28,23 @@ land-surface support fields. This prevents an Earth biome classifier from
 becoming canonical state and supplies explicit conditioning inputs for future
 surrogates.
 
-## Next Milestone: Functional Vegetation
+## Milestone 15b1: Trait-First Potential Biosphere
+
+The pipeline converts physical opportunity into continuous potential
+producer-community state: NPP, cover, biomass, growing season, adaptation
+pressures, allocation strategy, rooting depth, canopy height, leaf area, fuel
+continuity, and confidence. These are equilibrium potentials under an explicit
+photosynthetic-colonization assumption, not proof that evolution produced the
+same organisms on every world.
+
+## Milestone 15b2: Functional Vegetation
+
+15b2 calibration must not begin until the `earth_biosphere_v1` per-world and
+multi-seed reports exist. Those reports now pass hard invariants, ensemble
+stability, and the global and land-mean NPP and biomass ranges at face 64 and
+face 128. The complete profile also accepts the approved `35%` generated-
+Earthlike landmass. A later model that separates continental crust, shelf, sea
+level, and emerged land must rerun the profile rather than inherit this result.
 
 Canonical vegetation will use mixtures of plant functional types rather than a
 single painted biome code. Required outputs are:

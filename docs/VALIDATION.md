@@ -404,8 +404,8 @@ snow, perennial snow, and fractional glacier ice. Stress-driven ice flow,
 ice-sheet dynamics, and glacial erosion remain outside V1.
 
 The canonical KPI report contains 44 rows. All hard invariants pass. It finds
-51 monthly reach-to-reach discharge decreases after final lake coupling; all
-51 are attributed to registered coarse or refined surface-water storage, while
+41 monthly reach-to-reach discharge decreases after final lake coupling; all
+41 are attributed to registered coarse or refined surface-water storage, while
 unaccounted decreases are zero. The global lake-area diagnostic is within its
 reference envelope. Closed-drainage land (`24.7%`) is above the provisional
 Earth envelope, and generated runoff depth (`144 mm/year`) is below it. These
@@ -421,10 +421,11 @@ latitude mask.
 
 The final lake coupling profiles 683 terminal candidate networks into 8,196
 monthly adjustment records. It conserves network water to machine precision
-and keeps all reach entry and exit discharge nonnegative. Scale mismatch moves
-373 monthly losses downstream to the first inherited reach that actually
-contains the corresponding fine tributary flow; each remap remains persisted
-for later calibration.
+and keeps all reach entry and exit discharge nonnegative. In 522 lake-months,
+the owning branch contains less represented inherited discharge than the
+requested negative adjustment. The projection stays branch-local and persists
+the unresolved `1.882 km3` as pre-channel interception; downstream remaps and
+cross-tributary debits are zero.
 
 ## Surface Materials And Initial Soils
 
@@ -498,15 +499,74 @@ The canonical face-128 seed currently reports:
 | Atmospheric scale height | `8.43 km` |
 | Composition-derived climate offset | `0 C` at the reference `280 ppm CO2` |
 | Mean terrestrial surface PAR | `3,037.94 MJ/m2/year` |
-| Mean terrestrial primary-energy proxy | `2.85 MJ/m2/year` |
+| Mean terrestrial primary-energy proxy | `12.80 MJ/m2/year` |
 | Mean thermal opportunity | `0.698` |
-| Mean liquid-water opportunity | `0.466` |
+| Mean liquid-water opportunity | `0.487` |
 | Mean carbon-substrate support | `0.980` relative to reference |
 | Mean aerobic-oxygen support | `0.954` relative to reference |
-| Land above provisional `5 MJ/m2/year` threshold | `15.56%` |
-| Annual aggregation error | `5.40e-8` relative |
+| Land above provisional `5 MJ/m2/year` threshold | `75.28%` |
+| Annual aggregation error | `5.20e-8` relative |
 
-The low energy proxy and productive-area fraction are calibration findings.
-They currently reflect restrictive initial nutrient support and uncalibrated
-conversion controls; they are not accepted estimates of Earth net primary
-productivity. The values must not be tuned from this one seed alone.
+The envelope uses a multi-seed-calibrated `0.043` peak PAR-to-chemical
+conversion efficiency and a normalized saturating nutrient response with a
+`0.5` half-saturation index. The canonical and face-64 seed-42 productive-area
+fractions are `75.3%` and `74.6%`, respectively. These parameters pass the
+predeclared carbon ranges at both scales without becoming physical clamps for
+non-Earth profiles.
+
+## Trait-First Potential Biosphere
+
+The canonical `potential_biosphere` run converts 15b0 chemical-energy potential
+to carbon fixation without introducing an independent productivity source. Its
+hard gates require exact energy conversion, monthly/annual aggregation,
+normalized adaptation pressure and trait fields, regolith-bounded roots,
+configured morphology bounds, and zero terrestrial state over ocean.
+
+| Metric | Canonical result |
+| --- | ---: |
+| Mean potential NPP | `0.321 kg C/m2/year` |
+| Mean potential vegetation cover | `50.85%` |
+| Land with at least 10% potential cover | `93.23%` |
+| Mean potential standing biomass | `5.326 kg C/m2` |
+| Mean growing-season fraction | `0.809` |
+| Mean woody-allocation trait | `0.2459` |
+| Actual maximum rooting depth | `2.09 m` |
+| Actual maximum canopy height | `27.77 m` |
+| Energy-conversion error | `4.54e-8` relative |
+| Annual aggregation error | `5.22e-8` relative |
+
+These are potential equilibrium producer-community outputs under the explicit
+colonization assumption, not actual vegetation. The calibrated biomass response
+uses explicit structural and low-productivity turnover controls. The coarse
+ensemble and canonical world satisfy the carbon-amplitude profile. Functional-
+type mixtures and biome names remain 15b2 work.
+
+## Earth Biosphere V1
+
+`biosphere_validation` now materializes the `earth_biosphere_v1` contract. Hard
+gates require finite nonnegative biosphere state, a complete exclusive climate
+partition, and reconstruction of global NPP and biomass from area-weighted
+strata. Earth ranges remain diagnostics during ordinary generation.
+
+| KPI | Earth profile | Canonical face-128 |
+| --- | ---: | ---: |
+| Land surface fraction | `27-36%` | `35.00%` |
+| Potential terrestrial NPP | `50-75 Pg C/year` | `57.28 Pg C/year` |
+| Land-mean potential NPP | `0.32-0.55 kg C/m2/year` | `0.321` |
+| Potential vegetation biomass | `771-1,107 Pg C` | `950.75 Pg C` |
+| Land-mean potential biomass | `5-8 kg C/m2` | `5.326` |
+
+All accounting gates and all four directional climate-response comparisons
+pass on the canonical seed. Its `497.92 mm/year` mean land precipitation and
+`0.487` liquid-water opportunity are close to face-64 seed 42's `505.39
+mm/year` and `0.493` after resolution-aware climate transport was introduced.
+
+All six configured face-64 worlds now complete. Every hard and dispersion gate
+passes; NPP spans `60.75-74.60 Pg C/year`, biomass spans
+`975.93-1,104.27 Pg C`, and their coefficients of variation are `0.074` and
+`0.046`. All six worlds pass every global and land-mean carbon diagnostic.
+The ensemble and canonical world now pass the complete profile. The generated-
+Earthlike land band is `27-36%`; observed Earth's approximately `29%` remains
+the reference point, while the approved canonical game-world configuration has
+`35.0%` land. See `09d_earth_biosphere_validation.md` for sources, climate
+strata, tolerances, and pass semantics.

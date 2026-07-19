@@ -594,7 +594,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "HydrologyCorrectionCatalog",
         "HydrologyPass2Metadata",
     ),
-    version="v2",
+    version="v3",
     native_libraries=("hydrology_pass2_native",),
     visualizer=_cube_net_visualizer,
 )

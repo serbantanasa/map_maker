@@ -100,6 +100,10 @@ name = "planet_native"
 version = "0.1.0"
 
 [[package]]
+name = "potential_biosphere_native"
+version = "0.1.0"
+
+[[package]]
 name = "ppv-lite86"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"

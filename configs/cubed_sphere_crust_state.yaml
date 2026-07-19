@@ -56,6 +56,8 @@ stage_overrides:
     spinup_years: 24
     moisture_spinup_years: 3
     moisture_steps_per_month_at_face_128: 16
+    moisture_diffusion_substeps_at_face_128: 2
+    synoptic_mixing_passes_at_face_128: 16
     greenhouse_offset_c: 0.0
     land_albedo: 0.30
     ocean_albedo: 0.28
@@ -149,7 +151,7 @@ stage_overrides:
     maximum_reroute_constraint_cell_fraction: 0.15
     maximum_volume_relative_error: 0.0000000001
   surface_water_final:
-    maximum_outlet_incision_rounds: 8
+    maximum_outlet_incision_rounds: 12
     require_soil_readiness: true
   lake_hydrographs:
     maximum_balance_relative_error: 0.000000001
@@ -175,9 +177,35 @@ stage_overrides:
     thermal_optimum_high_c: 30.0
     thermal_maximum_c: 50.0
     water_input_half_saturation_mm: 50.0
+    nutrient_half_saturation_index: 0.5
     co2_half_saturation_pa: 20.0
     reference_oxygen_partial_pressure_kpa: 21.22
-    photosynthetic_conversion_efficiency: 0.02
+    photosynthetic_conversion_efficiency: 0.043
     minimum_productive_energy_mj_m2_year: 5.0
     nonreference_profile_confidence_multiplier: 0.75
     maximum_annual_aggregation_relative_error: 0.00001
+  potential_biosphere:
+    energy_per_kg_carbon_mj: 39.9
+    cover_half_saturation_npp_kg_c_m2_year: 0.25
+    active_month_thermal_threshold: 0.15
+    active_month_water_threshold: 0.10
+    cold_pressure_reference_c: -15.0
+    cold_pressure_release_c: 10.0
+    heat_pressure_onset_c: 30.0
+    heat_pressure_reference_c: 50.0
+    minimum_biomass_residence_years: 0.5
+    maximum_biomass_residence_years: 50.0
+    biomass_residence_baseline_fraction: 0.10
+    woody_biomass_residence_weight: 0.60
+    resource_conservative_biomass_residence_weight: 0.40
+    low_productivity_biomass_residence_weight: 2.50
+    maximum_rooting_depth_m: 6.0
+    maximum_canopy_height_m: 45.0
+    maximum_leaf_area_index: 8.0
+    maximum_standing_biomass_kg_c_m2: 40.0
+    maximum_annual_aggregation_relative_error: 0.00001
+    maximum_energy_conversion_relative_error: 0.000001
+  biosphere_validation:
+    minimum_reportable_zone_land_fraction: 0.005
+    maximum_partition_relative_error: 0.000000000001
+    maximum_reconstruction_relative_error: 0.00000001

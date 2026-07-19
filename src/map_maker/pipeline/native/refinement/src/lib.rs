@@ -7,6 +7,18 @@ use topology_native::{
 };
 
 const D4_NEIGHBORS: usize = 4;
+const ROUTING_ANCHOR_UNAVAILABLE: i32 = 50;
+const ROUTING_BOUNDARY_UNAVAILABLE: i32 = 51;
+const ROUTING_TARGETS_EMPTY: i32 = 52;
+const ROUTING_CELL_LOOKUP_FAILED: i32 = 53;
+const ROUTING_PATH_UNAVAILABLE: i32 = 54;
+const ROUTING_PATH_RECONSTRUCTION_FAILED: i32 = 55;
+const ROUTING_FROM_ANCHOR_MISSING: i32 = 56;
+const ROUTING_DOWNSTREAM_TARGET_MISSING: i32 = 57;
+const ROUTING_TO_ANCHOR_MISSING: i32 = 58;
+const ROUTING_PATH_TOO_SHORT: i32 = 59;
+const ROUTING_NON_ADJACENT_STEP: i32 = 60;
+const ROUTING_REVERSE_EDGE_CONFLICT: i32 = 61;
 
 #[no_mangle]
 pub extern "C" fn refinement_native_abi_version() -> u32 {
@@ -471,7 +483,7 @@ fn choose_anchor(
             best = Some(candidate);
         }
     }
-    best.map(|(_, cell)| cell).ok_or(5)
+    best.map(|(_, cell)| cell).ok_or(ROUTING_ANCHOR_UNAVAILABLE)
 }
 
 struct RoutingContext<'a> {
@@ -481,6 +493,7 @@ struct RoutingContext<'a> {
     ranges: &'a ParentRanges,
     used_edges: &'a HashSet<(i32, i32)>,
     used_nodes: &'a HashSet<i32>,
+    allow_downstream_reuse: bool,
 }
 
 fn boundary_pair(
@@ -489,7 +502,7 @@ fn boundary_pair(
     context: &RoutingContext<'_>,
 ) -> Result<(i32, i32), i32> {
     let &(start, end, _) = context.ranges.get(&source_parent).ok_or(4)?;
-    let mut best = None::<(f64, i32, i32)>;
+    let mut best = None::<(u8, f64, i32, i32)>;
     for source in &context.cells[start..end] {
         for slot in 0..D4_NEIGHBORS {
             let Some(target) =
@@ -503,26 +516,35 @@ fn boundary_pair(
             if context.cells[target_local].parent_cell_id != target_parent {
                 continue;
             }
-            if context.used_nodes.contains(&source.fine_cell_id)
-                || context.used_nodes.contains(&(target as i32))
-            {
-                continue;
-            }
+            let edge = (source.fine_cell_id, target as i32);
+            let reuses_downstream_edge =
+                context.allow_downstream_reuse && context.used_edges.contains(&edge);
             if context
                 .used_edges
                 .contains(&(target as i32, source.fine_cell_id))
+                || (!reuses_downstream_edge && context.used_nodes.contains(&source.fine_cell_id))
             {
                 continue;
             }
             let score = source.terrain_elevation_m as f64
                 + context.cells[target_local].terrain_elevation_m as f64;
-            let candidate = (score, source.fine_cell_id, target as i32);
+            let reuse_priority = if reuses_downstream_edge {
+                0
+            } else if context.allow_downstream_reuse
+                && context.used_nodes.contains(&(target as i32))
+            {
+                1
+            } else {
+                2
+            };
+            let candidate = (reuse_priority, score, source.fine_cell_id, target as i32);
             if best.map_or(true, |current| candidate < current) {
                 best = Some(candidate);
             }
         }
     }
-    best.map(|(_, source, target)| (source, target)).ok_or(5)
+    best.map(|(_, _, source, target)| (source, target))
+        .ok_or(ROUTING_BOUNDARY_UNAVAILABLE)
 }
 
 fn route_inside_parent(
@@ -535,7 +557,7 @@ fn route_inside_parent(
         return Ok(vec![source]);
     }
     if targets.is_empty() {
-        return Err(5);
+        return Err(ROUTING_TARGETS_EMPTY);
     }
     let target_set = targets.iter().copied().collect::<HashSet<_>>();
     let &(start, end, _) = context.ranges.get(&parent).ok_or(4)?;
@@ -563,7 +585,10 @@ fn route_inside_parent(
         if state.cost > *distance.get(&state.cell).unwrap_or(&f64::INFINITY) {
             continue;
         }
-        let downstream_local = *context.local_by_id.get(&state.cell).ok_or(5)?;
+        let downstream_local = *context
+            .local_by_id
+            .get(&state.cell)
+            .ok_or(ROUTING_CELL_LOOKUP_FAILED)?;
         for slot in 0..D4_NEIGHBORS {
             let Some(neighbor) =
                 cubed_sphere_neighbor_index(state.cell as usize, slot, context.fine)
@@ -577,7 +602,11 @@ fn route_inside_parent(
             if context.cells[neighbor_local].parent_cell_id != parent {
                 continue;
             }
-            if context.used_nodes.contains(&neighbor) && !target_set.contains(&neighbor) {
+            if context.used_nodes.contains(&neighbor)
+                && !target_set.contains(&neighbor)
+                && !(context.allow_downstream_reuse
+                    && context.used_edges.contains(&(neighbor, state.cell)))
+            {
                 continue;
             }
             if context.used_edges.contains(&(state.cell, neighbor)) {
@@ -607,11 +636,13 @@ fn route_inside_parent(
         }
     }
     if !distance.contains_key(&source) {
-        return Err(5);
+        return Err(ROUTING_PATH_UNAVAILABLE);
     }
     let mut path = vec![source];
     while !target_set.contains(path.last().unwrap_or(&source)) {
-        let downstream = *next.get(path.last().unwrap_or(&source)).ok_or(5)?;
+        let downstream = *next
+            .get(path.last().unwrap_or(&source))
+            .ok_or(ROUTING_PATH_RECONSTRUCTION_FAILED)?;
         path.push(downstream);
     }
     Ok(path)
@@ -1175,6 +1206,7 @@ fn refine_reaches(
             ranges,
             used_edges: &used_edges,
             used_nodes: &used_nodes,
+            allow_downstream_reuse: true,
         };
         let coarse_start = inputs.reach_offsets[reach_index] as usize;
         let coarse_end = inputs.reach_offsets[reach_index + 1] as usize;
@@ -1195,8 +1227,7 @@ fn refine_reaches(
             let key = (pair[0], pair[1]);
             let boundary = if let Some(boundary) = boundary_cache.get(&key).filter(|boundary| {
                 !used_edges.contains(&(boundary.1, boundary.0))
-                    && !used_nodes.contains(&boundary.0)
-                    && !used_nodes.contains(&boundary.1)
+                    && (used_edges.contains(boundary) || !used_nodes.contains(&boundary.0))
             }) {
                 *boundary
             } else {
@@ -1210,7 +1241,7 @@ fn refine_reaches(
         let mut path = Vec::new();
         let mut current = *anchors
             .get(&inputs.reach_from_nodes[reach_index])
-            .ok_or(5)?;
+            .ok_or(ROUTING_FROM_ANCHOR_MISSING)?;
         for (parent_index, &parent) in coarse_path.iter().enumerate() {
             let final_parent = parent_index + 1 == coarse_path.len();
             let targets = if final_parent {
@@ -1227,11 +1258,13 @@ fn refine_reaches(
                         })
                         .collect::<Vec<_>>();
                     if downstream_targets.is_empty() {
-                        return Err(5);
+                        return Err(ROUTING_DOWNSTREAM_TARGET_MISSING);
                     }
                     downstream_targets
                 } else {
-                    vec![*anchors.get(&inputs.reach_to_nodes[reach_index]).ok_or(5)?]
+                    vec![*anchors
+                        .get(&inputs.reach_to_nodes[reach_index])
+                        .ok_or(ROUTING_TO_ANCHOR_MISSING)?]
                 }
             } else {
                 vec![transitions[parent_index].0]
@@ -1247,17 +1280,17 @@ fn refine_reaches(
             }
         }
         if path.len() < 2 {
-            return Err(5);
+            return Err(ROUTING_PATH_TOO_SHORT);
         }
         for pair in path.windows(2) {
             let adjacent = (0..D4_NEIGHBORS).any(|slot| {
                 cubed_sphere_neighbor_index(pair[0] as usize, slot, fine) == Some(pair[1] as usize)
             });
             if !adjacent {
-                return Err(5);
+                return Err(ROUTING_NON_ADJACENT_STEP);
             }
             if used_edges.contains(&(pair[1], pair[0])) {
-                return Err(5);
+                return Err(ROUTING_REVERSE_EDGE_CONFLICT);
             }
         }
         for pair in path.windows(2) {
@@ -1268,8 +1301,14 @@ fn refine_reaches(
 
         let mut cell_lengths = vec![0.0f64; path.len()];
         for edge in 0..path.len() - 1 {
-            let first = cells[*local_by_id.get(&path[edge]).ok_or(5)?].xyz;
-            let second = cells[*local_by_id.get(&path[edge + 1]).ok_or(5)?].xyz;
+            let first = cells[*local_by_id
+                .get(&path[edge])
+                .ok_or(ROUTING_CELL_LOOKUP_FAILED)?]
+            .xyz;
+            let second = cells[*local_by_id
+                .get(&path[edge + 1])
+                .ok_or(ROUTING_CELL_LOOKUP_FAILED)?]
+            .xyz;
             let length = angular_distance(first, second) * inputs.config.planet_radius_m;
             cell_lengths[edge] += 0.5 * length;
             cell_lengths[edge + 1] += 0.5 * length;
@@ -1283,14 +1322,16 @@ fn refine_reaches(
             path_offset,
             path_count,
             entry_fine_cell: path[0],
-            exit_fine_cell: *path.last().ok_or(5)?,
+            exit_fine_cell: *path.last().ok_or(ROUTING_PATH_TOO_SHORT)?,
             path_length_m,
         });
 
         let channel_width = inputs.channel_width_m[reach_index] as f64;
         let incision = inputs.incision_m[reach_index] as f64;
         for (path_order, (&fine_cell, &length)) in path.iter().zip(&cell_lengths).enumerate() {
-            let local = *local_by_id.get(&fine_cell).ok_or(5)?;
+            let local = *local_by_id
+                .get(&fine_cell)
+                .ok_or(ROUTING_CELL_LOOKUP_FAILED)?;
             let cell = cells[local];
             if channel_width <= 0.0 || !supported_parents.contains(&cell.parent_cell_id) {
                 continue;
@@ -1722,6 +1763,73 @@ mod tests {
             }
         }
         assert_eq!(collapsed, path);
+    }
+
+    #[test]
+    fn fine_route_can_merge_onto_an_existing_downstream_path() {
+        let fine = 4usize;
+        let parent = 0i32;
+        let mut cells = Vec::new();
+        for row in 0..fine {
+            for col in 0..fine {
+                let fine_cell_id = cubed_sphere_global_index(0, row, col, fine).unwrap() as i32;
+                let xyz = cubed_sphere_cell_xyz(0, row, col, fine).unwrap();
+                cells.push(RefinedCellRecord {
+                    fine_cell_id,
+                    parent_cell_id: parent,
+                    face: 0,
+                    row: row as i32,
+                    col: col as i32,
+                    xyz: [xyz[0] as f32, xyz[1] as f32, xyz[2] as f32],
+                    area_km2: 1.0,
+                    terrain_elevation_m: 0.0,
+                    terrain_offset_m: 0.0,
+                    parent_relief_m: 1.0,
+                });
+            }
+        }
+        let local_by_id = cells
+            .iter()
+            .enumerate()
+            .map(|(index, cell)| (cell.fine_cell_id, index))
+            .collect::<HashMap<_, _>>();
+        let ranges = HashMap::from([(parent, (0usize, cells.len(), 0usize))]);
+        let id = |row, col| cubed_sphere_global_index(0, row, col, fine).unwrap() as i32;
+        let downstream_path = [id(1, 0), id(1, 1), id(1, 2), id(1, 3), id(2, 3), id(3, 3)];
+        let used_edges = downstream_path
+            .windows(2)
+            .map(|edge| (edge[0], edge[1]))
+            .collect::<HashSet<_>>();
+        let used_nodes = downstream_path.iter().copied().collect::<HashSet<_>>();
+        let context = RoutingContext {
+            fine,
+            cells: &cells,
+            local_by_id: &local_by_id,
+            ranges: &ranges,
+            used_edges: &used_edges,
+            used_nodes: &used_nodes,
+            allow_downstream_reuse: true,
+        };
+
+        let path = route_inside_parent(parent, id(0, 0), &[id(3, 3)], &context).unwrap();
+
+        assert_eq!(path.first(), Some(&id(0, 0)));
+        assert_eq!(path.last(), Some(&id(3, 3)));
+        assert!(path
+            .windows(2)
+            .any(|edge| used_edges.contains(&(edge[0], edge[1]))));
+        assert!(path.windows(2).all(|edge| {
+            !used_nodes.contains(&edge[0]) || used_edges.contains(&(edge[0], edge[1]))
+        }));
+
+        let strict_context = RoutingContext {
+            allow_downstream_reuse: false,
+            ..context
+        };
+        assert_eq!(
+            route_inside_parent(parent, id(0, 0), &[id(3, 3)], &strict_context),
+            Err(ROUTING_PATH_UNAVAILABLE)
+        );
     }
 
     #[test]

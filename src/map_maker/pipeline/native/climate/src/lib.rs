@@ -5,6 +5,9 @@ const MONTHS: usize = 12;
 const NEIGHBORS: usize = 4;
 const VECTOR_COMPONENTS: usize = 3;
 const DAYS_PER_MONTH: f64 = 365.2422 / 12.0;
+const REFERENCE_MOISTURE_STEPS_PER_MONTH: f64 = 16.0;
+const REFERENCE_SUPERSATURATION_FRACTION: f64 = 0.03;
+const REFERENCE_MAXIMUM_CONDENSATION_FRACTION: f64 = 0.05;
 
 #[repr(C)]
 pub struct ClimateStats {
@@ -23,12 +26,12 @@ pub struct ClimateStats {
 
 #[no_mangle]
 pub extern "C" fn climate_native_abi_version() -> u32 {
-    2
+    3
 }
 
 #[no_mangle]
 pub extern "C" fn cubed_sphere_climate_abi_version() -> u32 {
-    1
+    2
 }
 
 fn dot(first: [f64; 3], second: [f64; 3]) -> f64 {
@@ -133,6 +136,11 @@ fn moisture_capacity_mm(temperature_c: f64) -> f64 {
     (7.5 * (0.07 * temperature_c).exp()).clamp(1.5, 75.0)
 }
 
+fn equivalent_step_fraction(reference_fraction: f64, steps_per_month: usize) -> f64 {
+    1.0 - (1.0 - reference_fraction)
+        .powf(REFERENCE_MOISTURE_STEPS_PER_MONTH / steps_per_month as f64)
+}
+
 fn smooth_orography(
     total: usize,
     neighbors: &[i32],
@@ -172,7 +180,13 @@ fn smooth_orography(
     }
 }
 
-fn mix_monthly_field(total: usize, neighbors: &[i32], areas: &[f64], field: &mut [f32]) {
+fn mix_monthly_field(
+    total: usize,
+    passes: usize,
+    neighbors: &[i32],
+    areas: &[f64],
+    field: &mut [f32],
+) {
     let mut mixed = vec![0.0f32; total];
     for month in 0..MONTHS {
         let month_offset = month * total;
@@ -181,7 +195,7 @@ fn mix_monthly_field(total: usize, neighbors: &[i32], areas: &[f64], field: &mut
             .sum::<f64>();
         // Monthly climatology represents unresolved synoptic weather, so mix
         // the cell-scale transport signal over a roughly 400 km footprint.
-        for _ in 0..16 {
+        for _ in 0..passes {
             for cell in 0..total {
                 let neighbor_mean = (0..NEIGHBORS)
                     .map(|edge| {
@@ -387,6 +401,10 @@ fn run_moisture(
     }
     let retained_fraction = 1.0 - advection_fraction - diffusion_fraction;
     let step_days = DAYS_PER_MONTH / steps_per_month as f64;
+    let supersaturation_fraction =
+        equivalent_step_fraction(REFERENCE_SUPERSATURATION_FRACTION, steps_per_month);
+    let maximum_condensation_fraction =
+        equivalent_step_fraction(REFERENCE_MAXIMUM_CONDENSATION_FRACTION, steps_per_month);
 
     for year in 0..spinup_years {
         for month in 0..MONTHS {
@@ -481,15 +499,15 @@ fn run_moisture(
                     let background_rate: f64 = if is_ocean { 0.0001 } else { 0.015 };
                     let background = next[cell] * (background_rate * step_days).min(0.22) * shadow;
                     let saturation_threshold = if is_ocean { 10.0 } else { 1.1 };
-                    let supersaturation =
-                        (next[cell] - saturation_threshold * capacity).max(0.0) * 0.03;
+                    let supersaturation = (next[cell] - saturation_threshold * capacity).max(0.0)
+                        * supersaturation_fraction;
                     let orographic = if is_ocean {
                         0.0
                     } else {
                         next[cell] * (1.0 - (-orographic_factor * upslope[cell]).exp()) * 0.65
                     };
-                    let condensed =
-                        (background + supersaturation + orographic).min(next[cell] * 0.05);
+                    let condensed = (background + supersaturation + orographic)
+                        .min(next[cell] * maximum_condensation_fraction);
                     next[cell] -= condensed;
                     if year + 1 == spinup_years {
                         precipitation[month * total + cell] += condensed as f32;
@@ -679,6 +697,7 @@ pub unsafe extern "C" fn climate_run_cubed_sphere(
     spinup_years: i32,
     moisture_spinup_years: i32,
     moisture_steps_per_month: i32,
+    synoptic_mixing_passes: i32,
     greenhouse_offset_c: f64,
     land_albedo: f64,
     ocean_albedo: f64,
@@ -768,6 +787,7 @@ pub unsafe extern "C" fn climate_run_cubed_sphere(
     if spinup_years < 2
         || moisture_spinup_years < 1
         || moisture_steps_per_month < 2
+        || synoptic_mixing_passes < 1
         || controls.iter().any(|value| !value.is_finite())
         || !(0.0..1.0).contains(&land_albedo)
         || !(0.0..1.0).contains(&ocean_albedo)
@@ -915,7 +935,13 @@ pub unsafe extern "C" fn climate_run_cubed_sphere(
         humidity,
         evaporation,
     );
-    mix_monthly_field(total, neighbors, areas, precipitation);
+    mix_monthly_field(
+        total,
+        synoptic_mixing_passes as usize,
+        neighbors,
+        areas,
+        precipitation,
+    );
     run_surface_water(
         total,
         runoff_base_fraction,
@@ -956,6 +982,15 @@ mod tests {
     fn moisture_capacity_increases_with_temperature() {
         assert!(moisture_capacity_mm(25.0) > moisture_capacity_mm(10.0));
         assert!(moisture_capacity_mm(10.0) > moisture_capacity_mm(-10.0));
+    }
+
+    #[test]
+    fn moisture_step_fractions_preserve_monthly_relaxation() {
+        let coarse = equivalent_step_fraction(0.05, 8);
+        let canonical = equivalent_step_fraction(0.05, 16);
+        let coarse_month = 1.0 - (1.0 - coarse).powi(8);
+        let canonical_month = 1.0 - (1.0 - canonical).powi(16);
+        assert!((coarse_month - canonical_month).abs() < 1e-12);
     }
 
     #[test]

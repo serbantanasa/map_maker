@@ -11,8 +11,11 @@ from typing import Any, Iterable
 
 NATIVE_ABI_VERSION = 2
 NATIVE_ABI_OVERRIDES = {
+    "biosphere_envelope_native": 3,
+    "climate_native": 3,
     "fluvial_native": 3,
     "hydrology_pass2_native": 1,
+    "potential_biosphere_native": 3,
     "refinement_native": 3,
     "surface_water_native": 2,
 }
@@ -27,6 +30,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "hydrology_native",
     "hydrology_pass2_native",
     "planet_native",
+    "potential_biosphere_native",
     "refinement_native",
     "surface_water_native",
     "surface_materials_native",

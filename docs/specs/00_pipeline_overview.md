@@ -57,7 +57,9 @@
       is reached.
 15. Final lake-to-reach hydrograph coupling and hydrology validation.
     - Solved terminal lake-network overflow replaces its inherited runoff
-      component in reach-entry and reach-exit monthly hydrographs.
+      component in reach-entry and reach-exit monthly hydrographs. Negative
+      adjustments stay branch-local, are bounded by represented discharge, and
+      persist any unresolved scale mismatch as pre-channel interception.
 16. Surface materials and initial soils.
     - Mutually exclusive L2 component fractions preserve exposed bedrock,
       residual regolith, colluvium, alluvium, lacustrine sediment, glacial
@@ -70,16 +72,23 @@
    - Monthly light, liquid-water opportunity, thermal opportunity, atmospheric
      substrates, oxygen support, and land-surface support remain separate raw
      fields plus diagnostics.
-18. Functional vegetation and biomes.
-19. Mineral and energy systems.
-20. Selected-region refinement and map export.
+18. Trait-first potential biosphere.
+   - A Rust kernel converts the bounded resource envelope into potential NPP,
+     cover, biomass, growing season, adaptation pressures, and continuous
+     producer-community traits without assigning species or biome labels.
+19. Earth biosphere validation.
+   - Versioned global carbon totals, upstream-climate distribution strata, and
+     fixed-seed ensemble tolerances gate calibration before functional types.
+20. Functional vegetation mixtures and derived biomes.
+21. Mineral and energy systems.
+22. Selected-region refinement and map export.
 
 The current canonical cubed-sphere implementation reaches converged bounded
 outlet incision, final lake-coupled river hydrographs, and a bounded V1
 cryosphere after erosion, sedimentation, and Hydrology Pass 2. It now reaches
 fractional L2 surface materials, property-first initial soils, explicit
 atmospheric composition and pressure, and a Rust-backed environmental resource
-envelope for later trait-first biosphere work. It includes a
+envelope plus continuous potential producer-community traits. It includes a
 causal, pre-erosion bedrock surface; separate crustal,
 orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
 and a first seasonal climate/orography pass. Bed-profile and sediment budgets

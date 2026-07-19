@@ -358,6 +358,18 @@ def run_basin_refinement(
             4: "invalid inherited reach path or physical attributes",
             5: "fine routing could not satisfy the inherited topology",
             6: "fine corridor support could not be allocated conservatively",
+            50: "fine routing could not choose a parent-cell anchor",
+            51: "fine routing exhausted an inherited parent boundary",
+            52: "fine routing received no downstream target",
+            53: "fine routing referenced a missing generated cell",
+            54: "fine routing could not connect an anchor to its downstream target",
+            55: "fine routing could not reconstruct its selected path",
+            56: "fine routing could not find a reach entry anchor",
+            57: "fine routing could not find its generated downstream reach",
+            58: "fine routing could not find a terminal reach anchor",
+            59: "fine routing generated a path shorter than one edge",
+            60: "fine routing generated a non-adjacent path step",
+            61: "fine routing generated a reverse-edge conflict",
         }
         raise RuntimeError(
             f"refinement_run_basin failed: {messages.get(status, f'status {status}')}"

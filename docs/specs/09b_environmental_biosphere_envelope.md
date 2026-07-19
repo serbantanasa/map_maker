@@ -2,10 +2,11 @@
 
 ## Status
 
-Implemented with provisional, uncalibrated biological response controls. The atmosphere substage precedes
-climate; the biosphere-resource substage follows surface materials and initial
-soils. This milestone publishes forcing and opportunity, not vegetation,
-organisms, or biome labels.
+Implemented with an Earthlike carbon-amplitude calibration that passes the
+six-seed face-64 screen and canonical face-128 check. The atmosphere substage
+precedes climate; the biosphere-resource substage follows surface materials and
+initial soils. This milestone publishes forcing and opportunity, not
+vegetation, organisms, or biome labels.
 
 ## Principle
 
@@ -85,11 +86,18 @@ proxy remains bounded by PAR and the configured conversion efficiency. Aerobic s
 separate and is not multiplied into primary photosynthetic energy. High CO2
 alone does not imply abundant or giant life.
 
+The Earthlike profile transforms raw soil nutrient support with a normalized
+Michaelis-Menten response, `(1 + K) * support / (support + K)`, using `K = 0.5`.
+This preserves zero and full support while representing saturating biological
+response to moderate nutrient supply. The configured peak PAR-to-chemical
+efficiency is `0.043`. Both controls remain explicit profile parameters rather
+than hidden calibration constants.
+
 ## Trait-First Downstream Contract
 
-Milestone 15b1 will map the raw envelope into continuous organism and ecosystem
-traits. Earth plant functional types and familiar biome names are derived
-views. They are not canonical physical state.
+Milestone 15b1 maps the raw envelope into continuous potential producer-
+community traits. Earth plant functional types and familiar biome names remain
+future derived views. They are not canonical physical state.
 
 Future surrogate datasets must include a conditioning vector containing at
 least planetary gravity, rotation, stellar forcing, atmospheric pressure and

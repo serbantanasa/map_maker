@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from typing import Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 import numpy as np
 from PIL import Image
 
 from .._climate_native import run_cubed_sphere_climate
 from ..cubed_sphere import CubedSphereGrid
+from ..models import StageResult
 from ..registry import stage
 from ..visualization import VisualizationRequest, VisualizationResult
+
+if TYPE_CHECKING:
+    from ..execution import PipelineContext
 
 
 @dataclass(frozen=True)
@@ -19,6 +23,8 @@ class ClimateConfig:
     spinup_years: int = 24
     moisture_spinup_years: int = 3
     moisture_steps_per_month_at_face_128: int = 16
+    moisture_diffusion_substeps_at_face_128: int = 2
+    synoptic_mixing_passes_at_face_128: int = 16
     greenhouse_offset_c: float = 0.0
     land_albedo: float = 0.30
     ocean_albedo: float = 0.28
@@ -46,12 +52,23 @@ class ClimateConfig:
             "spinup_years",
             "moisture_spinup_years",
             "moisture_steps_per_month_at_face_128",
+            "moisture_diffusion_substeps_at_face_128",
+            "synoptic_mixing_passes_at_face_128",
         }
-        values: dict[str, int | float] = {}
+        values: dict[str, Any] = {}
         for name in known:
             if name not in mapping:
                 continue
-            values[name] = int(mapping[name]) if name in integer_names else float(mapping[name])
+            raw = mapping[name]
+            if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+                raise ValueError(f"{name} must be numeric")
+            if name in integer_names:
+                value = int(raw)
+                if float(raw) != value:
+                    raise ValueError(f"{name} must be an integer")
+                values[name] = value
+            else:
+                values[name] = float(raw)
         config = cls(**values)
         for name, value in asdict(config).items():
             if not np.isfinite(value):
@@ -61,6 +78,8 @@ class ClimateConfig:
             "spinup_years": (2, 200),
             "moisture_spinup_years": (1, 20),
             "moisture_steps_per_month_at_face_128": (2, 64),
+            "moisture_diffusion_substeps_at_face_128": (1, 8),
+            "synoptic_mixing_passes_at_face_128": (1, 64),
         }
         float_bounds = {
             "greenhouse_offset_c": (-20.0, 20.0),
@@ -96,7 +115,7 @@ class ClimateConfig:
         return config
 
 
-def _artifact_array(result, name: str) -> np.ndarray:
+def _artifact_array(result: StageResult, name: str) -> np.ndarray:
     record = result.artifact_records.get(name)
     if record is None or record.value is None:
         raise KeyError(f"Missing dependency artifact '{name}'")
@@ -104,7 +123,26 @@ def _artifact_array(result, name: str) -> np.ndarray:
     return np.asarray(value.array() if hasattr(value, "array") else value)
 
 
-def _result_array(result, name: str) -> np.ndarray | None:
+def _artifact_mapping(result: StageResult, name: str) -> Mapping[str, object]:
+    record = result.artifact_records.get(name)
+    if record is None or record.value is None:
+        raise KeyError(f"Missing dependency artifact '{name}'")
+    if not isinstance(record.value, Mapping):
+        raise TypeError(f"Dependency artifact '{name}' must be a mapping")
+    return record.value
+
+
+def _metadata_float(metadata: Mapping[str, object], name: str) -> float:
+    raw = metadata[name]
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise TypeError(f"{name} metadata must be numeric")
+    value = float(raw)
+    if not np.isfinite(value):
+        raise ValueError(f"{name} metadata must be finite")
+    return value
+
+
+def _result_array(result: StageResult, name: str) -> np.ndarray | None:
     record = result.artifact_records.get(name)
     if record is None or record.value is None:
         return None
@@ -132,7 +170,10 @@ def _palette(
     return np.stack(channels, axis=-1).clip(0, 255).astype(np.uint8)
 
 
-def _montage(monthly: np.ndarray, palette_stops) -> np.ndarray:
+def _montage(
+    monthly: np.ndarray,
+    palette_stops: tuple[tuple[float, tuple[int, int, int]], ...],
+) -> np.ndarray:
     month_nets = [_cube_net_rgb(_palette(monthly[month], palette_stops)) for month in range(12)]
     panel_height, panel_width = month_nets[0].shape[:2]
     result = np.zeros((3 * panel_height, 4 * panel_width, 3), dtype=np.uint8)
@@ -167,7 +208,9 @@ PRECIPITATION_PALETTE = (
 )
 
 
-def _climate_visualizer(result, request: VisualizationRequest) -> list[VisualizationResult] | None:
+def _climate_visualizer(
+    result: StageResult, request: VisualizationRequest
+) -> list[VisualizationResult] | None:
     monthly_temperature = _result_array(result, "MonthlySurfaceTemperatureC")
     monthly_precipitation = _result_array(result, "MonthlyPrecipitationMm")
     annual_temperature = _result_array(result, "AnnualMeanTemperatureC")
@@ -277,11 +320,15 @@ MONTHLY_SCALAR_OUTPUTS = (
         "AnnualAridityIndex",
         "ClimateMetadata",
     ),
-    version="v2",
+    version="v5",
     native_libraries=("climate_native",),
     visualizer=_climate_visualizer,
 )
-def climate_stage(context, deps, config_mapping: Mapping[str, object]):
+def climate_stage(
+    context: PipelineContext,
+    deps: Mapping[str, StageResult],
+    config_mapping: Mapping[str, object],
+) -> Mapping[str, object]:
     config = ClimateConfig.from_mapping(config_mapping)
     if not isinstance(context.topology, CubedSphereGrid):
         raise NotImplementedError("canonical climate requires topology: cubed_sphere")
@@ -297,7 +344,9 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
         "AnnualAridityIndex": shape,
     }
     handles = {
-        name: context.arena.allocate_array(f"climate_{name.lower()}", artifact_shape, np.float32)
+        name: context.arena.allocate_array(
+            f"climate_{name.lower()}", artifact_shape, np.dtype(np.float32)
+        )
         for name, artifact_shape in artifact_shapes.items()
     }
     views = {name: handle.mutable_view() for name, handle in handles.items()}
@@ -305,17 +354,37 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
     atmosphere = deps["atmosphere"]
     elevation = deps["elevation"]
     world_age = deps["world_age"]
-    effective_moisture_steps = max(
+    effective_transport_steps = max(
         2,
         round(config.moisture_steps_per_month_at_face_128 * context.topology.face_resolution / 128),
     )
+    effective_diffusion_substeps = max(
+        1,
+        round(
+            config.moisture_diffusion_substeps_at_face_128
+            * context.topology.face_resolution
+            / 128
+        ),
+    )
+    effective_moisture_steps = effective_transport_steps * effective_diffusion_substeps
+    effective_moisture_advection_fraction = (
+        config.moisture_advection_fraction / effective_diffusion_substeps
+    )
+    effective_synoptic_mixing_passes = max(
+        1,
+        round(
+            config.synoptic_mixing_passes_at_face_128
+            * (context.topology.face_resolution / 128) ** 2
+        ),
+    )
     kernel_controls = asdict(config)
     kernel_controls.pop("moisture_steps_per_month_at_face_128")
-    atmosphere_metadata = atmosphere.artifact_records["AtmosphereMetadata"].value
-    if not isinstance(atmosphere_metadata, Mapping):
-        raise TypeError("AtmosphereMetadata must be a mapping")
-    composition_greenhouse_offset = float(
-        atmosphere_metadata["co2_greenhouse_temperature_offset_c"]
+    kernel_controls.pop("moisture_diffusion_substeps_at_face_128")
+    kernel_controls.pop("synoptic_mixing_passes_at_face_128")
+    kernel_controls["moisture_advection_fraction"] = effective_moisture_advection_fraction
+    atmosphere_metadata = _artifact_mapping(atmosphere, "AtmosphereMetadata")
+    composition_greenhouse_offset = _metadata_float(
+        atmosphere_metadata, "co2_greenhouse_temperature_offset_c"
     )
     effective_greenhouse_offset = config.greenhouse_offset_c + composition_greenhouse_offset
     if not np.isfinite(effective_greenhouse_offset):
@@ -326,6 +395,7 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
         metadata = run_cubed_sphere_climate(
             **kernel_controls,
             moisture_steps_per_month=effective_moisture_steps,
+            synoptic_mixing_passes=effective_synoptic_mixing_passes,
             areas=context.topology.cell_areas,
             neighbors=context.topology.neighbor_indices,
             xyz=context.topology.xyz,
@@ -353,14 +423,20 @@ def climate_stage(context, deps, config_mapping: Mapping[str, object]):
 
     for handle in handles.values():
         handle.seal()
-    planet_metadata = planet.artifact_records["PlanetMetadata"].value
+    planet_metadata = _artifact_mapping(planet, "PlanetMetadata")
     metadata.update(
         {
             **asdict(config),
+            "effective_transport_steps_per_month": effective_transport_steps,
+            "effective_moisture_diffusion_substeps": effective_diffusion_substeps,
             "effective_moisture_steps_per_month": effective_moisture_steps,
+            "effective_moisture_advection_fraction": (
+                effective_moisture_advection_fraction
+            ),
+            "effective_synoptic_mixing_passes": effective_synoptic_mixing_passes,
             "transport_reference_face_resolution": 128,
             "topology": "cubed_sphere",
-            "model": "seasonal_energy_moisture_climate_v2",
+            "model": "seasonal_energy_moisture_climate_v5",
             "month_semantics": planet_metadata["forcing_semantics"],
             "temperature_semantics": "surface_air_energy_balance_with_elevation_lapse",
             "wind_semantics": "global_xyz_tangent_vector",

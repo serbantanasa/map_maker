@@ -325,8 +325,21 @@ def _collapse_adjacent(values: np.ndarray) -> list[int]:
 
 def _directed_path_graph_metadata(reaches: pa.Table) -> dict[str, int]:
     edges: set[tuple[int, int]] = set()
-    for path in reaches["fine_cell_path"].to_pylist():
-        edges.update((int(source), int(target)) for source, target in zip(path[:-1], path[1:]))
+    edge_multiplicity: dict[tuple[int, int], int] = defaultdict(int)
+    physical_edge_multiplicity: dict[tuple[int, int], int] = defaultdict(int)
+    reach_edge_count = 0
+    for path, reach_kind in zip(
+        reaches["fine_cell_path"].to_pylist(),
+        reaches["reach_kind"].to_pylist(),
+        strict=True,
+    ):
+        for source, target in zip(path[:-1], path[1:]):
+            edge = (int(source), int(target))
+            edges.add(edge)
+            edge_multiplicity[edge] += 1
+            reach_edge_count += 1
+            if reach_kind == "channel":
+                physical_edge_multiplicity[edge] += 1
 
     reverse_conflicts = {
         (min(source, target), max(source, target))
@@ -351,6 +364,14 @@ def _directed_path_graph_metadata(reaches: pa.Table) -> dict[str, int]:
     dag_valid = visited == len(indegree)
     return {
         "directed_edge_count": len(edges),
+        "reach_directed_edge_count": reach_edge_count,
+        "shared_directed_edge_count": sum(
+            count > 1 for count in edge_multiplicity.values()
+        ),
+        "shared_physical_directed_edge_count": sum(
+            count > 1 for count in physical_edge_multiplicity.values()
+        ),
+        "maximum_directed_edge_multiplicity": max(edge_multiplicity.values(), default=0),
         "reverse_directed_edge_conflict_count": len(reverse_conflicts),
         "directed_path_dag_valid": int(dag_valid),
         "directed_path_graph_valid": int(dag_valid and not reverse_conflicts),
@@ -655,7 +676,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "RefinedReachCellCatalog",
         "BasinRefinementMetadata",
     ),
-    version="v5",
+    version="v6",
     native_libraries=("refinement_native",),
     visualizer=_cube_net_visualizer,
 )

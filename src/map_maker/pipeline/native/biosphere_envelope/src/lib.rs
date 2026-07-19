@@ -17,11 +17,15 @@ pub struct BiosphereEnvelopeStats {
 
 #[no_mangle]
 pub extern "C" fn biosphere_envelope_native_abi_version() -> u32 {
-    2
+    3
 }
 
 fn clamp01(value: f64) -> f64 {
     value.clamp(0.0, 1.0)
+}
+
+fn nutrient_opportunity(raw_support: f64, half_saturation: f64) -> f64 {
+    clamp01((1.0 + half_saturation) * raw_support / (raw_support + half_saturation))
 }
 
 fn thermal_opportunity(
@@ -59,6 +63,7 @@ pub unsafe extern "C" fn biosphere_envelope_run(
     thermal_optimum_high_c: f64,
     thermal_maximum_c: f64,
     water_input_half_saturation_mm: f64,
+    nutrient_half_saturation_index: f64,
     co2_half_saturation_pa: f64,
     reference_co2_partial_pressure_pa: f64,
     reference_oxygen_partial_pressure_kpa: f64,
@@ -131,6 +136,7 @@ pub unsafe extern "C" fn biosphere_envelope_run(
         thermal_optimum_high_c,
         thermal_maximum_c,
         water_input_half_saturation_mm,
+        nutrient_half_saturation_index,
         co2_half_saturation_pa,
         reference_co2_partial_pressure_pa,
         reference_oxygen_partial_pressure_kpa,
@@ -146,6 +152,7 @@ pub unsafe extern "C" fn biosphere_envelope_run(
             && thermal_optimum_low_c <= thermal_optimum_high_c
             && thermal_optimum_high_c < thermal_maximum_c)
         || water_input_half_saturation_mm <= 0.0
+        || nutrient_half_saturation_index <= 0.0
         || co2_half_saturation_pa <= 0.0
         || reference_co2_partial_pressure_pa <= 0.0
         || reference_oxygen_partial_pressure_kpa <= 0.0
@@ -256,7 +263,8 @@ pub unsafe extern "C" fn biosphere_envelope_run(
         let nutrient = if is_land {
             let base = 0.5 * f64::from(nutrient_potential[cell])
                 + 0.5 * f64::from(fertility_potential[cell]);
-            clamp01(base / (1.0 + 2.0 * f64::from(salinity[cell])))
+            let raw_support = clamp01(base / (1.0 + 2.0 * f64::from(salinity[cell])));
+            nutrient_opportunity(raw_support, nutrient_half_saturation_index)
         } else {
             0.0
         };
@@ -362,7 +370,7 @@ pub unsafe extern "C" fn biosphere_envelope_run(
 
 #[cfg(test)]
 mod tests {
-    use super::thermal_opportunity;
+    use super::{nutrient_opportunity, thermal_opportunity};
 
     #[test]
     fn thermal_response_is_bounded_and_trapezoidal() {
@@ -371,5 +379,13 @@ mod tests {
         assert_eq!(thermal_opportunity(25.0, -10.0, 15.0, 30.0, 50.0), 1.0);
         assert_eq!(thermal_opportunity(50.0, -10.0, 15.0, 30.0, 50.0), 0.0);
         assert!((thermal_opportunity(40.0, -10.0, 15.0, 30.0, 50.0) - 0.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn nutrient_response_is_saturating_and_normalized() {
+        assert_eq!(nutrient_opportunity(0.0, 0.5), 0.0);
+        assert_eq!(nutrient_opportunity(1.0, 0.5), 1.0);
+        assert!(nutrient_opportunity(0.2, 0.5) > 0.2);
+        assert!(nutrient_opportunity(0.8, 0.5) < 1.0);
     }
 }
