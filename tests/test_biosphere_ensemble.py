@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import numpy as np
 import pyarrow as pa
 import pytest
+from PIL import Image
 
 from map_maker.pipeline.biosphere_ensemble import (
     BiosphereEnsembleConfig,
@@ -14,6 +16,7 @@ from map_maker.pipeline.biosphere_ensemble import (
     DerivedBiomeSeedReport,
     EnsembleGate,
     FunctionalVegetationSeedReport,
+    _write_seed_gallery,
     evaluate_biosphere_ensemble,
     run_biosphere_ensemble,
 )
@@ -438,3 +441,20 @@ ensemble_tolerances:
     assert report["successful_seed_count"] == 0
     assert len(report["execution_failures"]) == 2
     assert report["status"] == "invalid"
+    assert report["surface_geography_gallery"] is None
+    assert report["human_surface_geography_gallery_review_required"] is True
+
+
+def test_seed_gallery_persists_all_labeled_previews(tmp_path: Path):
+    first = np.zeros((16, 32, 3), dtype=np.uint8)
+    second = np.full((16, 32, 3), 255, dtype=np.uint8)
+    output_path = tmp_path / "gallery.png"
+
+    _write_seed_gallery(
+        [(42, first), (202, second)],
+        output_path,
+        resampling=Image.Resampling.NEAREST,
+    )
+
+    with Image.open(output_path) as gallery:
+        assert gallery.size == (1024, 284)

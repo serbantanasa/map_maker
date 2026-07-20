@@ -25,7 +25,7 @@ from .stages.derived_biomes_validation import (
     REFERENCE_PROFILE_VERSION as BIOME_REFERENCE_PROFILE_VERSION,
 )
 from .stages.derived_biomes import dominant_landscape_rgb
-from .stages.sea_level import _equirectangular_rgb
+from .stages.sea_level import _equirectangular_rgb, _hypsometric_rgb
 
 
 ENSEMBLE_METRIC_SCHEMA = pa.schema(
@@ -283,6 +283,7 @@ class BiosphereEnsembleResult:
     functional_profile_pass: bool = True
     biome_profile_pass: bool = True
     biome_gallery_path: Path | None = None
+    surface_geography_gallery_path: Path | None = None
 
 
 def _integer(value: object, *, name: str) -> int:
@@ -875,9 +876,7 @@ def evaluate_biosphere_ensemble(
                     applicable_statuses.append(status)
             if not applicable_statuses:
                 continue
-            pass_fraction = applicable_statuses.count("within_reference") / len(
-                applicable_statuses
-            )
+            pass_fraction = applicable_statuses.count("within_reference") / len(applicable_statuses)
             passed = pass_fraction >= thresholds.minimum_earth_diagnostic_pass_fraction
             biome_gate_passes.append(passed)
             gates.append(
@@ -946,7 +945,12 @@ def _world_config(
     return world
 
 
-def _write_biome_gallery(previews: Sequence[tuple[int, np.ndarray]], output_path: Path) -> None:
+def _write_seed_gallery(
+    previews: Sequence[tuple[int, np.ndarray]],
+    output_path: Path,
+    *,
+    resampling: Image.Resampling,
+) -> None:
     columns = min(2, len(previews))
     thumb_width = 512
     thumb_height = 256
@@ -961,7 +965,7 @@ def _write_biome_gallery(previews: Sequence[tuple[int, np.ndarray]], output_path
         x = column * thumb_width
         y = row * (thumb_height + label_height)
         preview = Image.fromarray(preview_rgb, mode="RGB").resize(
-            (thumb_width, thumb_height), Image.Resampling.NEAREST
+            (thumb_width, thumb_height), resampling
         )
         canvas.paste(preview, (x, y))
         draw.text((x + 8, y + thumb_height + 7), f"Seed {seed}", fill="white")
@@ -976,6 +980,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
     config.output_dir.mkdir(parents=True, exist_ok=True)
     reports: list[BiosphereSeedReport] = []
     biome_previews: list[tuple[int, np.ndarray]] = []
+    surface_geography_previews: list[tuple[int, np.ndarray]] = []
     execution_failures: dict[int, str] = {}
     for seed in config.seeds:
         world = _world_config(base, config, seed)
@@ -988,15 +993,26 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
             continue
         validation = results["biosphere_validation"]
         functional_validation = results["functional_vegetation_validation"]
+        sea_level = results["sea_level"]
         derived_biomes = results["derived_biomes"]
         biome_validation = results["derived_biomes_validation"]
+        surface_geography_previews.append(
+            (
+                seed,
+                _equirectangular_rgb(
+                    _hypsometric_rgb(
+                        _array(sea_level, "SurfaceElevationM"),
+                        _array(sea_level, "SurfaceOceanFraction"),
+                        _array(sea_level, "ContinentalShelfFraction"),
+                    )
+                ),
+            )
+        )
         biome_previews.append(
             (
                 seed,
                 _equirectangular_rgb(
-                    dominant_landscape_rgb(
-                        _array(derived_biomes, "DominantLandscapeCode")
-                    )
+                    dominant_landscape_rgb(_array(derived_biomes, "DominantLandscapeCode"))
                 ),
             )
         )
@@ -1060,7 +1076,18 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
     pq.write_table(evaluation.metric_catalog, metric_catalog_path)
     biome_gallery_path = config.output_dir / "biome_gallery.png"
     if biome_previews:
-        _write_biome_gallery(biome_previews, biome_gallery_path)
+        _write_seed_gallery(
+            biome_previews,
+            biome_gallery_path,
+            resampling=Image.Resampling.NEAREST,
+        )
+    surface_geography_gallery_path = config.output_dir / "surface_geography_gallery.png"
+    if surface_geography_previews:
+        _write_seed_gallery(
+            surface_geography_previews,
+            surface_geography_gallery_path,
+            resampling=Image.Resampling.LANCZOS,
+        )
     report_path = config.output_dir / "report.json"
     report: dict[str, Any] = {
         "format_version": 1,
@@ -1082,6 +1109,10 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         "metric_catalog": metric_catalog_path.name,
         "biome_gallery": biome_gallery_path.name if biome_previews else None,
         "human_biome_gallery_review_required": True,
+        "surface_geography_gallery": (
+            surface_geography_gallery_path.name if surface_geography_previews else None
+        ),
+        "human_surface_geography_gallery_review_required": True,
         "requested_seed_count": len(config.seeds),
         "successful_seed_count": len(reports),
         "execution_failures": [
@@ -1102,6 +1133,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         evaluation.functional_profile_pass,
         evaluation.biome_profile_pass,
         biome_gallery_path if biome_previews else None,
+        surface_geography_gallery_path if surface_geography_previews else None,
     )
 
 

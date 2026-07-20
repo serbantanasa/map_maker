@@ -99,6 +99,20 @@
 24. Mineral and energy systems.
 25. Selected-region refinement and map export.
 
+## Current Implementation Focus
+
+Late simulation development is frozen at stage 22 until the global map-export
+milestone is accepted. Stages 23 and 24, additional hydrology or biosphere
+features, and regional L3 refinement receive bug fixes and contract corrections
+only. Current product work is limited to canonical surface geography,
+tectonically legible elevation and orogeny, shelf and passive-margin morphology,
+versioned physical atlas rendering, and the fixed multi-seed acceptance gallery.
+
+Map export is a presentation layer over existing canonical artifacts and may be
+implemented before later physical stages without changing their causal order.
+The freeze ends only through a new recorded decision after the export acceptance
+bar is met.
+
 The current canonical cubed-sphere implementation reaches converged bounded
 outlet incision, final lake-coupled river hydrographs, and a bounded V1
 cryosphere after erosion, sedimentation, and Hydrology Pass 2. It now reaches

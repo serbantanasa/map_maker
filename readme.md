@@ -111,6 +111,11 @@ coarse/fine discharge mismatch instead of borrowing flow from a sibling
 tributary. The current output is a functional prototype rather than an atlas-
 grade world.
 
+Current feature development is frozen after derived biomes until the global
+map-export milestone is accepted. Hydrology and biosphere work is bugfix-only;
+active product work is surface geography, elevation and orogeny, continental
+margins, cartography, and their multi-seed visual gates.
+
 The passing `earth_biosphere_v1` profile now gates a Rust-backed
 `functional_vegetation` stage. It conservatively partitions each land cell among
 eight continuous producer-community strategies and five nonvegetated classes,
@@ -124,7 +129,7 @@ gates broad global abundance, causal climate response, and six-seed stability.
 Biome names remain derived views over canonical physical and functional state;
 actual land use is not implemented.
 
-Run the fixed six-seed integration gallery and provisional hard gates:
+Run the legacy rectangular fixed-seed integration gallery and framework gates:
 
 ```bash
 uv run map-maker validate --config configs/validation.yaml
@@ -134,7 +139,8 @@ This writes `out/validation/report.json` and `out/validation/gallery.png`. A
 passing command establishes deterministic artifacts, distinct seed outputs,
 cache correctness, finite fields, acceptable prototype landmass morphology,
 bounded longitude seams, and bounded plate-boundary relief. It does not replace
-the required human gallery review or claim calibrated geological realism.
+the required human gallery review or claim calibrated geological realism. This
+command does not assess the canonical cubed-sphere geography.
 
 Generate the canonical cubed-sphere geometry diagnostic:
 
@@ -235,9 +241,13 @@ uv run map-maker-pipeline --stage derived_biomes --config configs/cubed_sphere_c
 # Per-world Earth biome-mixture and causal-response diagnostics
 uv run map-maker-pipeline --stage derived_biomes_validation --config configs/cubed_sphere_crust_state.yaml
 
-# Fixed-seed biosphere, vegetation, and biome profiles plus a biome gallery
+# Canonical fixed-seed profiles plus surface-geography and biome galleries
 uv run map-maker validate-biosphere --config configs/biosphere_validation.yaml
 ```
+
+The canonical command writes `out/biosphere_validation/report.json`,
+`surface_geography_gallery.png`, and `biome_gallery.png`. Both galleries require
+human review even when every numerical gate passes.
 
 Built wheels currently contain the Python orchestration package only. Until native
 wheel bundling is implemented, run the pipeline from a source checkout after the

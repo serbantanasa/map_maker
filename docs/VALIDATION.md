@@ -657,3 +657,30 @@ temperate open `21.84-32.81%`, core dryland `18.77-21.10%`, tundra
 `4.62-9.20%`, alpine `1.84-3.51%`, and wetland `4.22-6.10%`. All 13 dominant
 classes remain nontrivial in every world. Numerical passage is paired with the
 required human review of `out/biosphere_validation/biome_gallery.png`.
+
+## Canonical Surface-Geography Gallery Review
+
+The canonical `validate-biosphere` command now writes the exact six-seed
+equirectangular hypsometric diagnostic to
+`out/biosphere_validation/surface_geography_gallery.png`. This is the current
+cubed-sphere surface state; the older `out/validation/gallery.png` exercises the
+legacy rectangular path and is not accepted as canonical geography evidence.
+
+Human review on 2026-07-20 produced the following disposition. Largest-landmass
+share is relative to emerged land, not planetary area.
+
+| Seed | Largest landmass | Significant landmasses | Coast complexity | Review |
+| ---: | ---: | ---: | ---: | --- |
+| 42 | `45.04%` | `8` | `4.28` | Accept: irregular split continents, long seas, and islands. |
+| 101 | `60.71%` | `10` | `6.27` | Accept, upper edge: one large deeply embayed mass plus substantial secondary land. |
+| 202 | `67.85%` | `9` | `5.86` | Accept as a rare supercontinent-like Earthlike tail; favor this shape in a named Pangean profile. |
+| 303 | `44.27%` | `15` | `5.06` | Accept: fragmented continents and connected archipelagos. |
+| 404 | `43.56%` | `16` | `4.56` | Accept: deliberately archipelago-heavy morphology. |
+| 505 | `40.29%` | `7` | `3.12` | Accept: multiple irregular major masses and inland embayments. |
+
+The gallery therefore passes the broad morphology-diversity screen but does not
+yet pass the global map-export milestone. Seed 202 is a conscious rare-tail
+acceptance, not an unnoticed numerical loophole. One occurrence in six does not
+establish a frequency, but that rate would be too high if it persisted across a
+larger Earthlike ensemble. Named Earthlike and Pangean profiles should condition
+the distribution instead of declaring supercontinents physically invalid.

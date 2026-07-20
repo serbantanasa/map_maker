@@ -266,6 +266,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Ensemble KPI catalog: {biosphere_validation.metric_catalog_path}")
         if biosphere_validation.biome_gallery_path is not None:
             print(f"Biome gallery: {biosphere_validation.biome_gallery_path}")
+        if biosphere_validation.surface_geography_gallery_path is not None:
+            print(
+                f"Surface-geography gallery: {biosphere_validation.surface_geography_gallery_path}"
+            )
         if biosphere_validation.passed:
             print(
                 f"PASS: {biosphere_validation.seed_count} worlds satisfy earth_biosphere_v1 "

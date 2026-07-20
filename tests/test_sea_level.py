@@ -9,6 +9,7 @@ import pytest
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline._sea_level_native import run_cubed_sphere_sea_level
 from map_maker.pipeline.cubed_sphere import CubedSphereGrid
+from map_maker.pipeline.stages.sea_level import SeaLevelConfig
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +43,15 @@ def _outputs(shape: tuple[int, ...]) -> dict[str, np.ndarray]:
             "inland_below_sea_level_out",
         )
     }
+
+
+@pytest.mark.parametrize("target_ocean_fraction", (0.50, 0.90))
+def test_sea_level_target_is_not_clamped_to_earthlike_land_band(
+    target_ocean_fraction: float,
+):
+    config = SeaLevelConfig.from_mapping({"target_ocean_area_fraction": target_ocean_fraction})
+
+    assert config.target_ocean_area_fraction == pytest.approx(target_ocean_fraction)
 
 
 def _config(tmp_path: Path, *, face_resolution: int = 32, seed: int = 42) -> PipelineConfig:
