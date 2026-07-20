@@ -64,6 +64,10 @@ name = "fluvial_native"
 version = "0.1.0"
 
 [[package]]
+name = "functional_vegetation_native"
+version = "0.1.0"
+
+[[package]]
 name = "geology_native"
 version = "0.1.0"
 

@@ -62,6 +62,13 @@ MONTHLY_OUTPUTS = (
     "MonthlyDeepDrainageMm",
 )
 
+EFFECTIVE_SURFACE_WATER_OUTPUTS = (
+    "EffectiveLakeFraction",
+    "EffectiveWetlandFraction",
+    "EffectiveSurfaceWaterHydroperiod",
+    "RefinedSurfaceWaterMask",
+)
+
 MATERIAL_CODES = {
     0: "ocean_or_unclassified",
     1: "exposed_bedrock",
@@ -124,9 +131,7 @@ class SurfaceMaterialsConfig:
         known = set(cls.__dataclass_fields__)
         unknown = set(mapping) - known
         if unknown:
-            raise ValueError(
-                f"Unknown surface-material controls: {', '.join(sorted(unknown))}"
-            )
+            raise ValueError(f"Unknown surface-material controls: {', '.join(sorted(unknown))}")
         values: dict[str, int | float] = {}
         for name, field in cls.__dataclass_fields__.items():
             raw = mapping.get(name, field.default)
@@ -138,8 +143,7 @@ class SurfaceMaterialsConfig:
             raise ValueError("spinup_years must be in [2, 2000]")
         if not 0.0 < config.maximum_soil_depth_m <= config.maximum_regolith_depth_m:
             raise ValueError(
-                "maximum_soil_depth_m must be positive and no greater than "
-                "maximum_regolith_depth_m"
+                "maximum_soil_depth_m must be positive and no greater than maximum_regolith_depth_m"
             )
         bounds = {
             "maximum_regolith_depth_m": (0.01, 1_000.0),
@@ -165,7 +169,7 @@ def _artifact_array(result: StageResult, name: str) -> np.ndarray:
     if record is None or record.value is None:
         raise KeyError(f"Missing dependency artifact '{name}'")
     value = record.value
-    return np.asarray(value.array() if hasattr(value, "array") else value)  # type: ignore[no-any-return]
+    return np.asarray(value.array() if hasattr(value, "array") else value)
 
 
 def _artifact_table(result: StageResult, name: str) -> pa.Table:
@@ -184,7 +188,7 @@ def _artifact_mapping(result: StageResult, name: str) -> Mapping[str, object]:
 
 def _fixed_list(table: pa.Table, name: str, size: int) -> np.ndarray:
     values = table[name].combine_chunks().values
-    return np.asarray(values, dtype=np.float64).reshape(table.num_rows, size)  # type: ignore[no-any-return]
+    return np.asarray(values, dtype=np.float64).reshape(table.num_rows, size)
 
 
 def _refined_surface_fields(
@@ -193,7 +197,6 @@ def _refined_surface_fields(
 ) -> dict[str, np.ndarray]:
     shape = topology.face_shape
     total = int(np.prod(shape))
-    cell_area_km2 = np.asarray(topology.cell_areas, dtype=np.float64).reshape(-1) / 1e6
     fields: dict[str, np.ndarray] = {
         "refined_mask": np.zeros(total, dtype=np.float32),
         "refined_lake_fraction": np.zeros(total, dtype=np.float32),
@@ -214,18 +217,37 @@ def _refined_surface_fields(
     parent_unique = np.unique(parent_ids)
     fields["refined_mask"][parent_unique] = 1.0
 
+    parent_area_km2 = np.zeros(total, dtype=np.float64)
+    np.add.at(parent_area_km2, parent_ids, child_area_km2)
+    if np.any(~np.isfinite(parent_area_km2[parent_unique])) or np.any(
+        parent_area_km2[parent_unique] <= 0.0
+    ):
+        raise RuntimeError("refined surface-water parent has invalid physical area")
+
     eroded_volume = np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64)
     deposited_volume = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
     eroded_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     deposited_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     np.add.at(eroded_parent, parent_ids, eroded_volume)
     np.add.at(deposited_parent, parent_ids, deposited_volume)
-    parent_area_m2 = np.asarray(topology.cell_areas, dtype=np.float64).reshape(-1)
+    parent_area_m2 = parent_area_km2 * 1e6
     fields["recent_erosion_depth"] = np.asarray(
-        eroded_parent / parent_area_m2, dtype=np.float32
+        np.divide(
+            eroded_parent,
+            parent_area_m2,
+            out=np.zeros_like(eroded_parent),
+            where=parent_area_m2 > 0.0,
+        ),
+        dtype=np.float32,
     )
     fields["recent_deposition_depth"] = np.asarray(
-        deposited_parent / parent_area_m2, dtype=np.float32
+        np.divide(
+            deposited_parent,
+            parent_area_m2,
+            out=np.zeros_like(deposited_parent),
+            where=parent_area_m2 > 0.0,
+        ),
+        dtype=np.float32,
     )
 
     water_cells = _artifact_table(final_surface_water, "SeasonalSurfaceWaterCellCatalog")
@@ -271,11 +293,37 @@ def _refined_surface_fields(
     salinity = candidate_salinity[candidate_order[candidate_positions]]
     np.add.at(salinity_area, water_parents, wet_area * salinity)
 
+    represented_water_area = lake_area + wetland_area
+    if np.any(
+        represented_water_area[parent_unique] > parent_area_km2[parent_unique] * (1.0 + 1e-8)
+    ):
+        raise RuntimeError("refined surface-water area exceeds its physical parent area")
+
     fields["refined_lake_fraction"] = np.asarray(
-        np.clip(lake_area / cell_area_km2, 0.0, 1.0), dtype=np.float32
+        np.clip(
+            np.divide(
+                lake_area,
+                parent_area_km2,
+                out=np.zeros_like(lake_area),
+                where=parent_area_km2 > 0.0,
+            ),
+            0.0,
+            1.0,
+        ),
+        dtype=np.float32,
     )
     fields["refined_wetland_fraction"] = np.asarray(
-        np.clip(wetland_area / cell_area_km2, 0.0, 1.0), dtype=np.float32
+        np.clip(
+            np.divide(
+                wetland_area,
+                parent_area_km2,
+                out=np.zeros_like(wetland_area),
+                where=parent_area_km2 > 0.0,
+            ),
+            0.0,
+            1.0,
+        ),
+        dtype=np.float32,
     )
     fields["refined_hydroperiod"] = np.asarray(
         np.divide(
@@ -295,6 +343,33 @@ def _refined_surface_fields(
         ),
         dtype=np.float32,
     )
+
+    projection_audits = (
+        (
+            "lake area",
+            float(np.sum(fields["refined_lake_fraction"] * parent_area_km2)),
+            float(np.sum(lake_area)),
+        ),
+        (
+            "wetland area",
+            float(np.sum(fields["refined_wetland_fraction"] * parent_area_km2)),
+            float(np.sum(wetland_area)),
+        ),
+        (
+            "erosion volume",
+            float(np.sum(fields["recent_erosion_depth"] * parent_area_m2)),
+            float(np.sum(eroded_volume)),
+        ),
+        (
+            "deposition volume",
+            float(np.sum(fields["recent_deposition_depth"] * parent_area_m2)),
+            float(np.sum(deposited_volume)),
+        ),
+    )
+    for name, represented, expected in projection_audits:
+        relative_error = abs(represented - expected) / max(abs(expected), 1.0)
+        if relative_error > 1e-6:
+            raise RuntimeError(f"refined surface-water {name} projection is not conservative")
     return {name: np.ascontiguousarray(value.reshape(shape)) for name, value in fields.items()}
 
 
@@ -303,7 +378,7 @@ def _result_array(result: StageResult, name: str) -> np.ndarray | None:
     if record is None or record.value is None:
         return None
     value = record.value
-    return np.asarray(value.array() if hasattr(value, "array") else value)  # type: ignore[no-any-return]
+    return np.asarray(value.array() if hasattr(value, "array") else value)
 
 
 def _visualizer(
@@ -321,7 +396,7 @@ def _visualizer(
     hydric_rgb = _palette(hydric, HYDRIC_PALETTE)
     depth_rgb[~land] = 0
     hydric_rgb[~land] = 0
-    metadata = result.artifact_records["SurfaceMaterialsMetadata"].value
+    metadata = _artifact_mapping(result, "SurfaceMaterialsMetadata")
     outputs = (
         (
             "surface_material_mix.png",
@@ -352,7 +427,7 @@ def _visualizer(
     return visualizations
 
 
-@stage(  # type: ignore[untyped-decorator]
+@stage(
     "surface_materials",
     inputs=(
         "hydrology_validation",
@@ -369,9 +444,10 @@ def _visualizer(
         "DominantSurfaceMaterialCode",
         *SOIL_OUTPUTS,
         *MONTHLY_OUTPUTS,
+        *EFFECTIVE_SURFACE_WATER_OUTPUTS,
         "SurfaceMaterialsMetadata",
     ),
-    version="v2",
+    version="v3",
     native_libraries=("surface_materials_native",),
     visualizer=_visualizer,
 )
@@ -398,27 +474,44 @@ def surface_materials_stage(
         **{name: shape for name in MATERIAL_OUTPUTS},
         **{name: shape for name in SOIL_OUTPUTS},
         **{name: monthly_shape for name in MONTHLY_OUTPUTS},
+        **{name: shape for name in EFFECTIVE_SURFACE_WATER_OUTPUTS},
         "DominantSurfaceMaterialCode": shape,
     }
     handles = {
         name: context.arena.allocate_array(
             f"surface_materials_{name.lower()}",
             output_shape,
-            np.uint8 if name == "DominantSurfaceMaterialCode" else np.float32,
+            np.dtype(np.uint8 if name == "DominantSurfaceMaterialCode" else np.float32),
         )
         for name, output_shape in output_shapes.items()
     }
     views = {name: handle.mutable_view() for name, handle in handles.items()}
     refined = _refined_surface_fields(context.topology, deps["surface_water_final"])
-    controls = asdict(config)
-    maximum_component_error = controls.pop("maximum_component_balance_error")
-    maximum_water_error = controls.pop("maximum_water_balance_relative_error")
+    maximum_component_error = config.maximum_component_balance_error
+    maximum_water_error = config.maximum_water_balance_relative_error
     geology = deps["geology"]
     elevation = deps["elevation"]
     hydrology = deps["hydrology"]
     climate = deps["climate"]
     cryosphere = deps["cryosphere"]
     world_age = deps["world_age"]
+    coarse_lake = np.ascontiguousarray(_artifact_array(hydrology, "LakeFraction"), dtype=np.float32)
+    coarse_wetland = np.ascontiguousarray(
+        _artifact_array(hydrology, "WetlandFraction"), dtype=np.float32
+    )
+    refined_mask = refined["refined_mask"] >= 0.5
+    views["EffectiveLakeFraction"][:] = np.where(
+        refined_mask, refined["refined_lake_fraction"], coarse_lake
+    )
+    views["EffectiveWetlandFraction"][:] = np.where(
+        refined_mask, refined["refined_wetland_fraction"], coarse_wetland
+    )
+    views["EffectiveSurfaceWaterHydroperiod"][:] = np.where(
+        refined_mask,
+        refined["refined_hydroperiod"],
+        np.clip(coarse_lake + 0.65 * coarse_wetland, 0.0, 1.0),
+    )
+    views["RefinedSurfaceWaterMask"][:] = refined["refined_mask"]
     output_names = {
         "bedrock_out": "BedrockSurfaceFraction",
         "residual_out": "ResidualRegolithFraction",
@@ -458,7 +551,16 @@ def surface_materials_stage(
     }
     with context.timed("surface_materials_and_initial_soils_kernel"):
         metadata = run_surface_materials(
-            **controls,
+            spinup_years=config.spinup_years,
+            maximum_regolith_depth_m=config.maximum_regolith_depth_m,
+            maximum_soil_depth_m=config.maximum_soil_depth_m,
+            maximum_alluvial_fraction=config.maximum_alluvial_fraction,
+            maximum_lacustrine_fraction=config.maximum_lacustrine_fraction,
+            maximum_glacial_fraction=config.maximum_glacial_fraction,
+            weathering_temperature_scale_c=config.weathering_temperature_scale_c,
+            weathering_precipitation_scale_mm=config.weathering_precipitation_scale_mm,
+            soil_evaporation_factor=config.soil_evaporation_factor,
+            monthly_deep_drainage_fraction=config.monthly_deep_drainage_fraction,
             areas=np.ascontiguousarray(context.topology.cell_areas, dtype=np.float64),
             ocean=np.ascontiguousarray(
                 _artifact_array(world_age, "BaseOceanMask"), dtype=np.float32
@@ -493,12 +595,8 @@ def surface_materials_stage(
             floodplain=np.ascontiguousarray(
                 _artifact_array(hydrology, "FloodplainPotential"), dtype=np.float32
             ),
-            lake_fraction=np.ascontiguousarray(
-                _artifact_array(hydrology, "LakeFraction"), dtype=np.float32
-            ),
-            wetland_fraction=np.ascontiguousarray(
-                _artifact_array(hydrology, "WetlandFraction"), dtype=np.float32
-            ),
+            lake_fraction=coarse_lake,
+            wetland_fraction=coarse_wetland,
             depression_fill_depth=np.ascontiguousarray(
                 _artifact_array(hydrology, "DepressionFillDepthM"), dtype=np.float32
             ),
@@ -536,7 +634,10 @@ def surface_materials_stage(
             monthly_glacier_melt=np.ascontiguousarray(
                 _artifact_array(cryosphere, "MonthlyGlacierMeltMm"), dtype=np.float32
             ),
-            **{native_name: views[artifact_name] for native_name, artifact_name in output_names.items()},
+            **{
+                native_name: views[artifact_name]
+                for native_name, artifact_name in output_names.items()
+            },
         )
 
     ocean = _artifact_array(world_age, "BaseOceanMask") >= 0.5
@@ -561,9 +662,8 @@ def surface_materials_stage(
             "MonthlyDeepDrainageMm",
         )
     )
-    residual = (
-        np.sum(monthly_input - monthly_outputs, axis=0)
-        - np.asarray(views["AnnualSoilWaterStorageChangeMm"], dtype=np.float64)
+    residual = np.sum(monthly_input - monthly_outputs, axis=0) - np.asarray(
+        views["AnnualSoilWaterStorageChangeMm"], dtype=np.float64
     )
     areas = np.asarray(context.topology.cell_areas, dtype=np.float64)
     water_balance_error = float(
@@ -576,6 +676,17 @@ def surface_materials_stage(
         raise RuntimeError("initial-soil water-balance audit failed")
     if np.any(np.asarray(views["SoilDepthM"])[land] > np.asarray(views["RegolithDepthM"])[land]):
         raise RuntimeError("soil depth exceeds regolith depth")
+    effective_lake = np.asarray(views["EffectiveLakeFraction"], dtype=np.float64)
+    effective_wetland = np.asarray(views["EffectiveWetlandFraction"], dtype=np.float64)
+    glacier = _artifact_array(cryosphere, "GlacierIceFraction")
+    soil_bearing = np.asarray(views["SoilBearingFraction"], dtype=np.float64)
+    if np.any(effective_lake < 0.0) or np.any(effective_lake > 1.0):
+        raise RuntimeError("effective lake fractions are outside [0, 1]")
+    if np.any(effective_wetland < 0.0) or np.any(effective_wetland > 1.0):
+        raise RuntimeError("effective wetland fractions are outside [0, 1]")
+    available_ground = np.maximum(1.0 - effective_lake - glacier, 0.0)
+    if np.any(soil_bearing[land] > available_ground[land] + 1e-6):
+        raise RuntimeError("soil-bearing support exceeds effective non-open land")
     land_area = float(np.sum(areas[land]))
 
     def land_mean(name: str) -> float:
@@ -593,7 +704,7 @@ def surface_materials_stage(
     metadata.update(
         {
             **asdict(config),
-            "model": "fractional_surface_materials_and_initial_soils_v1",
+            "model": "fractional_surface_materials_and_initial_soils_v2",
             "topology": "cubed_sphere",
             "material_codes": {str(code): name for code, name in MATERIAL_CODES.items()},
             "material_fraction_semantics": "mutually_exclusive_L2_component_area_fractions",
@@ -603,9 +714,7 @@ def surface_materials_stage(
             "material_balance_max_error": material_error,
             "texture_balance_max_error": texture_error,
             "water_balance_relative_error": water_balance_error,
-            "land_mean_available_water_capacity_mm": land_mean(
-                "SoilAvailableWaterCapacityMm"
-            ),
+            "land_mean_available_water_capacity_mm": land_mean("SoilAvailableWaterCapacityMm"),
             "land_mean_soil_ph": land_mean("SoilPH"),
             "land_mean_soil_salinity_index": land_mean("SoilSalinityIndex"),
             "land_mean_soil_fertility_potential": land_mean("SoilFertilityPotential"),
@@ -619,6 +728,9 @@ def surface_materials_stage(
             "refined_surface_water_parent_count": int(
                 np.count_nonzero(refined["refined_mask"] >= 0.5)
             ),
+            "refined_surface_projection": "conservative_child_area_km2_v2",
+            "effective_lake_land_area_fraction": land_mean("EffectiveLakeFraction"),
+            "effective_wetland_land_area_fraction": land_mean("EffectiveWetlandFraction"),
             "hydrology_hard_gate_pass": 1,
             "surface_water_ready_for_soils": 1,
             "surface_materials_ready_for_biomes": 1,

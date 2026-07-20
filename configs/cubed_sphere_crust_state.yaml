@@ -180,13 +180,13 @@ stage_overrides:
     nutrient_half_saturation_index: 0.5
     co2_half_saturation_pa: 20.0
     reference_oxygen_partial_pressure_kpa: 21.22
-    photosynthetic_conversion_efficiency: 0.043
+    photosynthetic_conversion_efficiency: 0.0421
     minimum_productive_energy_mj_m2_year: 5.0
     nonreference_profile_confidence_multiplier: 0.75
     maximum_annual_aggregation_relative_error: 0.00001
   potential_biosphere:
     energy_per_kg_carbon_mj: 39.9
-    cover_half_saturation_npp_kg_c_m2_year: 0.25
+    cover_half_saturation_npp_kg_c_m2_year: 0.30
     active_month_thermal_threshold: 0.15
     active_month_water_threshold: 0.10
     cold_pressure_reference_c: -15.0
@@ -194,7 +194,7 @@ stage_overrides:
     heat_pressure_onset_c: 30.0
     heat_pressure_reference_c: 50.0
     minimum_biomass_residence_years: 0.5
-    maximum_biomass_residence_years: 50.0
+    maximum_biomass_residence_years: 45.0
     biomass_residence_baseline_fraction: 0.10
     woody_biomass_residence_weight: 0.60
     resource_conservative_biomass_residence_weight: 0.40
@@ -209,3 +209,16 @@ stage_overrides:
     minimum_reportable_zone_land_fraction: 0.005
     maximum_partition_relative_error: 0.000000000001
     maximum_reconstruction_relative_error: 0.00000001
+  functional_vegetation:
+    warm_transition_midpoint_c: 18.0
+    warm_transition_width_c: 12.0
+    npp_response_half_saturation_kg_c_m2_year: 0.25
+    biomass_response_half_saturation_kg_c_m2: 5.0
+    terrain_relief_half_saturation_m: 500.0
+    crop_soil_depth_half_saturation_m: 0.5
+    strategy_confidence_multiplier: 0.75
+    maximum_partition_absolute_error: 0.000001
+  functional_vegetation_validation:
+    minimum_reportable_zone_land_fraction: 0.005
+    maximum_partition_absolute_error: 0.000001
+    maximum_reconstruction_absolute_error: 0.000001

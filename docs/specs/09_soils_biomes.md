@@ -7,7 +7,9 @@ are implemented in `09a_surface_materials_initial_soils.md`. The environmental
 and biosphere resource envelope is implemented in
 `09b_environmental_biosphere_envelope.md`. The trait-first potential biosphere
 is implemented in `09c_trait_first_potential_biosphere.md`. Functional vegetation
-mixtures, biome labels, and the optional one-pass feedback remain later work.
+mixtures are implemented in `09e_functional_vegetation.md` and calibrated by
+`09f_functional_vegetation_validation.md`. Biome labels and the optional
+one-pass feedback remain later work.
 The pre-15b2 Earth calibration contract is implemented in
 `09d_earth_biosphere_validation.md`.
 
@@ -46,8 +48,8 @@ face 128. The complete profile also accepts the approved `35%` generated-
 Earthlike landmass. A later model that separates continental crust, shelf, sea
 level, and emerged land must rerun the profile rather than inherit this result.
 
-Canonical vegetation will use mixtures of plant functional types rather than a
-single painted biome code. Required outputs are:
+Canonical vegetation uses mixtures of functional producer-community strategies
+rather than a single painted biome code. Milestone 15b2a publishes:
 
 - plant functional-type fractions,
 - potential biomass and net primary productivity,
@@ -55,10 +57,23 @@ single painted biome code. Required outputs are:
 - growing-season length and seasonality,
 - fire and grazing tendency,
 - forest, pasture, and crop potential,
-- bare, saline, wetland, ice, and other non-vegetated fractions.
+- bare, saline, inland-open-water, ice, and unsupported-surface fractions,
+- hydrophytic functional cover driven by wetland and waterlogging support.
+
+The eight functional fractions and five nonvegetated fractions form an exact
+land-cell area partition. A hierarchical dominant-cover code is derived for
+queries and rendering: aggregate vegetation first competes with each
+nonvegetated class, then the largest strategy names a vegetated winner. This
+avoids making mixed vegetated cells appear barren merely because vegetation is
+represented by several strategies.
 
 Familiar biome and climate labels are derived products for rendering and game
 queries. They are not primary simulation state.
+
+The `earth_functional_vegetation_v1` profile now gates global cover,
+climate-stratum response, resource-potential shape, and fixed-seed stability.
+It is deliberately based on potential natural vegetation rather than modern
+human land cover.
 
 High carbon dioxide is likewise not a giant-life or high-productivity switch.
 Potential productivity and organism scale remain constrained by energy,

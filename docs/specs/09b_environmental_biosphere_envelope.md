@@ -90,7 +90,7 @@ The Earthlike profile transforms raw soil nutrient support with a normalized
 Michaelis-Menten response, `(1 + K) * support / (support + K)`, using `K = 0.5`.
 This preserves zero and full support while representing saturating biological
 response to moderate nutrient supply. The configured peak PAR-to-chemical
-efficiency is `0.043`. Both controls remain explicit profile parameters rather
+efficiency is `0.0421`. Both controls remain explicit profile parameters rather
 than hidden calibration constants.
 
 ## Trait-First Downstream Contract

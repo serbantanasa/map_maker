@@ -57,6 +57,7 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
         "elevation_native",
         "erosion_native",
         "fluvial_native",
+        "functional_vegetation_native",
         "geology_native",
         "hydrology_native",
         "hydrology_pass2_native",

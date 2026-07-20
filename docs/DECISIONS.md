@@ -1871,24 +1871,27 @@ response
 
 with `K = 0.5`, so zero and full support remain fixed at zero and one while
 moderate nutrient supply is not treated as a linearly proportional carbon
-ceiling. The upstream peak PAR-to-chemical efficiency is `0.043`. Biomass uses
+ceiling. The upstream peak PAR-to-chemical efficiency is `0.0421`, and cover
+uses a `0.30 kg C/m2/year` NPP half-saturation response. Biomass uses
 a bounded residence-time response rather than a single multiplier:
 
-- residence bounds are `0.5-50 years`;
+- residence bounds are `0.5-45 years`;
 - the normalized response has a `0.10` baseline;
 - woody and resource-conservative structure weights are `0.60` and `0.40`;
 - low productivity has weight `2.50`, representing slower turnover under
   resource-limited conditions;
 - standing biomass remains capped at `40 kg C/m2`.
 
-The six-seed face-64 screen completes every world. NPP is `60.75-74.60 Pg
-C/year`, biomass is `975.93-1,104.27 Pg C`, NPP coefficient of variation is
-`0.074`, and biomass coefficient of variation is `0.046`. All six global and
-land-mean NPP and biomass diagnostics pass. The configured `35.0%` landmass is
-inside the approved generated-Earthlike profile.
+The six-seed face-64 screen completes every world. NPP is `62.56-75.98 Pg
+C/year`, biomass is `977.48-1,089.41 Pg C`, NPP coefficient of variation is
+`0.071`, and biomass coefficient of variation is `0.040`. Five of six global
+NPP diagnostics and all global biomass diagnostics pass, satisfying the
+predeclared `80%` requirement. Every land-mean diagnostic and ensemble-
+dispersion gate passes. The configured `35.0%` landmass is inside the approved
+generated-Earthlike profile.
 
-The canonical face-128 world produces `57.28 Pg C/year` NPP, `0.321 kg
-C/m2/year` land-mean NPP, `950.75 Pg C` biomass, and `5.33 kg C/m2` land-mean
+The canonical face-128 world produces `57.26 Pg C/year` NPP, `0.321 kg
+C/m2/year` land-mean NPP, `932.65 Pg C` biomass, and `5.22 kg C/m2` land-mean
 biomass. It therefore passes all four carbon-amplitude diagnostics. Functional
 types and biome labels may build on these continuous outputs without treating
 their Earth calibration as a universal biological law.
@@ -1958,3 +1961,115 @@ The target is a plausible and useful simulation world, not an exact copy of
 modern Earth. The user explicitly accepted `35%` landmass, and the profile
 should not reject an approved scenario characteristic while all causal carbon
 and climate checks pass.
+
+## Decision 039: Functional Vegetation Is A Conservative Cover Mixture
+
+Status: implemented; calibrated by Decision 041
+
+Decision:
+Milestone 15b2a stores eight continuous producer-community strategies rather
+than a painted biome class: cold-adapted woody, warm evergreen woody, seasonal
+woody, xeric shrub, cool-season herbaceous, warm-season herbaceous,
+hydrophytic, and low-stature resource-conservative vegetation.
+
+Each strategy value is a fraction of total coarse-cell area. The strategy sum
+equals functional vegetation cover. Bare ground, saline barren, persistent
+ice, inland open water, and unsupported surface close the remaining land-cell
+partition exactly. Ocean remains outside the terrestrial partition.
+
+Fire, grazing, forest-resource, pasture, and crop outputs are bounded physical
+potentials. Pasture and crop potential do not place land use or imply
+domestication. A dominant functional-cover code is a derived query and
+rendering artifact; familiar biome names remain deferred until mixture
+distributions have independent validation.
+
+Reason:
+The game needs compositional land cover and resource suitability, but a single
+biome code would discard ecotones, subgrid mixtures, and causal trait state.
+An exact partition is inspectable, conserves physical area, supports later L3
+refinement, and produces better surrogate-training targets than categorical
+painting.
+
+Validation:
+The canonical face-128 seed-42 world closes every land-cell partition within
+`4.00e-8`, emits no terrestrial state over ocean, reproduces its dominant-cover
+codes independently, and passes deterministic native-kernel tests. Its land is
+`47.52%` functionally vegetated. All five resource potentials are finite,
+bounded, spatially nondegenerate, and covered by the Decision 041 structural
+calibration contract.
+
+The dominant code compares aggregate vegetation against each individual
+nonvegetated class before selecting the leading functional strategy. Directly
+comparing all thirteen leaf classes biased mixed vegetated cells toward bare
+ground because vegetation is intentionally split into eight strategies.
+
+## Decision 040: Refined Surface State Uses Physical Child Area
+
+Status: implemented
+
+Decision:
+Fine selected-basin lake, wetland, erosion, and deposition state is restricted
+to L2 parents using the summed `area_km2` of persisted child cells. Cubed-sphere
+`CellArea` is a solid angle in steradians and must never be divided directly
+into a physical area or volume.
+
+The surface-material stage persists `EffectiveLakeFraction`,
+`EffectiveWetlandFraction`, `EffectiveSurfaceWaterHydroperiod`, and
+`RefinedSurfaceWaterMask`. Soils and all downstream biosphere stages consume
+the same coarse/refined water selection. Parent lake/wetland area and
+erosion/deposition volume must reconstruct within `1e-6` relative error.
+
+Validation:
+The corrected canonical world has `82.58%` soil-bearing land, `2.859%`
+effective inland open water, and `14.56%` unsupported or effectively soil-free
+surface. The previously reported `17.60%` unsupported fraction was invalid:
+roughly 3.5 percentage points were refined water/area projection error rather
+than physical barren terrain. The corrected canonical carbon profile and the
+six-seed ensemble both pass without widening any Earth reference range.
+
+Reason:
+The prior projection divided fine water area in square kilometres by parent
+solid angle in steradians. Clipping hid the dimensional error by turning many
+selected-basin parents into apparent 100% water cells; soils then removed their
+support and functional vegetation mislabeled the missing area as unsupported.
+Persisting one conservative effective surface state prevents this class of
+cross-stage mismatch.
+
+## Decision 041: Calibrate Functional Cover Before Naming Biomes
+
+Status: implemented and passing
+
+Decision:
+Milestone 15b2b defines `earth_functional_vegetation_v1` as the acceptance
+profile for functional cover. Functional scoring first preserves the upstream
+woody-allocation budget, reserves hydrophytic cover from wet nonwoody support,
+and only then uses climate response to divide those budgets among strategies.
+This prevents normalization across eight independent scores from erasing the
+causal trait state.
+
+The profile gates broad global potential-natural cover ranges, absolute and
+directional climate-stratum behavior, resource-potential dynamic range, and a
+fixed six-seed ensemble. Modern cropland, pasture, deforestation, ignition,
+and fire suppression are explicitly excluded as calibration targets. Resource
+potentials describe physical suitability rather than realized human use.
+
+Validation:
+The canonical face-128 seed-42 world has `47.52%` functional vegetation,
+including `15.71%` woody, `17.86%` herbaceous, `12.70%` xeric plus low-stature,
+and `1.25%` hydrophytic cover over land. Cool-moist woody cover is `23.0%`,
+where the pre-calibration scorer produced only `7.4%`; warm-humid hydrophytic
+cover is `10.3%`, down from an implausibly broad `28.1%`. Every canonical hard
+and Earth-profile gate passes.
+
+All six face-64 worlds pass. Global functional vegetation spans
+`50.01-54.54%`, woody cover `17.29-21.58%`, herbaceous cover `17.96-19.04%`,
+xeric plus low-stature cover `12.12-12.78%`, and hydrophytic cover
+`1.45-2.08%`. Their coefficients of variation are `0.030`, `0.079`, `0.019`,
+`0.018`, and `0.118`. Every climate relationship and resource-amplitude gate
+passes in all six seeds.
+
+Reason:
+Named biomes are easy to make visually persuasive even when the underlying
+ecology is wrong. Calibrating conserved mixtures and causal climate responses
+first gives later biome labels an auditable basis and preserves better state
+for regional refinement and surrogate training.

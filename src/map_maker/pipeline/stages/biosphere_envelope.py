@@ -67,7 +67,7 @@ class BiosphereEnvelopeConfig:
     nutrient_half_saturation_index: float = 0.5
     co2_half_saturation_pa: float = 20.0
     reference_oxygen_partial_pressure_kpa: float = 21.22
-    photosynthetic_conversion_efficiency: float = 0.043
+    photosynthetic_conversion_efficiency: float = 0.0421
     minimum_productive_energy_mj_m2_year: float = 5.0
     nonreference_profile_confidence_multiplier: float = 0.75
     maximum_annual_aggregation_relative_error: float = 1e-5

@@ -213,9 +213,7 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
         "BiosphereValidationMetadata"
     ].value
     biosphere_kpis = _table(biosphere_validation, "BiosphereKpiCatalog")
-    biosphere_distributions = _table(
-        biosphere_validation, "BiosphereClimateDistributionCatalog"
-    )
+    biosphere_distributions = _table(biosphere_validation, "BiosphereClimateDistributionCatalog")
 
     assert outlet_metadata["graph_valid"] == 1
     assert outlet_metadata["independent_graph_valid"] == 1
@@ -266,6 +264,9 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     assert kpi_by_id["lake_reach_hydrograph_coupling_implemented"]["value"] == 1.0
     assert kpi_by_id["floodplain_inundation_implemented"]["value"] == 0.0
     assert soil_metadata["surface_materials_ready_for_biomes"] == 1
+    assert soil_metadata["refined_surface_projection"] == "conservative_child_area_km2_v2"
+    assert 0.0 <= soil_metadata["effective_lake_land_area_fraction"] <= 1.0
+    assert 0.0 <= soil_metadata["effective_wetland_land_area_fraction"] <= 1.0
     assert soil_metadata["material_balance_max_error"] <= 1e-5
     assert soil_metadata["texture_balance_max_error"] <= 1e-5
     assert soil_metadata["water_balance_relative_error"] <= 1e-5
@@ -275,12 +276,14 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     assert potential_metadata["hard_gate_pass"] == 1
     assert potential_metadata["potential_biosphere_ready_for_functional_types"] == 1
     assert potential_metadata["actual_vegetation_state_implemented"] == 0
-    assert potential_metadata["actual_maximum_rooting_depth_m"] <= potential_metadata[
-        "maximum_rooting_depth_m"
-    ]
-    assert potential_metadata["actual_maximum_canopy_height_m"] <= potential_metadata[
-        "maximum_canopy_height_m"
-    ]
+    assert (
+        potential_metadata["actual_maximum_rooting_depth_m"]
+        <= potential_metadata["maximum_rooting_depth_m"]
+    )
+    assert (
+        potential_metadata["actual_maximum_canopy_height_m"]
+        <= potential_metadata["maximum_canopy_height_m"]
+    )
     assert biosphere_validation_metadata["reference_profile_version"] == "earth_biosphere_v1"
     assert biosphere_validation_metadata["hard_gate_pass"] == 1
     assert biosphere_validation_metadata["earth_profile_status"] in {
@@ -288,18 +291,20 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
         "outside_reference",
     }
     assert biosphere_kpis.num_rows == biosphere_validation_metadata["kpi_count"]
-    assert biosphere_distributions.num_rows == biosphere_validation_metadata[
-        "climate_distribution_row_count"
-    ]
+    assert (
+        biosphere_distributions.num_rows
+        == biosphere_validation_metadata["climate_distribution_row_count"]
+    )
     biosphere_kpi_by_id = {
         row["kpi_id"]: row
         for row in biosphere_kpis.select(
             ["kpi_id", "value", "gate_kind", "comparison_status"]
         ).to_pylist()
     }
-    assert biosphere_kpi_by_id["finite_nonnegative_biosphere_fields"][
-        "comparison_status"
-    ] == "hard_pass"
+    assert (
+        biosphere_kpi_by_id["finite_nonnegative_biosphere_fields"]["comparison_status"]
+        == "hard_pass"
+    )
     assert biosphere_kpi_by_id["global_potential_npp_pg_c_year"]["gate_kind"] == (
         "earth_diagnostic"
     )

@@ -436,23 +436,25 @@ the persisted monthly soil-water budget closes to `7.6e-9` relative error.
 
 | Metric | Canonical result |
 | --- | ---: |
-| Exposed bedrock fraction of land | `18.09%` |
-| Residual regolith fraction | `64.32%` |
-| Colluvium fraction | `6.44%` |
-| Alluvium fraction | `6.03%` |
-| Lacustrine sediment fraction | `4.90%` |
-| Glacial deposit fraction | `0.109%` |
-| Volcaniclastic fraction | `0.105%` |
-| Soil-bearing fraction of land | `79.27%` |
-| Hydric-soil fraction of land | `5.15%` |
-| Mean regolith / soil depth | `1.37 m / 0.74 m` |
-| Mean available water capacity | `93.89 mm` |
-| Mean potential organic carbon | `1.61 kg C/m2` |
-| Mean initial soil pH | `5.69` |
-| Annual modeled soil liquid input | `436.64 mm` |
-| Actual evapotranspiration | `150.73 mm` |
-| Quick soil runoff | `275.23 mm` |
-| Deep drainage proxy | `10.69 mm` |
+| Exposed bedrock fraction of land | `17.95%` |
+| Residual regolith fraction | `66.47%` |
+| Colluvium fraction | `6.47%` |
+| Alluvium fraction | `6.60%` |
+| Lacustrine sediment fraction | `2.29%` |
+| Glacial deposit fraction | `0.110%` |
+| Volcaniclastic fraction | `0.103%` |
+| Soil-bearing fraction of land | `82.58%` |
+| Effective inland open water | `2.859%` |
+| Effective hydrologic wetland | `0.018%` |
+| Hydric-soil fraction of land | `5.94%` |
+| Mean regolith / soil depth | `1.27 m / 0.77 m` |
+| Mean available water capacity | `96.46 mm` |
+| Mean potential organic carbon | `1.78 kg C/m2` |
+| Mean initial soil pH | `5.67` |
+| Annual modeled soil liquid input | `485.89 mm` |
+| Actual evapotranspiration | `172.55 mm` |
+| Quick soil runoff | `301.00 mm` |
+| Deep drainage proxy | `12.34 mm` |
 
 These are one-seed structural diagnostics, not accepted Earth calibration.
 Glacial deposits are especially incomplete because there is no paleoglacial
@@ -487,8 +489,8 @@ The combined energy product is a provisional Earth-photosynthesis diagnostic,
 not a universal habitability or biomass score. PAR fraction, mean atmospheric
 transmission, response temperatures, water and CO2 half-saturation controls,
 and photosynthetic conversion efficiency still require calibration against
-accepted reference datasets. Ocean productivity, chemosynthesis, vegetation,
-biome labels, and atmosphere-biosphere feedback are not implemented.
+accepted reference datasets. Ocean productivity, chemosynthesis, named biome
+labels, and atmosphere-biosphere feedback are not implemented.
 
 The canonical face-128 seed currently reports:
 
@@ -501,16 +503,16 @@ The canonical face-128 seed currently reports:
 | Mean terrestrial surface PAR | `3,037.94 MJ/m2/year` |
 | Mean terrestrial primary-energy proxy | `12.80 MJ/m2/year` |
 | Mean thermal opportunity | `0.698` |
-| Mean liquid-water opportunity | `0.487` |
+| Mean liquid-water opportunity | `0.506` |
 | Mean carbon-substrate support | `0.980` relative to reference |
 | Mean aerobic-oxygen support | `0.954` relative to reference |
-| Land above provisional `5 MJ/m2/year` threshold | `75.28%` |
+| Land above provisional `5 MJ/m2/year` threshold | `76.41%` |
 | Annual aggregation error | `5.20e-8` relative |
 
-The envelope uses a multi-seed-calibrated `0.043` peak PAR-to-chemical
+The envelope uses a multi-seed-calibrated `0.0421` peak PAR-to-chemical
 conversion efficiency and a normalized saturating nutrient response with a
 `0.5` half-saturation index. The canonical and face-64 seed-42 productive-area
-fractions are `75.3%` and `74.6%`, respectively. These parameters pass the
+fractions are `76.4%` and `77.8%`, respectively. These parameters pass the
 predeclared carbon ranges at both scales without becoming physical clamps for
 non-Earth profiles.
 
@@ -525,21 +527,21 @@ configured morphology bounds, and zero terrestrial state over ocean.
 | Metric | Canonical result |
 | --- | ---: |
 | Mean potential NPP | `0.321 kg C/m2/year` |
-| Mean potential vegetation cover | `50.85%` |
-| Land with at least 10% potential cover | `93.23%` |
-| Mean potential standing biomass | `5.326 kg C/m2` |
-| Mean growing-season fraction | `0.809` |
-| Mean woody-allocation trait | `0.2459` |
-| Actual maximum rooting depth | `2.09 m` |
-| Actual maximum canopy height | `27.77 m` |
-| Energy-conversion error | `4.54e-8` relative |
-| Annual aggregation error | `5.22e-8` relative |
+| Mean potential vegetation cover | `47.52%` |
+| Land with at least 10% potential cover | `96.29%` |
+| Mean potential standing biomass | `5.224 kg C/m2` |
+| Mean growing-season fraction | `0.834` |
+| Mean woody-allocation trait | `0.2220` |
+| Actual maximum rooting depth | `2.06 m` |
+| Actual maximum canopy height | `27.54 m` |
+| Energy-conversion error | `4.63e-8` relative |
+| Annual aggregation error | `5.33e-8` relative |
 
 These are potential equilibrium producer-community outputs under the explicit
 colonization assumption, not actual vegetation. The calibrated biomass response
 uses explicit structural and low-productivity turnover controls. The coarse
-ensemble and canonical world satisfy the carbon-amplitude profile. Functional-
-type mixtures and biome names remain 15b2 work.
+ensemble and canonical world satisfy the carbon-amplitude profile. Functional
+mixtures are implemented in 15b2a; biome names remain deferred.
 
 ## Earth Biosphere V1
 
@@ -551,22 +553,83 @@ strata. Earth ranges remain diagnostics during ordinary generation.
 | KPI | Earth profile | Canonical face-128 |
 | --- | ---: | ---: |
 | Land surface fraction | `27-36%` | `35.00%` |
-| Potential terrestrial NPP | `50-75 Pg C/year` | `57.28 Pg C/year` |
+| Potential terrestrial NPP | `50-75 Pg C/year` | `57.26 Pg C/year` |
 | Land-mean potential NPP | `0.32-0.55 kg C/m2/year` | `0.321` |
-| Potential vegetation biomass | `771-1,107 Pg C` | `950.75 Pg C` |
-| Land-mean potential biomass | `5-8 kg C/m2` | `5.326` |
+| Potential vegetation biomass | `771-1,107 Pg C` | `932.65 Pg C` |
+| Land-mean potential biomass | `5-8 kg C/m2` | `5.224` |
 
 All accounting gates and all four directional climate-response comparisons
 pass on the canonical seed. Its `497.92 mm/year` mean land precipitation and
-`0.487` liquid-water opportunity are close to face-64 seed 42's `505.39
-mm/year` and `0.493` after resolution-aware climate transport was introduced.
+`0.506` liquid-water opportunity are close to face-64 seed 42's `505.39
+mm/year` and `0.516` after resolution-aware climate transport was introduced.
 
 All six configured face-64 worlds now complete. Every hard and dispersion gate
-passes; NPP spans `60.75-74.60 Pg C/year`, biomass spans
-`975.93-1,104.27 Pg C`, and their coefficients of variation are `0.074` and
-`0.046`. All six worlds pass every global and land-mean carbon diagnostic.
+passes; NPP spans `62.56-75.98 Pg C/year`, biomass spans
+`977.48-1,089.41 Pg C`, and their coefficients of variation are `0.071` and
+`0.040`. Five of six worlds pass the global NPP diagnostic and all six pass
+global biomass; this satisfies the predeclared `80%` per-diagnostic rule.
 The ensemble and canonical world now pass the complete profile. The generated-
 Earthlike land band is `27-36%`; observed Earth's approximately `29%` remains
 the reference point, while the approved canonical game-world configuration has
 `35.0%` land. See `09d_earth_biosphere_validation.md` for sources, climate
 strata, tolerances, and pass semantics.
+
+## Functional Vegetation Mixtures
+
+The canonical `functional_vegetation` stage consumes the passing Earth-profile
+report and converts potential producer traits into an exact physical cover
+partition. Its hard gates require finite bounded fields, zero terrestrial state
+over ocean, no functional cover above upstream potential cover, per-cell
+partition closure, catalog-valid hierarchical dominant codes, and deterministic
+native outputs.
+
+| Cover metric | Canonical face-128 |
+| --- | ---: |
+| Functional vegetation / land | `47.52%` |
+| Bare ground / land | `32.70%` |
+| Saline barren / land | `2.36%` |
+| Inland open water / land | `2.86%` |
+| Unsupported surface / land | `14.56%` |
+| Maximum partition error | `4.00e-8` |
+
+| Resource potential | Area-weighted mean | Area-weighted p90 | Maximum |
+| --- | ---: | ---: | ---: |
+| Fire tendency | `0.123` | `0.180` | `0.225` |
+| Grazing | `0.252` | `0.335` | `0.423` |
+| Forest resource | `0.136` | `0.313` | `0.456` |
+| Pasture | `0.129` | `0.184` | `0.288` |
+| Crop | `0.305` | `0.410` | `0.606` |
+
+Within functional vegetation, woody strategies hold `33.06%`, herbaceous
+strategies `37.59%`, hydrophytic vegetation `2.62%`, and xeric plus low-stature
+strategies `26.73%`. The crop layer exceeds `0.5` on `0.71%` of land area; the
+other four layers do not reach `0.5` in this world.
+
+## Earth Functional Vegetation V1
+
+`functional_vegetation_validation` materializes the
+`earth_functional_vegetation_v1` contract. Hard gates independently reconstruct
+all global functional and resource means from exclusive upstream-climate
+strata. Earth diagnostics use broad potential-natural cover ranges and
+directional climate responses rather than modern land use.
+
+The canonical world passes every diagnostic. Its cool-moist woody cover is
+`23.0%`; warm-humid woody and hydrophytic cover are `51.2%` and `10.3%`.
+Warm-dry land is more xeric and grazing-suitable, warm-seasonal land is more
+fire-prone, and warm-humid land is more forest-suitable.
+
+All six face-64 worlds pass every functional diagnostic and stability gate:
+
+| Land metric | Ensemble mean | Seed range | CV |
+| --- | ---: | ---: | ---: |
+| Functional vegetation | `51.96%` | `50.01-54.54%` | `0.030` |
+| Woody cover | `19.20%` | `17.29-21.58%` | `0.079` |
+| Herbaceous cover | `18.53%` | `17.96-19.04%` | `0.019` |
+| Xeric plus low-stature cover | `12.49%` | `12.12-12.78%` | `0.018` |
+| Hydrophytic cover | `1.75%` | `1.45-2.08%` | `0.118` |
+| Inland open water | `1.14%` | `0.73-1.72%` | `0.261` |
+
+Resource-potential p90 CVs are all below `0.06`; climate-stratum functional
+means remain below the configured `0.60` CV ceiling. Derived biome labels,
+actual land use, disturbance history, and vegetation feedback remain later
+work.

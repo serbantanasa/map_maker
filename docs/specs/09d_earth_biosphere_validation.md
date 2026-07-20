@@ -115,25 +115,30 @@ pass.
 | Coarse-screen KPI | Current result |
 | --- | ---: |
 | Land fraction | `35.00%` in every seed, all six pass |
-| Potential terrestrial NPP | `60.75-74.60 Pg C/year`, all six pass |
-| Land-mean potential NPP | `0.340-0.418 kg C/m2/year`, all six pass |
-| Potential vegetation biomass | `975.93-1,104.27 Pg C`, all six pass |
+| Potential terrestrial NPP | `62.56-75.98 Pg C/year`, five of six inside range |
+| Land-mean potential NPP | `0.350-0.426 kg C/m2/year`, all six pass |
+| Potential vegetation biomass | `977.48-1,089.41 Pg C`, all six pass |
 | Land-mean potential biomass | all six pass |
-| NPP coefficient of variation | `0.074` |
-| Biomass coefficient of variation | `0.046` |
+| NPP coefficient of variation | `0.071` |
+| Biomass coefficient of variation | `0.040` |
+
+Seed 101 produces `75.98 Pg C/year`, narrowly above the `75 Pg C/year`
+diagnostic ceiling. The predeclared profile requires at least `80%` of seeds to
+pass each Earth diagnostic; five of six is `83.3%`, so the ensemble passes
+without widening the Earth range. All hard invariants and dispersion gates pass.
 
 The canonical face-128 seed passes the complete Earth profile:
 
 | Canonical KPI | Current result |
 | --- | ---: |
 | Land fraction | `35.00%` |
-| Potential terrestrial NPP | `57.28 Pg C/year` |
+| Potential terrestrial NPP | `57.26 Pg C/year` |
 | Land-mean potential NPP | `0.321 kg C/m2/year` |
-| Potential vegetation biomass | `950.75 Pg C` |
-| Land-mean potential biomass | `5.33 kg C/m2` |
+| Potential vegetation biomass | `932.65 Pg C` |
+| Land-mean potential biomass | `5.22 kg C/m2` |
 
-The canonical world has `497.92 mm/year` mean land precipitation and `0.487`
-mean liquid-water opportunity, compared with `505.39 mm/year` and `0.493` for
+The canonical world has `497.92 mm/year` mean land precipitation and `0.506`
+mean liquid-water opportunity, compared with `505.39 mm/year` and `0.516` for
 face-64 seed 42. Resolution-aware moisture timesteps, condensation relaxation,
 diffusion, and synoptic mixing removed the previous numerical drying at face
 128. The approved generated-Earthlike land band is `27-36%`; observed Earth's

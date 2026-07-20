@@ -1,5 +1,6 @@
 format_version: 1
 reference_profile: earth_biosphere_v1
+functional_reference_profile: earth_functional_vegetation_v1
 base_config: cubed_sphere_crust_state.yaml
 output_dir: ../out/biosphere_validation
 
@@ -19,3 +20,6 @@ ensemble_tolerances:
   minimum_zone_presence_seed_fraction: 0.60
   maximum_zone_area_fraction_absolute_range: 0.20
   maximum_zone_mean_npp_coefficient_of_variation: 0.60
+  maximum_functional_fraction_coefficient_of_variation: 0.30
+  maximum_resource_p90_coefficient_of_variation: 0.35
+  maximum_zone_functional_mean_coefficient_of_variation: 0.60

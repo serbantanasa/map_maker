@@ -17,6 +17,9 @@ from .config import GridInfo, PipelineConfig, ResolutionSet
 from .execution import ExecutionEngine
 from .models import StageResult
 from .stages.biosphere_validation import CLIMATE_STRATA, REFERENCE_PROFILE_VERSION
+from .stages.functional_vegetation_validation import (
+    REFERENCE_PROFILE_VERSION as FUNCTIONAL_REFERENCE_PROFILE_VERSION,
+)
 
 
 ENSEMBLE_METRIC_SCHEMA = pa.schema(
@@ -49,6 +52,9 @@ class BiosphereEnsembleThresholds:
     minimum_zone_presence_seed_fraction: float = 0.60
     maximum_zone_area_fraction_absolute_range: float = 0.20
     maximum_zone_mean_npp_coefficient_of_variation: float = 0.60
+    maximum_functional_fraction_coefficient_of_variation: float = 0.30
+    maximum_resource_p90_coefficient_of_variation: float = 0.35
+    maximum_zone_functional_mean_coefficient_of_variation: float = 0.60
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object] | None) -> "BiosphereEnsembleThresholds":
@@ -95,6 +101,15 @@ class BiosphereEnsembleThresholds:
             maximum_zone_mean_npp_coefficient_of_variation=float(
                 values["maximum_zone_mean_npp_coefficient_of_variation"]
             ),
+            maximum_functional_fraction_coefficient_of_variation=float(
+                values["maximum_functional_fraction_coefficient_of_variation"]
+            ),
+            maximum_resource_p90_coefficient_of_variation=float(
+                values["maximum_resource_p90_coefficient_of_variation"]
+            ),
+            maximum_zone_functional_mean_coefficient_of_variation=float(
+                values["maximum_zone_functional_mean_coefficient_of_variation"]
+            ),
         )
         if config.minimum_seed_count < 2:
             raise ValueError("minimum_seed_count must be at least 2")
@@ -108,6 +123,9 @@ class BiosphereEnsembleThresholds:
             "minimum_zone_presence_seed_fraction",
             "maximum_zone_area_fraction_absolute_range",
             "maximum_zone_mean_npp_coefficient_of_variation",
+            "maximum_functional_fraction_coefficient_of_variation",
+            "maximum_resource_p90_coefficient_of_variation",
+            "maximum_zone_functional_mean_coefficient_of_variation",
         )
         for name in fractions:
             value = float(getattr(config, name))
@@ -137,6 +155,13 @@ class BiosphereEnsembleConfig:
         profile = str(data.get("reference_profile", REFERENCE_PROFILE_VERSION))
         if profile != REFERENCE_PROFILE_VERSION:
             raise ValueError(f"reference_profile must be {REFERENCE_PROFILE_VERSION}")
+        functional_profile = str(
+            data.get("functional_reference_profile", FUNCTIONAL_REFERENCE_PROFILE_VERSION)
+        )
+        if functional_profile != FUNCTIONAL_REFERENCE_PROFILE_VERSION:
+            raise ValueError(
+                f"functional_reference_profile must be {FUNCTIONAL_REFERENCE_PROFILE_VERSION}"
+            )
         raw_base = data.get("base_config")
         if not raw_base:
             raise ValueError("Biosphere ensemble config requires base_config")
@@ -169,11 +194,19 @@ class BiosphereEnsembleConfig:
 
 
 @dataclass(frozen=True)
+class FunctionalVegetationSeedReport:
+    kpis: pa.Table
+    climate_distributions: pa.Table
+    metadata: Mapping[str, object]
+
+
+@dataclass(frozen=True)
 class BiosphereSeedReport:
     seed: int
     kpis: pa.Table
     climate_distributions: pa.Table
     metadata: Mapping[str, object]
+    functional_vegetation: FunctionalVegetationSeedReport | None = None
 
 
 @dataclass(frozen=True)
@@ -192,10 +225,16 @@ class BiosphereEnsembleEvaluation:
     earth_profile_pass: bool
     gates: tuple[EnsembleGate, ...]
     metric_catalog: pa.Table
+    functional_profile_pass: bool = True
 
     @property
     def passed(self) -> bool:
-        return self.hard_gate_pass and self.stability_pass and self.earth_profile_pass
+        return (
+            self.hard_gate_pass
+            and self.stability_pass
+            and self.earth_profile_pass
+            and self.functional_profile_pass
+        )
 
 
 @dataclass(frozen=True)
@@ -207,6 +246,7 @@ class BiosphereEnsembleResult:
     metric_catalog_path: Path
     seed_count: int
     gates: tuple[EnsembleGate, ...]
+    functional_profile_pass: bool = True
 
 
 def _integer(value: object, *, name: str) -> int:
@@ -221,7 +261,7 @@ def _integer(value: object, *, name: str) -> int:
 def _table(result: StageResult, name: str) -> pa.Table:
     record = result.artifact_records.get(name)
     if record is None or not isinstance(record.value, pa.Table):
-        raise KeyError(f"Missing table artifact biosphere_validation.{name}")
+        raise KeyError(f"Missing table artifact {result.stage_name}.{name}")
     return record.value.combine_chunks()
 
 
@@ -229,6 +269,13 @@ def _metadata(result: StageResult) -> Mapping[str, object]:
     record = result.artifact_records.get("BiosphereValidationMetadata")
     if record is None or not isinstance(record.value, Mapping):
         raise KeyError("Missing biosphere validation metadata")
+    return cast(Mapping[str, object], record.value)
+
+
+def _functional_metadata(result: StageResult) -> Mapping[str, object]:
+    record = result.artifact_records.get("FunctionalVegetationValidationMetadata")
+    if record is None or not isinstance(record.value, Mapping):
+        raise KeyError("Missing functional vegetation validation metadata")
     return cast(Mapping[str, object], record.value)
 
 
@@ -246,6 +293,23 @@ def _kpi_value(report: BiosphereSeedReport, kpi_id: str) -> float:
     return float(value)
 
 
+def _functional_kpi_rows(report: BiosphereSeedReport) -> dict[str, Mapping[str, object]]:
+    functional = report.functional_vegetation
+    if functional is None:
+        raise KeyError(f"Seed {report.seed} is missing functional-vegetation validation")
+    return {str(row["kpi_id"]): row for row in functional.kpis.to_pylist()}
+
+
+def _functional_kpi_value(report: BiosphereSeedReport, kpi_id: str) -> float:
+    row = _functional_kpi_rows(report).get(kpi_id)
+    if row is None:
+        raise KeyError(f"Seed {report.seed} is missing functional KPI {kpi_id}")
+    value = row["value"]
+    if not isinstance(value, (int, float)):
+        raise TypeError(f"Functional KPI {kpi_id} must be numeric")
+    return float(value)
+
+
 def _zone_summary(
     report: BiosphereSeedReport, zone_id: str, metric_id: str, statistic: str
 ) -> tuple[float, float, bool]:
@@ -260,6 +324,28 @@ def _zone_summary(
     if len(matches) != 1:
         raise KeyError(
             f"Seed {report.seed} has {len(matches)} rows for {zone_id}.{metric_id}.{statistic}"
+        )
+    row = matches[0]
+    return float(row["zone_land_area_fraction"]), float(row["value"]), bool(row["reportable"])
+
+
+def _functional_zone_summary(
+    report: BiosphereSeedReport, zone_id: str, metric_id: str, statistic: str
+) -> tuple[float, float, bool]:
+    functional = report.functional_vegetation
+    if functional is None:
+        raise KeyError(f"Seed {report.seed} is missing functional-vegetation validation")
+    matches = [
+        row
+        for row in functional.climate_distributions.to_pylist()
+        if row["zone_id"] == zone_id
+        and row["metric_id"] == metric_id
+        and row["statistic"] == statistic
+    ]
+    if len(matches) != 1:
+        raise KeyError(
+            f"Seed {report.seed} has {len(matches)} functional rows for "
+            f"{zone_id}.{metric_id}.{statistic}"
         )
     row = matches[0]
     return float(row["zone_land_area_fraction"]), float(row["value"]), bool(row["reportable"])
@@ -298,6 +384,33 @@ def evaluate_biosphere_ensemble(
             f"all seed reports use {REFERENCE_PROFILE_VERSION}",
         )
     )
+    functional_report_count = sum(report.functional_vegetation is not None for report in reports)
+    functional_profile_enabled = functional_report_count == len(reports)
+    if functional_report_count:
+        gates.append(
+            EnsembleGate(
+                "all_seed_functional_reports_present",
+                "hard_invariant",
+                functional_profile_enabled,
+                functional_report_count,
+                f"{len(reports)} of {len(reports)} seeds",
+            )
+        )
+    if functional_profile_enabled:
+        functional_versions = {
+            str(report.functional_vegetation.metadata.get("reference_profile_version", "missing"))
+            for report in reports
+            if report.functional_vegetation is not None
+        }
+        gates.append(
+            EnsembleGate(
+                "functional_reference_profile_version_match",
+                "hard_invariant",
+                functional_versions == {FUNCTIONAL_REFERENCE_PROFILE_VERSION},
+                len(functional_versions),
+                f"all seed reports use {FUNCTIONAL_REFERENCE_PROFILE_VERSION}",
+            )
+        )
     hard_passes = [
         _integer(report.metadata.get("hard_gate_pass", 0), name="hard_gate_pass") == 1
         for report in reports
@@ -311,6 +424,25 @@ def evaluate_biosphere_ensemble(
             f"{len(reports)} of {len(reports)} seeds",
         )
     )
+    if functional_profile_enabled:
+        functional_hard_passes = [
+            _integer(
+                report.functional_vegetation.metadata.get("hard_gate_pass", 0),
+                name="functional_hard_gate_pass",
+            )
+            == 1
+            for report in reports
+            if report.functional_vegetation is not None
+        ]
+        gates.append(
+            EnsembleGate(
+                "all_seed_functional_hard_gates",
+                "hard_invariant",
+                all(functional_hard_passes),
+                sum(functional_hard_passes),
+                f"{len(reports)} of {len(reports)} seeds",
+            )
+        )
 
     stability_specs = (
         (
@@ -420,6 +552,61 @@ def evaluate_biosphere_ensemble(
                 thresholds.maximum_zone_mean_npp_coefficient_of_variation,
             )
 
+    if functional_profile_enabled:
+        for metric_id in (
+            "land_mean_functional_vegetated_fraction",
+            "land_mean_functional_woody_fraction",
+            "land_mean_functional_herbaceous_fraction",
+            "land_mean_functional_xeric_low_stature_fraction",
+            "land_mean_functional_hydrophytic_fraction",
+            "land_mean_nonvegetated_ground_fraction",
+            "land_mean_inland_open_water_fraction",
+        ):
+            add_metric(
+                f"functional.{metric_id}",
+                "global_land",
+                [_functional_kpi_value(report, metric_id) for report in reports],
+                "coefficient_of_variation",
+                thresholds.maximum_functional_fraction_coefficient_of_variation,
+            )
+        for metric_id in (
+            "land_fire_tendency_resource_p90",
+            "land_grazing_resource_p90",
+            "land_forest_resource_p90",
+            "land_pasture_resource_p90",
+            "land_crop_resource_p90",
+        ):
+            add_metric(
+                f"functional.{metric_id}",
+                "global_land",
+                [_functional_kpi_value(report, metric_id) for report in reports],
+                "coefficient_of_variation",
+                thresholds.maximum_resource_p90_coefficient_of_variation,
+            )
+        for definition in CLIMATE_STRATA:
+            zone_id = str(definition["zone_id"])
+            for metric_id in (
+                "functional_woody_fraction",
+                "functional_herbaceous_fraction",
+                "functional_hydrophytic_fraction",
+                "resource_fire_tendency",
+                "resource_forest",
+            ):
+                summaries = [
+                    _functional_zone_summary(report, zone_id, metric_id, "mean")
+                    for report in reports
+                ]
+                reportable = [summary[1] for summary in summaries if summary[2]]
+                presence_fraction = len(reportable) / len(reports)
+                if presence_fraction >= thresholds.minimum_zone_presence_seed_fraction:
+                    add_metric(
+                        f"functional.zone.{zone_id}.mean_{metric_id}",
+                        zone_id,
+                        reportable,
+                        "coefficient_of_variation",
+                        thresholds.maximum_zone_functional_mean_coefficient_of_variation,
+                    )
+
     first_rows = _kpi_rows(reports[0])
     earth_ids = sorted(
         kpi_id
@@ -452,16 +639,55 @@ def evaluate_biosphere_ensemble(
             )
         )
 
+    functional_gate_passes: list[bool] = []
+    if functional_profile_enabled:
+        first_functional_rows = _functional_kpi_rows(reports[0])
+        functional_ids = sorted(
+            kpi_id
+            for kpi_id, row in first_functional_rows.items()
+            if row["gate_kind"] in {"earth_diagnostic", "earth_structure"}
+        )
+        for kpi_id in functional_ids:
+            applicable_statuses = []
+            for report in reports:
+                row = _functional_kpi_rows(report).get(kpi_id)
+                if row is None:
+                    raise KeyError(f"Seed {report.seed} is missing functional diagnostic {kpi_id}")
+                status = str(row["comparison_status"])
+                if status != "not_applicable":
+                    applicable_statuses.append(status)
+            if not applicable_statuses:
+                continue
+            pass_fraction = applicable_statuses.count("within_reference") / len(applicable_statuses)
+            passed = pass_fraction >= thresholds.minimum_earth_diagnostic_pass_fraction
+            functional_gate_passes.append(passed)
+            gates.append(
+                EnsembleGate(
+                    f"functional_profile.{kpi_id}",
+                    "functional_profile",
+                    passed,
+                    pass_fraction,
+                    "within-reference seed fraction >= "
+                    f"{thresholds.minimum_earth_diagnostic_pass_fraction}",
+                )
+            )
+
     metric_catalog = pa.Table.from_pylist(metric_rows, schema=ENSEMBLE_METRIC_SCHEMA)
     hard_gate_pass = all(gate.passed for gate in gates if gate.gate_kind == "hard_invariant")
     stability_pass = all(gate.passed for gate in gates if gate.gate_kind == "ensemble_stability")
     earth_profile_pass = bool(earth_gate_passes) and all(earth_gate_passes)
+    functional_profile_pass = (
+        bool(functional_gate_passes) and all(functional_gate_passes)
+        if functional_profile_enabled
+        else functional_report_count == 0
+    )
     return BiosphereEnsembleEvaluation(
         hard_gate_pass,
         stability_pass,
         earth_profile_pass,
         tuple(gates),
         metric_catalog,
+        functional_profile_pass,
     )
 
 
@@ -505,17 +731,28 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
     for seed in config.seeds:
         world = _world_config(base, config, seed)
         try:
-            results = ExecutionEngine(world, generate_visuals=False).run(["biosphere_validation"])
+            results = ExecutionEngine(world, generate_visuals=False).run(
+                ["functional_vegetation_validation"]
+            )
         except RuntimeError as exc:
             execution_failures[seed] = str(exc)
             continue
         validation = results["biosphere_validation"]
+        functional_validation = results["functional_vegetation_validation"]
         reports.append(
             BiosphereSeedReport(
                 seed,
                 _table(validation, "BiosphereKpiCatalog"),
                 _table(validation, "BiosphereClimateDistributionCatalog"),
                 dict(_metadata(validation)),
+                FunctionalVegetationSeedReport(
+                    _table(functional_validation, "FunctionalVegetationKpiCatalog"),
+                    _table(
+                        functional_validation,
+                        "FunctionalVegetationClimateDistributionCatalog",
+                    ),
+                    dict(_functional_metadata(functional_validation)),
+                ),
             )
         )
 
@@ -524,7 +761,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         "hard_invariant",
         not execution_failures,
         len(reports),
-        f"{len(config.seeds)} of {len(config.seeds)} seeds reach biosphere_validation",
+        f"{len(config.seeds)} of {len(config.seeds)} seeds reach functional vegetation validation",
     )
     if len(reports) >= config.thresholds.minimum_seed_count:
         evaluation = evaluate_biosphere_ensemble(reports, config.thresholds)
@@ -547,18 +784,22 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         )
     hard_gate_pass = not execution_failures and evaluation.hard_gate_pass
     execution_valid = hard_gate_pass and evaluation.stability_pass
-    passed = execution_valid and evaluation.earth_profile_pass
+    passed = (
+        execution_valid and evaluation.earth_profile_pass and evaluation.functional_profile_pass
+    )
     metric_catalog_path = config.output_dir / "ensemble_kpis.parquet"
     pq.write_table(evaluation.metric_catalog, metric_catalog_path)
     report_path = config.output_dir / "report.json"
     report: dict[str, Any] = {
         "format_version": 1,
         "reference_profile": REFERENCE_PROFILE_VERSION,
+        "functional_reference_profile": FUNCTIONAL_REFERENCE_PROFILE_VERSION,
         "status": "pass" if passed else "outside_reference" if execution_valid else "invalid",
         "execution_valid": execution_valid,
         "hard_gate_pass": hard_gate_pass,
         "ensemble_stability_pass": evaluation.stability_pass,
         "earth_profile_pass": evaluation.earth_profile_pass,
+        "functional_profile_pass": evaluation.functional_profile_pass,
         "base_config": str(config.base_config),
         "face_resolution": config.face_resolution
         or PipelineConfig.from_file(config.base_config).resolution_set.native.face_resolution,
@@ -582,6 +823,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         metric_catalog_path,
         len(config.seeds),
         gates,
+        evaluation.functional_profile_pass,
     )
 
 
@@ -609,6 +851,21 @@ def _world_report_row(
         "global_potential_npp_pg_c_year": report.metadata.get("global_potential_npp_pg_c_year"),
         "global_potential_biomass_pg_c": report.metadata.get("global_potential_biomass_pg_c"),
         "reportable_climate_strata": report.metadata.get("reportable_climate_strata", []),
+        "functional_profile_status": (
+            report.functional_vegetation.metadata.get("earth_profile_status")
+            if report.functional_vegetation is not None
+            else "missing"
+        ),
+        "functional_diagnostics_outside_reference": (
+            report.functional_vegetation.metadata.get("earth_diagnostics_outside_reference", [])
+            if report.functional_vegetation is not None
+            else []
+        ),
+        "functional_global_means": (
+            report.functional_vegetation.metadata.get("global_means", {})
+            if report.functional_vegetation is not None
+            else {}
+        ),
     }
 
 
@@ -619,6 +876,7 @@ __all__ = [
     "BiosphereEnsembleThresholds",
     "BiosphereSeedReport",
     "EnsembleGate",
+    "FunctionalVegetationSeedReport",
     "evaluate_biosphere_ensemble",
     "run_biosphere_ensemble",
 ]

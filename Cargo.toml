@@ -6,6 +6,7 @@ members = [
     "src/map_maker/pipeline/native/elevation",
     "src/map_maker/pipeline/native/erosion",
     "src/map_maker/pipeline/native/fluvial",
+    "src/map_maker/pipeline/native/functional_vegetation",
     "src/map_maker/pipeline/native/geology",
     "src/map_maker/pipeline/native/hydrology",
     "src/map_maker/pipeline/native/hydrology_pass2",

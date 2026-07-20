@@ -79,9 +79,16 @@
 19. Earth biosphere validation.
    - Versioned global carbon totals, upstream-climate distribution strata, and
      fixed-seed ensemble tolerances gate calibration before functional types.
-20. Functional vegetation mixtures and derived biomes.
-21. Mineral and energy systems.
-22. Selected-region refinement and map export.
+20. Functional vegetation mixtures.
+   - Eight continuous producer-community strategies plus five nonvegetated
+     classes close the physical land-cell partition exactly.
+   - Fire, grazing, forest-resource, pasture, and crop fields describe bounded
+     physical suitability, not disturbance history or actual land use.
+   - `earth_functional_vegetation_v1` gates broad global cover, upstream-climate
+     response, resource-potential shape, and six-seed stability.
+21. Derived biomes and bounded vegetation feedback.
+22. Mineral and energy systems.
+23. Selected-region refinement and map export.
 
 The current canonical cubed-sphere implementation reaches converged bounded
 outlet incision, final lake-coupled river hydrographs, and a bounded V1
@@ -89,7 +96,11 @@ cryosphere after erosion, sedimentation, and Hydrology Pass 2. It now reaches
 fractional L2 surface materials, property-first initial soils, explicit
 atmospheric composition and pressure, and a Rust-backed environmental resource
 envelope plus continuous potential producer-community traits. It includes a
-causal, pre-erosion bedrock surface; separate crustal,
+passing Earth-profile gate and the first Rust-backed functional-vegetation
+mixture, exact cover partition, derived dominant-cover query, and resource-
+suitability layers plus a passing functional-vegetation Earth profile. Familiar
+biome labels and vegetation feedback remain deferred. It includes a causal,
+pre-erosion bedrock surface; separate crustal,
 orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
 and a first seasonal climate/orography pass. Bed-profile and sediment budgets
 are conservative but remain uncalibrated. Pass 2 audits their local routing

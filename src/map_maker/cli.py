@@ -59,7 +59,7 @@ def _validation_parser(subparsers) -> argparse.ArgumentParser:
 def _biosphere_validation_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "validate-biosphere",
-        help="Run the cubed-sphere earth_biosphere_v1 multi-seed profile.",
+        help="Run the Earth biosphere and functional-vegetation multi-seed profiles.",
     )
     parser.add_argument(
         "--config",
@@ -67,7 +67,9 @@ def _biosphere_validation_parser(subparsers) -> argparse.ArgumentParser:
         default=Path("configs/biosphere_validation.yaml"),
         help="Biosphere ensemble YAML (default: configs/biosphere_validation.yaml).",
     )
-    parser.add_argument("--output-dir", type=Path, help="Override biosphere validation output root.")
+    parser.add_argument(
+        "--output-dir", type=Path, help="Override biosphere validation output root."
+    )
     return parser
 
 
@@ -265,7 +267,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if biosphere_validation.passed:
             print(
                 f"PASS: {biosphere_validation.seed_count} worlds satisfy earth_biosphere_v1 "
-                "and ensemble tolerances."
+                "and earth_functional_vegetation_v1 with ensemble tolerances."
             )
             return 0
         if biosphere_validation.execution_valid:

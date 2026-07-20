@@ -24,9 +24,9 @@ The native build is explicit. Importing `map_maker` never invokes Cargo or a
 C++ compiler. To load native libraries built elsewhere, set
 `MAP_MAKER_NATIVE_LIB_DIR` to their containing directory.
 
-Simulation native libraries expose ABI version `2`, except the refinement
-library's versioned ABI `3`. `map-maker doctor` verifies those contracts and
-reports each binary SHA-256 fingerprint. Simulation-library fingerprints
+Simulation native libraries expose explicit per-library ABI versions.
+`map-maker doctor` verifies those contracts and reports each binary SHA-256
+fingerprint. Simulation-library fingerprints
 are included in stage cache keys and run manifests, so replacing a native binary
 cannot silently reuse outputs from different code.
 
@@ -76,8 +76,8 @@ pre-erosion elevation/orogenic morphology, monthly orbital forcing, and seasonal
 climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
-reaches. Explicit geological event history, spherical
-global erosion and sediment feedback, functional vegetation/biomes, and complete
+reaches. Explicit geological event history, spherical global erosion and
+sediment feedback, derived biome labels, ecosystem dynamics, and complete
 regional terrain remain implementation milestones. The canonical path now also
 publishes fractional L2 surface materials, initial mineral-soil properties, and
 a conservative monthly soil-water partition. Atmospheric composition and
@@ -110,6 +110,15 @@ Final lake coupling keeps losses on their owning branch and records unresolved
 coarse/fine discharge mismatch instead of borrowing flow from a sibling
 tributary. The current output is a functional prototype rather than an atlas-
 grade world.
+
+The passing `earth_biosphere_v1` profile now gates a Rust-backed
+`functional_vegetation` stage. It conservatively partitions each land cell among
+eight continuous producer-community strategies and five nonvegetated classes,
+then publishes fire, grazing, forest-resource, pasture, and crop suitability.
+The six-seed `earth_functional_vegetation_v1` profile gates broad global cover,
+climate-stratum response, resource-potential shape, and ensemble stability. The
+dominant cover code is a hierarchical rendering/query artifact; biome names and
+actual land use are not canonical state.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -210,7 +219,13 @@ uv run map-maker-pipeline --stage potential_biosphere --config configs/cubed_sph
 # Per-world global totals and climate-stratum Earth diagnostics
 uv run map-maker-pipeline --stage biosphere_validation --config configs/cubed_sphere_crust_state.yaml
 
-# Fixed-seed earth_biosphere_v1 ensemble and dispersion tolerances
+# Conservative functional vegetation and physical resource suitability
+uv run map-maker-pipeline --stage functional_vegetation --config configs/cubed_sphere_crust_state.yaml
+
+# Per-world functional cover, climate-response, and resource-potential profile
+uv run map-maker-pipeline --stage functional_vegetation_validation --config configs/cubed_sphere_crust_state.yaml
+
+# Fixed-seed biosphere and functional-vegetation profiles plus dispersion tolerances
 uv run map-maker validate-biosphere --config configs/biosphere_validation.yaml
 ```
 

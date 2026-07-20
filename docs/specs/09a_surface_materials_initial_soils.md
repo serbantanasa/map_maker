@@ -52,6 +52,18 @@ Potential organic carbon and fertility are explicitly pre-vegetation fields.
 They become canonical only after functional vegetation and the bounded feedback
 pass.
 
+The stage also persists the exact L2 water state used by the soil kernel:
+
+- `EffectiveLakeFraction`,
+- `EffectiveWetlandFraction`,
+- `EffectiveSurfaceWaterHydroperiod`,
+- `RefinedSurfaceWaterMask`.
+
+Outside the selected refined basin these reproduce coarse hydrology. Inside it,
+fine-cell water area is conservatively restricted using the summed physical
+child area in square kilometres. Downstream stages consume these effective
+fields rather than independently choosing between coarse and refined water.
+
 ## Monthly Soil Water
 
 The kernel spins up an independent L2 soil bucket and persists:
@@ -75,6 +87,8 @@ baseflow.
 - Monthly water input equals evapotranspiration, runoff, drainage, and storage
   change within configured tolerance.
 - Ocean outputs remain zero and identical inputs reproduce identical outputs.
+- Refined lake/wetland area and erosion/deposition volume reconstruct from L2
+  parent fractions and depths within `1e-6` relative error.
 - The stage refuses unconverged surface water or failed hydrology hard gates.
 
 ## Known Limitations

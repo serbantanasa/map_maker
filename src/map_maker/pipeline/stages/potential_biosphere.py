@@ -67,7 +67,7 @@ COVER_PALETTE = (
 @dataclass(frozen=True)
 class PotentialBiosphereConfig:
     energy_per_kg_carbon_mj: float = 39.9
-    cover_half_saturation_npp_kg_c_m2_year: float = 0.25
+    cover_half_saturation_npp_kg_c_m2_year: float = 0.30
     active_month_thermal_threshold: float = 0.15
     active_month_water_threshold: float = 0.10
     cold_pressure_reference_c: float = -15.0
@@ -75,7 +75,7 @@ class PotentialBiosphereConfig:
     heat_pressure_onset_c: float = 30.0
     heat_pressure_reference_c: float = 50.0
     minimum_biomass_residence_years: float = 0.5
-    maximum_biomass_residence_years: float = 50.0
+    maximum_biomass_residence_years: float = 45.0
     biomass_residence_baseline_fraction: float = 0.10
     woody_biomass_residence_weight: float = 0.60
     resource_conservative_biomass_residence_weight: float = 0.40

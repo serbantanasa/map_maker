@@ -12,6 +12,7 @@ from map_maker.pipeline.biosphere_ensemble import (
     BiosphereEnsembleThresholds,
     BiosphereSeedReport,
     EnsembleGate,
+    FunctionalVegetationSeedReport,
     evaluate_biosphere_ensemble,
     run_biosphere_ensemble,
 )
@@ -78,6 +79,79 @@ def _thresholds() -> BiosphereEnsembleThresholds:
     return BiosphereEnsembleThresholds(minimum_seed_count=2)
 
 
+def _functional_report(*, outside_reference: bool = False) -> FunctionalVegetationSeedReport:
+    global_values = {
+        "land_mean_functional_vegetated_fraction": 0.52,
+        "land_mean_functional_woody_fraction": 0.19,
+        "land_mean_functional_herbaceous_fraction": 0.19,
+        "land_mean_functional_xeric_low_stature_fraction": 0.12,
+        "land_mean_functional_hydrophytic_fraction": 0.02,
+        "land_mean_nonvegetated_ground_fraction": 0.46,
+        "land_mean_inland_open_water_fraction": 0.02,
+        "land_fire_tendency_resource_p90": 0.18,
+        "land_grazing_resource_p90": 0.33,
+        "land_forest_resource_p90": 0.36,
+        "land_pasture_resource_p90": 0.19,
+        "land_crop_resource_p90": 0.42,
+    }
+    kpi_rows = [
+        {
+            "kpi_id": kpi_id,
+            "value": value,
+            "gate_kind": "earth_diagnostic",
+            "comparison_status": "within_reference",
+        }
+        for kpi_id, value in global_values.items()
+    ]
+    kpi_rows.append(
+        {
+            "kpi_id": "warm_humid_to_warm_dry_woody_ratio",
+            "value": 3.0,
+            "gate_kind": "earth_structure",
+            "comparison_status": "outside_reference" if outside_reference else "within_reference",
+        }
+    )
+    zone_rows = []
+    for definition in CLIMATE_STRATA:
+        for metric_id, value in (
+            ("functional_woody_fraction", 0.20),
+            ("functional_herbaceous_fraction", 0.20),
+            ("functional_hydrophytic_fraction", 0.02),
+            ("resource_fire_tendency", 0.15),
+            ("resource_forest", 0.25),
+        ):
+            zone_rows.append(
+                {
+                    "zone_id": definition["zone_id"],
+                    "zone_land_area_fraction": 1.0 / len(CLIMATE_STRATA),
+                    "metric_id": metric_id,
+                    "statistic": "mean",
+                    "value": value,
+                    "reportable": True,
+                }
+            )
+    return FunctionalVegetationSeedReport(
+        pa.Table.from_pylist(kpi_rows),
+        pa.Table.from_pylist(zone_rows),
+        {
+            "hard_gate_pass": 1,
+            "reference_profile_version": "earth_functional_vegetation_v1",
+        },
+    )
+
+
+def _with_functional(
+    report: BiosphereSeedReport, *, outside_reference: bool = False
+) -> BiosphereSeedReport:
+    return BiosphereSeedReport(
+        report.seed,
+        report.kpis,
+        report.climate_distributions,
+        report.metadata,
+        _functional_report(outside_reference=outside_reference),
+    )
+
+
 def test_ensemble_accepts_stable_multi_seed_earth_profile():
     evaluation = evaluate_biosphere_ensemble(
         [_seed_report(1), _seed_report(2, npp=64.0, biomass=940.0)],
@@ -89,6 +163,34 @@ def test_ensemble_accepts_stable_multi_seed_earth_profile():
     assert evaluation.stability_pass
     assert evaluation.earth_profile_pass
     assert evaluation.metric_catalog.num_rows >= 12
+
+
+def test_ensemble_accepts_stable_functional_vegetation_profile():
+    evaluation = evaluate_biosphere_ensemble(
+        [_with_functional(_seed_report(1)), _with_functional(_seed_report(2))],
+        _thresholds(),
+    )
+
+    assert evaluation.passed
+    assert evaluation.functional_profile_pass
+    assert any(
+        gate.name == "functional_profile.warm_humid_to_warm_dry_woody_ratio" and gate.passed
+        for gate in evaluation.gates
+    )
+
+
+def test_ensemble_separates_functional_profile_miss_from_stability():
+    evaluation = evaluate_biosphere_ensemble(
+        [
+            _with_functional(_seed_report(1)),
+            _with_functional(_seed_report(2), outside_reference=True),
+        ],
+        _thresholds(),
+    )
+
+    assert evaluation.stability_pass
+    assert not evaluation.functional_profile_pass
+    assert not evaluation.passed
 
 
 def test_ensemble_keeps_stability_failure_separate_from_earth_range_status():
@@ -140,6 +242,14 @@ ensemble_tolerances:
     assert config.face_resolution == 8
     assert config.thresholds.minimum_seed_count == 2
 
+    invalid_profile = config_path.read_text() + "\nfunctional_reference_profile: experimental_v2\n"
+    config_path.write_text(invalid_profile)
+    with pytest.raises(ValueError, match="functional_reference_profile"):
+        BiosphereEnsembleConfig.from_file(config_path)
+
+    config_path.write_text(
+        invalid_profile.replace("experimental_v2", "earth_functional_vegetation_v1")
+    )
     config_path.write_text(config_path.read_text().replace("[1, 2]", "[1, 1]"))
     with pytest.raises(ValueError, match="unique"):
         BiosphereEnsembleConfig.from_file(config_path)

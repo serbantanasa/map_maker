@@ -19,6 +19,8 @@ from . import surface_materials  # noqa: F401
 from . import biosphere_envelope  # noqa: F401
 from . import potential_biosphere  # noqa: F401
 from . import biosphere_validation  # noqa: F401
+from . import functional_vegetation  # noqa: F401
+from . import functional_vegetation_validation  # noqa: F401
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
 from . import geology  # noqa: F401
@@ -49,6 +51,8 @@ def ensure_builtin_stages() -> None:
         "biosphere_envelope": biosphere_envelope,
         "potential_biosphere": potential_biosphere,
         "biosphere_validation": biosphere_validation,
+        "functional_vegetation": functional_vegetation,
+        "functional_vegetation_validation": functional_vegetation_validation,
         "tectonics": tectonics,
         "world_age": world_age,
         "geology": geology,

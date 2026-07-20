@@ -88,8 +88,9 @@ future calibration source. The
 is a reference for keeping phenology, allocation, turnover, and plant hydraulics
 as distinct processes.
 
-The current Earthlike controls use a `0.043` peak PAR-to-chemical conversion
-efficiency in 15b0 and `0.5-50 year` biomass residence bounds in 15b1. The
+The current Earthlike controls use a `0.0421` peak PAR-to-chemical conversion
+efficiency in 15b0, a `0.30 kg C/m2/year` cover half-saturation response, and
+`0.5-45 year` biomass residence bounds in 15b1. The
 residence response uses a `0.10` baseline and weights woody structure,
 resource-conservative strategy, and low productivity by `0.60`, `0.40`, and
 `2.50`. These are profile-calibrated defaults, not universal biological laws;
