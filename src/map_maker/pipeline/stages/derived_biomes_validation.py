@@ -89,10 +89,10 @@ CLIMATE_DISTRIBUTION_SCHEMA = pa.schema(
 @dataclass(frozen=True)
 class DerivedBiomeValidationConfig:
     minimum_reportable_zone_land_fraction: float = 0.005
-    highland_elevation_threshold_m: float = 1_200.0
-    highland_relief_threshold_m: float = 350.0
-    lowland_elevation_maximum_m: float = 800.0
-    lowland_relief_maximum_m: float = 220.0
+    highland_elevation_threshold_m: float = 1_300.0
+    highland_relief_threshold_m: float = 900.0
+    lowland_elevation_maximum_m: float = 850.0
+    lowland_relief_maximum_m: float = 450.0
     wet_support_threshold: float = 0.20
     dry_support_maximum: float = 0.02
     minimum_nontrivial_biome_fraction: float = 0.002
@@ -460,7 +460,7 @@ def derived_biomes_validation_stage(
         ("temperate_open_fraction", 0.12, 0.42),
         ("core_dryland_fraction", 0.12, 0.42),
         ("tundra", 0.02, 0.18),
-        ("alpine", 0.005, 0.10),
+        ("alpine", 0.005, 0.12),
         ("wetland", 0.003, 0.08),
         ("inland_open_water_fraction", 0.005, 0.06),
         ("transition_index", 0.20, 0.75),

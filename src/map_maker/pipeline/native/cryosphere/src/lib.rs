@@ -216,8 +216,7 @@ fn run_model(
                 let surface_elev_m = f64::from(inputs.elevation[cell]).max(0.0);
                 let highland_fraction = (relief_m / 1_600.0 + surface_elev_m / 5_000.0)
                     .clamp(0.0, controls.maximum_highland_fraction);
-                let peak_cooling_km =
-                    controls.relief_elevation_multiplier * relief_m / 1_000.0;
+                let peak_cooling_km = controls.relief_elevation_multiplier * relief_m / 1_000.0;
                 let highland_temperature =
                     temperature_c - controls.lapse_rate_c_per_km * peak_cooling_km;
                 let precipitation = f64::from(inputs.precipitation[offset]);

@@ -599,7 +599,7 @@ mod tests {
     }
 
     fn scores(input: BiomeInputs) -> [f64; BIOME_COUNT] {
-        biome_scores(input, 1_000.0, 3_000.0, 250.0, 800.0)
+        biome_scores(input, 1_100.0, 3_200.0, 700.0, 2_200.0)
     }
 
     #[test]
@@ -653,7 +653,8 @@ mod tests {
         input.temperature_c = -3.0;
         input.growing_season = 0.2;
         input.elevation_m = 2_800.0;
-        input.relief_m = 700.0;
+        // Above earth_relief_v1 highland_relief_full_m start (~700–2200 m).
+        input.relief_m = 1_800.0;
         input.functional = [0.02, 0.0, 0.01, 0.01, 0.08, 0.0, 0.0, 0.25];
         input.nonvegetated = [0.25, 0.0, 0.0, 0.0, 0.38];
         let values = scores(input);

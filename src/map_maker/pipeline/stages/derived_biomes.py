@@ -170,10 +170,12 @@ CATALOG_SCHEMA = pa.schema(
 
 @dataclass(frozen=True)
 class DerivedBiomeConfig:
-    highland_elevation_start_m: float = 1_000.0
-    highland_elevation_full_m: float = 3_000.0
-    highland_relief_start_m: float = 250.0
-    highland_relief_full_m: float = 800.0
+    highland_elevation_start_m: float = 1_100.0
+    highland_elevation_full_m: float = 3_200.0
+    # Calibrated for earth_relief_v1 (face-128 relief P95 ~1–1.5 km), not the
+    # pre-repair P95 ~400 m regime.
+    highland_relief_start_m: float = 700.0
+    highland_relief_full_m: float = 2_200.0
     minimum_classifiable_ground_fraction: float = 0.05
     ambiguity_margin_threshold: float = 0.12
     transition_confidence_weight: float = 0.45
@@ -433,7 +435,7 @@ def dominant_landscape_rgb(landscape: np.ndarray) -> np.ndarray:
         "BiomeCatalog",
         "DerivedBiomeMetadata",
     ),
-    version="v2",
+    version="v3",
     native_libraries=("derived_biomes_native",),
     visualizer=_visualizer,
 )

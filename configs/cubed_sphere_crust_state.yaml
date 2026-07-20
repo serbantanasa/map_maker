@@ -223,7 +223,7 @@ stage_overrides:
     warm_transition_width_c: 12.0
     npp_response_half_saturation_kg_c_m2_year: 0.25
     biomass_response_half_saturation_kg_c_m2: 5.0
-    terrain_relief_half_saturation_m: 500.0
+    terrain_relief_half_saturation_m: 1200.0
     crop_soil_depth_half_saturation_m: 0.5
     strategy_confidence_multiplier: 0.75
     maximum_partition_absolute_error: 0.000001
@@ -232,20 +232,20 @@ stage_overrides:
     maximum_partition_absolute_error: 0.000001
     maximum_reconstruction_absolute_error: 0.000001
   derived_biomes:
-    highland_elevation_start_m: 1000.0
-    highland_elevation_full_m: 3000.0
-    highland_relief_start_m: 250.0
-    highland_relief_full_m: 800.0
+    highland_elevation_start_m: 1100.0
+    highland_elevation_full_m: 3200.0
+    highland_relief_start_m: 700.0
+    highland_relief_full_m: 2200.0
     minimum_classifiable_ground_fraction: 0.05
     ambiguity_margin_threshold: 0.12
     transition_confidence_weight: 0.45
     maximum_partition_absolute_error: 0.000001
   derived_biomes_validation:
     minimum_reportable_zone_land_fraction: 0.005
-    highland_elevation_threshold_m: 1200.0
-    highland_relief_threshold_m: 350.0
-    lowland_elevation_maximum_m: 800.0
-    lowland_relief_maximum_m: 220.0
+    highland_elevation_threshold_m: 1300.0
+    highland_relief_threshold_m: 900.0
+    lowland_elevation_maximum_m: 850.0
+    lowland_relief_maximum_m: 450.0
     wet_support_threshold: 0.20
     dry_support_maximum: 0.02
     minimum_nontrivial_biome_fraction: 0.002

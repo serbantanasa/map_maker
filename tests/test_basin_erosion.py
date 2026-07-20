@@ -313,12 +313,47 @@ def test_native_rejects_even_zero_length_connector_membership():
 
 
 def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: Path):
+    # Deterministic face-16 fixture tuned for earth_relief_v1 terrain: connectors
+    # and process exclusions depend on drainage topology and river thresholds.
     engine = ExecutionEngine(
-        _config(
-            tmp_path,
-            "connector-exclusion",
-            face_resolution=16,
-            rng_seed=4,
+        PipelineConfig.from_mapping(
+            {
+                "topology": "cubed_sphere",
+                "resolutions": [{"face_resolution": 16}],
+                "rng_seed": 34,
+                "run_id": "connector-exclusion",
+                "output_dir": str(tmp_path / "out"),
+                "cache_dir": str(tmp_path / "cache"),
+                "log_dir": str(tmp_path / "logs"),
+                "stage_overrides": {
+                    "tectonics": {
+                        "num_plates": 14,
+                        "continental_fraction": 0.42,
+                        "lloyd_iterations": 3,
+                    },
+                    "world_age": {"world_age": 4.1},
+                    "climate": {
+                        "spinup_years": 8,
+                        "moisture_spinup_years": 2,
+                        "moisture_steps_per_month_at_face_128": 16,
+                    },
+                    "hydrology": {
+                        "river_discharge_threshold_m3s": 20.0,
+                        "river_contributing_area_threshold_km2": 8_000.0,
+                        "river_minimum_discharge_m3s": 2.0,
+                    },
+                    "basin_refinement": {
+                        "refinement_factor": 4,
+                        "terrain_noise_fraction": 0.45,
+                    },
+                    "basin_erosion": {
+                        "minimum_bed_slope": 1e-6,
+                        "maximum_deposition_fraction": 0.35,
+                        "deposition_slope_scale": 0.001,
+                        "maximum_deposition_depth_m": 10.0,
+                    },
+                },
+            }
         )
     )
     results = engine.run(["basin_refinement", "basin_erosion"])

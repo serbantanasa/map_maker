@@ -539,13 +539,14 @@ unsafe fn run_elevation(
         } else {
             0.0
         };
-        // Max-of-processes for cell-mean massifs (no stacking to sky plateaus).
-        let orogenic_raw = (collision_relief
-            + arc_relief
-            + ridge_relief
-            + rift_shoulder
-            + transform_relief
-            + volcanic_relief)
+        // True max-of-processes for cell-mean massifs: one dominant corridor
+        // process sets the mean uplift, not a sum of every active term.
+        let orogenic_raw = collision_relief
+            .max(arc_relief)
+            .max(ridge_relief)
+            .max(rift_shoulder)
+            .max(transform_relief)
+            .max(volcanic_relief)
             .max(distributed_compression)
             .max(0.0);
         let orogenic = orogenic_raw.min(OROGENIC_MEAN_CAP_M);
@@ -598,7 +599,9 @@ unsafe fn run_elevation(
             280.0 + 620.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0))
         } else {
             // Abyssal roughness and fracture-zone scale variation.
-            180.0 + 260.0 * shear[cell].clamp(0.0, 1.0) + 140.0 * age_factor_for_noise(crust_age[cell])
+            180.0
+                + 260.0 * shear[cell].clamp(0.0, 1.0)
+                + 140.0 * age_factor_for_noise(crust_age[cell])
         };
         let background =
             structural_variation * (background_amplitude + 0.08 * orogenic + 0.04 * basin);
@@ -609,16 +612,20 @@ unsafe fn run_elevation(
             // Hard stop: no ~5e3 km² sky plateaus (user contract).
             bedrock = bedrock.min(CONTINENTAL_MEAN_CAP_M);
         }
-        // Subgrid amplitude: peaks over a moderate cell-mean range.
-        // Uses full config height scales + uncapped orogenic potential.
-        let relief_orogen = orogenic_raw.max(orogenic);
+        // Subgrid peak amplitude: full config height of the dominant process,
+        // not a second additive stack on top of orogenic_raw.
+        let peak_process_m = (collision_kernel * collision_height_m)
+            .max(arc_kernel * arc_height_m)
+            .max(if MEAN_OROG_SCALE > 1e-6 {
+                orogenic_raw / MEAN_OROG_SCALE
+            } else {
+                orogenic_raw
+            });
         let relief = (if continental[cell] { 220.0 } else { 110.0 }
-            + 1.05 * relief_orogen
-            + 0.22 * basin
-            + 620.0 * shear[cell].clamp(0.0, 1.0)
-            + 480.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0))
-            + 0.55 * collision_kernel * collision_height_m
-            + 0.35 * arc_kernel * arc_height_m)
+            + 0.72 * peak_process_m
+            + 0.18 * basin
+            + 520.0 * shear[cell].clamp(0.0, 1.0)
+            + 400.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0)))
         .clamp(100.0, 5_500.0);
         let boundary_evidence = (collision_strength[cell]
             * gaussian(collision_distance[cell], 0.0, km_to_radians(700.0)))

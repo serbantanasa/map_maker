@@ -193,7 +193,7 @@ def _elevation_visualizer(
         "ElevationConfidence",
         "ElevationMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("elevation_native",),
     visualizer=_elevation_visualizer,
 )
@@ -270,12 +270,16 @@ def elevation_stage(context, deps, config_mapping: Mapping[str, object]):
             "hotspot_event_count": hotspot_event_count,
             "topology": "cubed_sphere",
             "datum": "provisional_pre_sea_level_zero",
-            "model": "causal_pre_erosion_components_v3_mean_cap_relief_peaks",
+            "model": "causal_pre_erosion_components_v4_max_process_relief_peaks",
             "history_semantics": "initial_morphology_not_eroded_present_day",
+            "mean_orogeny_semantics": "max_of_boundary_processes_scaled_and_capped",
             "mean_orogeny_scale": 0.62,
             "orogenic_mean_cap_m": 3000.0,
             "continental_mean_cap_m": 3500.0,
-            "peak_expression": "terrain_relief_m_subgrid",
+            "continental_bedrock_floor_m": -650.0,
+            "peak_expression": "terrain_relief_m_dominant_process_full_scale",
+            "peak_proxy_semantics": "surface_elevation_m + 0.45 * terrain_relief_m",
+            "peak_proxy_relief_coefficient": 0.45,
         }
     )
     context.logger.log_event({"type": "elevation_summary", "stage": "elevation", **metadata})

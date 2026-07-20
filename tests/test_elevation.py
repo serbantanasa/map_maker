@@ -135,9 +135,12 @@ def test_elevation_outputs_causal_components_and_visuals(tmp_path: Path):
     assert float(np.median(segment_variation)) > 0.20
 
     metadata = elevation.artifact_records["ElevationMetadata"].value
-    assert metadata["model"] == "causal_pre_erosion_components_v3_mean_cap_relief_peaks"
+    assert metadata["model"] == "causal_pre_erosion_components_v4_max_process_relief_peaks"
     assert metadata["continental_mean_cap_m"] == 3500.0
     assert metadata["orogenic_mean_cap_m"] == 3000.0
+    assert metadata["mean_orogeny_scale"] == 0.62
+    assert metadata["mean_orogeny_semantics"] == "max_of_boundary_processes_scaled_and_capped"
+    assert metadata["peak_proxy_relief_coefficient"] == 0.45
     assert metadata["history_semantics"] == "initial_morphology_not_eroded_present_day"
     assert metadata["continental_mean_m"] > metadata["oceanic_mean_m"]
     assert metadata["elevation_min_m"] == pytest.approx(float(np.min(bedrock)), abs=1e-3)

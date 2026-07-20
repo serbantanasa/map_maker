@@ -215,7 +215,51 @@ def test_depression_catalog_accepts_an_empty_candidate_set():
 
 
 def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
-    engine = ExecutionEngine(_config(tmp_path, "pass2", rng_seed=4), generate_visuals=True)
+    # Face-16 seed 34 with earth_relief_v1-compatible hydrology thresholds still
+    # produces connectors and process exclusions after the terrain change.
+    engine = ExecutionEngine(
+        PipelineConfig.from_mapping(
+            {
+                "topology": "cubed_sphere",
+                "resolutions": [{"face_resolution": 16}],
+                "rng_seed": 34,
+                "run_id": "pass2",
+                "output_dir": str(tmp_path / "out"),
+                "cache_dir": str(tmp_path / "cache"),
+                "log_dir": str(tmp_path / "logs"),
+                "stage_overrides": {
+                    "tectonics": {
+                        "num_plates": 14,
+                        "continental_fraction": 0.42,
+                        "lloyd_iterations": 3,
+                    },
+                    "world_age": {"world_age": 4.1},
+                    "climate": {
+                        "spinup_years": 8,
+                        "moisture_spinup_years": 2,
+                        "moisture_steps_per_month_at_face_128": 16,
+                    },
+                    "hydrology": {
+                        "river_discharge_threshold_m3s": 20.0,
+                        "river_contributing_area_threshold_km2": 8_000.0,
+                        "river_minimum_discharge_m3s": 2.0,
+                    },
+                    "basin_refinement": {
+                        "refinement_factor": 4,
+                        "terrain_noise_fraction": 0.45,
+                    },
+                    "basin_erosion": {
+                        "minimum_bed_slope": 1e-6,
+                        "maximum_deposition_fraction": 0.35,
+                        "deposition_slope_scale": 0.001,
+                        "maximum_deposition_depth_m": 10.0,
+                    },
+                    "hydrology_pass2": {"minimum_depression_depth_m": 5.0},
+                },
+            }
+        ),
+        generate_visuals=True,
+    )
     results = engine.run(["basin_erosion", "hydrology_pass2"])
     erosion = results["basin_erosion"]
     result = results["hydrology_pass2"]
