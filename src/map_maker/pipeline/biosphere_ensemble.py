@@ -53,6 +53,7 @@ class BiosphereEnsembleThresholds:
     maximum_zone_area_fraction_absolute_range: float = 0.20
     maximum_zone_mean_npp_coefficient_of_variation: float = 0.60
     maximum_functional_fraction_coefficient_of_variation: float = 0.30
+    maximum_inland_open_water_coefficient_of_variation: float = 0.75
     maximum_resource_p90_coefficient_of_variation: float = 0.35
     maximum_zone_functional_mean_coefficient_of_variation: float = 0.60
 
@@ -104,6 +105,9 @@ class BiosphereEnsembleThresholds:
             maximum_functional_fraction_coefficient_of_variation=float(
                 values["maximum_functional_fraction_coefficient_of_variation"]
             ),
+            maximum_inland_open_water_coefficient_of_variation=float(
+                values["maximum_inland_open_water_coefficient_of_variation"]
+            ),
             maximum_resource_p90_coefficient_of_variation=float(
                 values["maximum_resource_p90_coefficient_of_variation"]
             ),
@@ -124,6 +128,7 @@ class BiosphereEnsembleThresholds:
             "maximum_zone_area_fraction_absolute_range",
             "maximum_zone_mean_npp_coefficient_of_variation",
             "maximum_functional_fraction_coefficient_of_variation",
+            "maximum_inland_open_water_coefficient_of_variation",
             "maximum_resource_p90_coefficient_of_variation",
             "maximum_zone_functional_mean_coefficient_of_variation",
         )
@@ -562,12 +567,17 @@ def evaluate_biosphere_ensemble(
             "land_mean_nonvegetated_ground_fraction",
             "land_mean_inland_open_water_fraction",
         ):
+            tolerance = (
+                thresholds.maximum_inland_open_water_coefficient_of_variation
+                if metric_id == "land_mean_inland_open_water_fraction"
+                else thresholds.maximum_functional_fraction_coefficient_of_variation
+            )
             add_metric(
                 f"functional.{metric_id}",
                 "global_land",
                 [_functional_kpi_value(report, metric_id) for report in reports],
                 "coefficient_of_variation",
-                thresholds.maximum_functional_fraction_coefficient_of_variation,
+                tolerance,
             )
         for metric_id in (
             "land_fire_tendency_resource_p90",

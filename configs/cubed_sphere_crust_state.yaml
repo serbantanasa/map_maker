@@ -34,7 +34,7 @@ stage_overrides:
     climate_sensitivity_c_per_co2_doubling: 3.0
   tectonics:
     num_plates: 24
-    continental_fraction: 0.35
+    continental_fraction: 0.42
     lloyd_iterations: 4
     velocity_scale: 1.0
     drift_bias: 0.15
@@ -52,6 +52,12 @@ stage_overrides:
     ridge_height_m: 1800.0
     trench_depth_m: 3600.0
     rift_depth_m: 950.0
+  sea_level:
+    target_ocean_area_fraction: 0.65
+    shelf_depth_m: 200.0
+    minimum_coastal_relief_m: 40.0
+    coastal_relief_scale: 0.45
+    maximum_fractional_area_error: 0.000001
   climate:
     spinup_years: 24
     moisture_spinup_years: 3
@@ -96,7 +102,7 @@ stage_overrides:
     maximum_fill_time_years: 50000.0
     lake_seepage_mm_year: 30.0
     subgrid_relief_scale: 1.0
-    subgrid_connected_basin_fraction: 0.50
+    subgrid_connected_basin_fraction: 0.85
     breach_score_threshold: 0.58
     maximum_breach_incision_m: 800.0
     breach_length_cells: 4
@@ -180,7 +186,7 @@ stage_overrides:
     nutrient_half_saturation_index: 0.5
     co2_half_saturation_pa: 20.0
     reference_oxygen_partial_pressure_kpa: 21.22
-    photosynthetic_conversion_efficiency: 0.0421
+    photosynthetic_conversion_efficiency: 0.0295
     minimum_productive_energy_mj_m2_year: 5.0
     nonreference_profile_confidence_multiplier: 0.75
     maximum_annual_aggregation_relative_error: 0.00001
@@ -222,3 +228,12 @@ stage_overrides:
     minimum_reportable_zone_land_fraction: 0.005
     maximum_partition_absolute_error: 0.000001
     maximum_reconstruction_absolute_error: 0.000001
+  derived_biomes:
+    highland_elevation_start_m: 1000.0
+    highland_elevation_full_m: 3000.0
+    highland_relief_start_m: 250.0
+    highland_relief_full_m: 800.0
+    minimum_classifiable_ground_fraction: 0.05
+    ambiguity_margin_threshold: 0.12
+    transition_confidence_weight: 0.45
+    maximum_partition_absolute_error: 0.000001

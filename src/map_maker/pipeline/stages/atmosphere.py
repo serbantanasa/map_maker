@@ -100,7 +100,7 @@ def _artifact_mapping(result: StageResult, name: str) -> Mapping[str, object]:
 
 @stage(
     "atmosphere",
-    inputs=("planet", "elevation"),
+    inputs=("planet", "elevation", "sea_level"),
     outputs=(
         "SurfacePressureKPa",
         "OxygenPartialPressureKPa",
@@ -109,7 +109,7 @@ def _artifact_mapping(result: StageResult, name: str) -> Mapping[str, object]:
         "AtmosphericCompositionCatalog",
         "AtmosphereMetadata",
     ),
-    version="v1",
+    version="v2",
 )
 def atmosphere_stage(
     context: PipelineContext,
@@ -133,7 +133,7 @@ def atmosphere_stage(
         raise RuntimeError("atmospheric scale height is invalid")
 
     elevation = np.asarray(
-        _artifact_array(deps["elevation"], "BedrockElevationM"), dtype=np.float64
+        _artifact_array(deps["sea_level"], "SurfaceElevationM"), dtype=np.float64
     )
     atmospheric_height = np.maximum(elevation, 0.0)
     pressure = config.mean_surface_pressure_kpa * np.exp(-atmospheric_height / scale_height_m)

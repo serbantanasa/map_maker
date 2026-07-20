@@ -448,7 +448,7 @@ def _reach_loss_catalog(
         "climate",
         "cryosphere",
         "basin_refinement",
-        "world_age",
+        "sea_level",
         "planet",
     ),
     outputs=(
@@ -456,7 +456,7 @@ def _reach_loss_catalog(
         "HydrologyReachLossCatalog",
         "HydrologyValidationMetadata",
     ),
-    version="v8",
+    version="v9",
 )
 def hydrology_validation_stage(
     context: PipelineContext,
@@ -482,7 +482,7 @@ def hydrology_validation_stage(
 
     planet_radius_km = _metadata_float(planet_metadata, "planet_radius_earth") * EARTH_RADIUS_KM
     areas_km2 = np.asarray(context.topology.cell_areas, dtype=np.float64) * planet_radius_km**2
-    land_mask = _artifact_array(deps["world_age"], "BaseOceanMask") < 0.5
+    land_mask = _artifact_array(deps["sea_level"], "SurfaceOceanMask") < 0.5
     land_area_km2 = float(np.sum(areas_km2[land_mask]))
 
     monthly_snowfall = np.asarray(

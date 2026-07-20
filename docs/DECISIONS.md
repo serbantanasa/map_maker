@@ -2073,3 +2073,96 @@ Named biomes are easy to make visually persuasive even when the underlying
 ecology is wrong. Calibrating conserved mixtures and causal climate responses
 first gives later biome labels an auditable basis and preserves better state
 for regional refinement and surrogate training.
+
+## Decision 042: Continental Crust Is Not The Shoreline
+
+Status: approved and implemented
+
+Decision:
+Replace the six-focus continental-crust score and the downstream use of
+`BaseOceanMask` as literal water. Continental crust is assembled from multiple
+curved terrane chains, accreted branches, rift corridors, interior basins,
+microcontinents, and oceanic separators. Compact-support fields prevent weak
+Gaussian tails from joining unrelated assemblies. This crust state remains
+geological substrate, not a finished map.
+
+After elevation, a dedicated Rust sea-level stage solves the largest connected
+low-elevation component to the configured ocean target. Other low components
+remain inland depressions. The stage publishes a discrete connected-ocean mask
+for topology, an area-conservative fractional coast for coarse physical state,
+signed elevation relative to the solved datum, ocean depth, shelf fraction,
+coastal cells, and inland-below-sea-level evidence.
+
+For the canonical Earthlike profile, continental-crust candidate area is
+`42%`, fractional ocean area is `65%`, and emerged land remains the approved
+`35%`. Crust share and land share are independent controls. `BaseOceanMask`
+retains only its documented oceanic-crust-candidate semantics; surface stages
+must consume the new sea-level artifacts.
+
+Validation:
+The face-128 seed-42 surface has `35.0%` emerged land, ten significant
+landmasses, a largest-landmass share of `44.6%`, `4,948` directed land-to-ocean
+coast edges, `3.96%` shelf area, and `0.95%` inland below-sea-level area. The
+fixed six-seed face-64 screen closes fractional ocean area at `65.0%` in every
+world. Largest-landmass share spans `39.4-67.9%`, significant landmasses span
+`8-16`, and coastline edges span `2,064-2,960`.
+
+The truth-render screen includes split continents, rifted supercontinents,
+archipelago-heavy worlds, deep gulfs, long narrow seas, peninsulas, islands,
+and enclosed basins. Occasional supercontinent-like outcomes remain valid, but
+six similarly sized round blobs and one accidental almost-global land weld are
+hard failures.
+
+The largest-landmass coastline-complexity metric compares its approximate
+coast length with the minimum perimeter of a same-area spherical cap. The
+canonical face-128 value is `4.43`; the six face-64 Earth-profile seeds span
+`3.12-6.27`. The regression floor is `2.0`, well above the approximately
+round, grid-sampled baseline.
+
+Reason:
+The prior model used six orthogonal crust foci and selected the top area-ranked
+cells. It therefore generated six compact blobs by construction. Giving
+continental and oceanic crust a multi-kilometre elevation gap, then targeting
+the ocean fraction equal to oceanic-crust area, forced sea level into that gap
+and made every coastline identical to the crust boundary. No downstream
+climate, erosion, hydrology, or biome work could repair that topology.
+
+## Decision 043: Recalibrate After Surface-Geography Repair
+
+Status: approved and implemented
+
+Decision:
+Treat the Decision 042 geography correction as a changed physical model, not
+as a render-only adjustment. Rebuild native libraries explicitly, invalidate
+all downstream stage caches, replay the fixed ensemble, and recalibrate only
+named process parameters whose old values depended on the invalid shoreline.
+Decision 041's figures remain the historical pre-repair baseline and are
+superseded by this decision for current runs.
+
+The Earthlike peak PAR-to-chemical conversion efficiency is `0.0295`. The
+subgrid connected-basin fraction is `0.85`, preserving open overflow while
+allowing unresolved depressions to retain realistic fractional water area.
+Climate-stratum area absolute range is allowed up to `0.22`; inland open water
+has a dedicated coefficient-of-variation ceiling of `0.75` because sparse
+closed basins are intrinsically more seed-sensitive than vegetation fractions.
+No generated field is clamped to an Earth observation range.
+
+`SurfaceOceanFraction` is physically active rather than merely persisted:
+coastal albedo, thermal response, initial atmospheric moisture, evaporation,
+and land/ocean condensation fluxes are area-weighted. Binary
+`SurfaceOceanMask` remains authoritative only where connected topology or one
+explicit surface class is required.
+
+Validation:
+The canonical face-128 seed passes every hard and Earth diagnostic with
+`50.28 Pg C/year` potential NPP, `844.54 Pg C` potential biomass, `44.35%`
+functional vegetation, and `3.17%` inland open water over land. All six
+face-64 worlds pass both Earth profiles and ensemble tolerances. Their NPP
+spans `54.78-73.02 Pg C/year`, biomass `888.33-1,061.11 Pg C`, functional
+vegetation `47.27-56.45%`, and inland open water `0.93-3.32%`.
+
+Reason:
+Replacing compact crust blobs with separated terranes, rifts, shelves, and a
+connected ocean increased coastal exposure and changed precipitation,
+hydrology, and productivity. Retaining the old calibration would have hidden
+that causal change and made cache provenance misleading.

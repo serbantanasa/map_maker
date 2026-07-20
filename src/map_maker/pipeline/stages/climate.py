@@ -310,7 +310,7 @@ MONTHLY_SCALAR_OUTPUTS = (
 
 @stage(
     "climate",
-    inputs=("planet", "atmosphere", "elevation", "world_age"),
+    inputs=("planet", "atmosphere", "elevation", "sea_level"),
     outputs=(
         *MONTHLY_SCALAR_OUTPUTS,
         "MonthlyWindVectorXYZMps",
@@ -320,7 +320,7 @@ MONTHLY_SCALAR_OUTPUTS = (
         "AnnualAridityIndex",
         "ClimateMetadata",
     ),
-    version="v5",
+    version="v7",
     native_libraries=("climate_native",),
     visualizer=_climate_visualizer,
 )
@@ -353,7 +353,7 @@ def climate_stage(
     planet = deps["planet"]
     atmosphere = deps["atmosphere"]
     elevation = deps["elevation"]
-    world_age = deps["world_age"]
+    sea_level = deps["sea_level"]
     effective_transport_steps = max(
         2,
         round(config.moisture_steps_per_month_at_face_128 * context.topology.face_resolution / 128),
@@ -361,9 +361,7 @@ def climate_stage(
     effective_diffusion_substeps = max(
         1,
         round(
-            config.moisture_diffusion_substeps_at_face_128
-            * context.topology.face_resolution
-            / 128
+            config.moisture_diffusion_substeps_at_face_128 * context.topology.face_resolution / 128
         ),
     )
     effective_moisture_steps = effective_transport_steps * effective_diffusion_substeps
@@ -400,9 +398,9 @@ def climate_stage(
             neighbors=context.topology.neighbor_indices,
             xyz=context.topology.xyz,
             latitudes=context.topology.latitude,
-            elevation=_artifact_array(elevation, "BedrockElevationM"),
+            elevation=_artifact_array(sea_level, "SurfaceElevationM"),
             relief=_artifact_array(elevation, "TerrainReliefM"),
-            ocean=_artifact_array(world_age, "BaseOceanMask"),
+            ocean=_artifact_array(sea_level, "SurfaceOceanFraction"),
             insolation=_artifact_array(planet, "MonthlyInsolationWm2"),
             declination=_artifact_array(planet, "SolarDeclinationRad"),
             climate_orography_out=views["ClimateOrographyM"],
@@ -430,9 +428,7 @@ def climate_stage(
             "effective_transport_steps_per_month": effective_transport_steps,
             "effective_moisture_diffusion_substeps": effective_diffusion_substeps,
             "effective_moisture_steps_per_month": effective_moisture_steps,
-            "effective_moisture_advection_fraction": (
-                effective_moisture_advection_fraction
-            ),
+            "effective_moisture_advection_fraction": (effective_moisture_advection_fraction),
             "effective_synoptic_mixing_passes": effective_synoptic_mixing_passes,
             "transport_reference_face_resolution": 128,
             "topology": "cubed_sphere",

@@ -1,52 +1,120 @@
-# Stage 2 – Ocean Fraction & Base Sea-Level *(Deprecated)*
+# Connected Sea Level And Surface Geography
 
-> **Status:** Deprecated. As of 2025-10-24 00:33 UTC we removed the sea-level stage from the next-generation pipeline. Land/ocean classification now emerges from tectonic plate outputs (Stage 3), where continental/oceanic plates are assigned directly and downstream stages derive elevation and coastlines from tectonics-driven data.
+## Status
 
-## Responsibilities
-- Establish initial land/ocean mask hitting target sea fraction.
-- Provide coarse proto-basins to guide subsequent tectonic uplift.
-- Expose tunable biases (latitudinal, noise amplitude).
-- Execute primarily in Rust (SIMD) with optional GPU backend deferred for later.
+Canonical cubed-sphere V1 implemented. All canonical surface consumers now use
+the solved sea-level artifacts; only geological and explicitly legacy stages
+retain the crust-class compatibility mask.
+
+## Purpose
+
+Convert continuous post-tectonic elevation into present-day emerged land,
+connected ocean, continental shelf, coarse fractional coastline, and a solved
+vertical datum. Continental versus oceanic crust is geological evidence; it is
+not a shoreline.
+
+The Earthlike profile currently uses approximately `42%` continental-crust
+candidate area and independently targets `65%` ocean area, retaining the
+approved `35%` emerged-land world while allowing continental margins and rifts
+to flood. Other world profiles may choose different values.
 
 ## Inputs
-- `TopologyMetadata`, `ResolutionSet`.
-- Config: `target_ocean_fraction` (0–1), `lat_bias_curve`, `smoothing_kernel`, `proto_basin_seed`.
 
-## Algorithm
-1. **Low-frequency Noise Generation (Rust)**
-   - SIMD-friendly fBm noise generated directly at target resolution using `wide` or `packed_simd`; GPU path optional later.
-   - Parameters `noise_octaves`, `noise_scale`, `noise_gain`.
-2. **Latitudinal Bias**
-   - Compute weighting function `w(lat)` from precomputed topology trig tables.
-   - Combine via fused multiply-add for cache efficiency: `score = noise + bias`.
-3. **Binary Search Threshold**
-   - Rust routine performing area-weighted histogram to find `t` achieving target fraction within ±0.3%.
-4. **Morphological Smoothing**
-   - SIMD Gaussian blur (separable convolution) plus optional diffusion iterations.
-   - Re-threshold to maintain fraction.
-5. **Outputs**
-   - `BaseOceanMask`: boolean grid (bit-packed to reduce memory).
-   - `SeaLevelThreshold`: float.
-   - `ProtoBasinField`: float map for tectonics seeding.
+- Cubed-sphere cell areas and reciprocal D4 neighbors.
+- `BedrockElevationM`: continuous provisional-datum elevation.
+- `TerrainReliefM`: unresolved within-cell relief used as coastal hypsometry.
+- Target ocean area fraction and shelf/coastal controls.
 
-## Performance
-- Rust SIMD implementation targets <0.3 s on 8 k grid.
-- Optional GPU backend (Metal) may be added later but not required initially.
-- Python receives only handles; no large array copies.
+`BaseOceanMask` is deliberately not an input. It remains a compatibility name
+for oceanic-crust candidates in `world_age` and must not be interpreted as
+surface water.
 
-## Logging
-- Report target vs actual fraction, number of smoothing iterations, min/max noise values, threshold.
-- Save preview (PNG) if debug flag.
+## Connected-Ocean Solve
 
-## Testing
-- Unit tests verifying:
-  - Binary search converges to within tolerance for sample configs.
-  - Lat bias extremes (all ocean at poles) behave as expected.
-  - Morphological smoothing maintains ocean connectivity.
-  - Rust/Python results match reference within epsilon.
+1. Sort cells by bedrock elevation, activate equal-elevation groups from low to
+   high, and maintain connected component area with union-find.
+2. Select the first level whose largest connected low component reaches the
+   target ocean area. That component is the global ocean.
+3. Low components not connected to the global ocean remain inland
+   below-sea-level terrain. Hydrology may later make them dry basins, lakes,
+   wetlands, or connected seas; sea level does not silently flood them.
+4. Subtract the solved datum from bedrock to publish signed surface elevation.
 
-### Deprecation Notes
-- The ocean mask and proto-basin outputs described here are no longer generated. Instead:
-  - `PlateField[..., 1]` from Stage 3 stores continental vs oceanic classification.
-  - Boundary and hotspot rasters supply the cues previously derived from `ProtoBasinField`.
-- Any references to `BaseOceanMask`, `SeaLevelThreshold`, or `ProtoBasinField` should be updated to consume the tectonics outputs.
+This is an area-constrained V1 approximation. A later water-volume and
+isostatic solver may replace the prescribed target without changing the output
+contract.
+
+## Fractional Coast And Shelf
+
+Coarse shoreline cells are mixed-area containers. Interior ocean cells have
+ocean fraction one and interior land cells zero. Cells touching the discrete
+shore use a logistic hypsometric response derived from relative elevation and
+unresolved relief. A deterministic logit shift closes the area-weighted global
+fraction exactly while preserving spatial rank.
+
+`SurfaceOceanMask` remains discrete for drainage topology and connectivity.
+`SurfaceOceanFraction` is authoritative for physical coarse area, climate
+mixing, storage, rendering, and regional refinement. Neither representation
+deletes persistent subgrid straits, islands, or basin objects required by
+Decision 011.
+
+Continental shelf fraction is the ocean-covered fraction whose unresolved
+surface plausibly lies within the configured shelf depth. It is not a crust
+class and is allowed over either crust type.
+
+## Outputs
+
+- `SurfaceOceanMask`: center-class connected global-ocean mask.
+- `SurfaceOceanFraction`: fractional ocean area in `[0, 1]`.
+- `SurfaceElevationM`: bedrock elevation relative to solved sea level.
+- `OceanDepthM`: center depth for connected-ocean cells.
+- `ContinentalShelfFraction`: fractional shallow connected ocean.
+- `CoastalCellMask`: cells crossing the discrete shoreline.
+- `InlandBelowSeaLevelMask`: low cells excluded from the connected ocean.
+- `SeaLevelMetadata`: datum, global fractions, component morphology, shelves,
+  inland basins, extremes, coastline edge count, and largest-landmass spherical
+  coastline complexity.
+
+## Required Invariants
+
+- Area-weighted fractional ocean coverage meets its target within configured
+  tolerance.
+- The center-class ocean is one connected component across cube-face seams.
+- Isolated low basins are not mislabeled as ocean.
+- Surface elevation differs from bedrock by one global datum only.
+- Fractions are finite and bounded; depths and shelf fractions are nonnegative.
+- Identical seed, configuration, topology, and native version reproduce
+  identical outputs.
+- Crust class and surface-ocean class differ in an Earthlike run.
+- Earthlike morphology retains multiple significant landmasses and may not
+  collapse into six compact, near-circular components.
+- The largest landmass must exceed the configured anti-blob coastline-
+  complexity floor. This is measured against the minimum perimeter of a
+  same-area spherical cap; the fixed Earthlike regression floor is `2.0`.
+
+## Validation
+
+- Analytic connected and isolated basins.
+- Exact area reconstruction from fractional coverage.
+- Cross-face global-ocean connectivity.
+- Determinism and FFI buffer validation.
+- Fixed six-seed morphology screen using component share, significant-landmass
+  count, coastline complexity, shelf area, and inland-basin area.
+- Canonical cube-net and equirectangular truth renders reviewed for round blobs,
+  accidental isthmuses, straight corridors, polar projection artifacts, lost
+  islands, and implausible fragmentation.
+
+The canonical face-128 seed has ten significant landmasses, a `44.6%`
+largest-landmass share, `4,948` land-to-ocean edges, and a `4.43` largest-
+landmass coastline-complexity ratio. The six face-64 Earth-profile seeds span
+`3.12-6.27`, above the `2.0` anti-blob gate.
+
+## Deferred Work
+
+- Water-volume, thermal-expansion, glacial, and sediment-displacement sea-level
+  feedback.
+- Tides and moon-dependent intertidal area.
+- Dynamic shelf sedimentation, coastal erosion, deltas, and barrier systems.
+- Persistent vector coastlines, straits, and island identities through all
+  resolution levels.
+- Cartographic projection and generalized coastline products for the atlas.

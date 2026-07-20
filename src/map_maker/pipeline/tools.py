@@ -270,6 +270,7 @@ def main(args: Iterable[str] | None = None) -> int:
             "world_age",
             "geology",
             "elevation",
+            "sea_level",
             "climate",
             "cryosphere",
             "hydrology",
@@ -287,6 +288,7 @@ def main(args: Iterable[str] | None = None) -> int:
             "biosphere_validation",
             "functional_vegetation",
             "functional_vegetation_validation",
+            "derived_biomes",
         ],
         default="topology",
     )
@@ -353,6 +355,8 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = _register_geology_stage()
         elif parsed.stage == "elevation":
             stage_name = _register_elevation_stage()
+        elif parsed.stage == "sea_level":
+            stage_name = "sea_level"
         elif parsed.stage == "climate":
             stage_name = "climate"
         elif parsed.stage == "cryosphere":
@@ -385,6 +389,8 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "functional_vegetation"
         elif parsed.stage == "functional_vegetation_validation":
             stage_name = "functional_vegetation_validation"
+        elif parsed.stage == "derived_biomes":
+            stage_name = "derived_biomes"
         else:
             stage_name = "surface_water_final"
         started = time.perf_counter()
@@ -409,6 +415,7 @@ def main(args: Iterable[str] | None = None) -> int:
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",
@@ -426,6 +433,7 @@ def main(args: Iterable[str] | None = None) -> int:
         "biosphere_validation",
         "functional_vegetation",
         "functional_vegetation_validation",
+        "derived_biomes",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

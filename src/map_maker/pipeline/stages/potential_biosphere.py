@@ -213,13 +213,13 @@ def _visualizer(
 
 @stage(
     "potential_biosphere",
-    inputs=("biosphere_envelope", "surface_materials", "climate", "world_age"),
+    inputs=("biosphere_envelope", "surface_materials", "climate", "sea_level"),
     outputs=(
         *MONTHLY_POTENTIAL_BIOSPHERE_OUTPUTS,
         *SCALAR_POTENTIAL_BIOSPHERE_OUTPUTS,
         "PotentialBiosphereMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("potential_biosphere_native",),
     visualizer=_visualizer,
 )
@@ -268,7 +268,7 @@ def potential_biosphere_stage(
     envelope = deps["biosphere_envelope"]
     surface_materials = deps["surface_materials"]
     climate = deps["climate"]
-    world_age = deps["world_age"]
+    sea_level = deps["sea_level"]
     with context.timed("trait_first_potential_biosphere_kernel"):
         metadata = run_potential_biosphere(
             energy_per_kg_carbon_mj=config.energy_per_kg_carbon_mj,
@@ -295,7 +295,7 @@ def potential_biosphere_stage(
             maximum_standing_biomass_kg_c_m2=(config.maximum_standing_biomass_kg_c_m2),
             areas=np.ascontiguousarray(context.topology.cell_areas, dtype=np.float64),
             ocean=np.ascontiguousarray(
-                _artifact_array(world_age, "BaseOceanMask"), dtype=np.float32
+                _artifact_array(sea_level, "SurfaceOceanMask"), dtype=np.float32
             ),
             monthly_primary_energy=np.ascontiguousarray(
                 _artifact_array(envelope, "MonthlyTerrestrialPrimaryEnergyPotentialMJm2"),
@@ -382,7 +382,7 @@ def potential_biosphere_stage(
         values = np.asarray(views[name])
         if np.any(values < 0.0) or np.any(values > maximum + 1e-5):
             raise RuntimeError(f"{name} exceeds its configured physical bound")
-    ocean = _artifact_array(world_age, "BaseOceanMask") >= 0.5
+    ocean = _artifact_array(sea_level, "SurfaceOceanMask") >= 0.5
     terrestrial_outputs = (
         "AnnualPotentialNPPKgCM2",
         "PotentialVegetationCoverFraction",

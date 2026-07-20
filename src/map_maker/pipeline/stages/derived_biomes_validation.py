@@ -1,4 +1,4 @@
-"""Earth-reference calibration for functional vegetation and resource potentials."""
+"""Earth-reference calibration for derived familiar-biome mixtures."""
 
 from __future__ import annotations
 
@@ -12,48 +12,42 @@ from ..cubed_sphere import CubedSphereGrid
 from ..models import StageResult
 from ..registry import stage
 from .biosphere_validation import CLIMATE_STRATA, classify_climate_strata
+from .derived_biomes import BIOMES
 
 if TYPE_CHECKING:
     from ..execution import PipelineContext
 
 
-REFERENCE_PROFILE_VERSION = "earth_functional_vegetation_v1"
+REFERENCE_PROFILE_VERSION = "earth_biomes_v1"
 
 EARTH_REFERENCE_PROFILE = (
     {
-        "reference_id": "modis_vcf_c61",
-        "title": "MODIS Vegetation Continuous Fields Collection 6.1",
-        "url": "https://modis-land.gsfc.nasa.gov/vcc.html",
-        "supports": ["fractional_vegetation_structure"],
-        "summary": "Global subpixel tree, non-tree vegetation, and nonvegetated cover.",
+        "reference_id": "olson_2001_terrestrial_ecoregions",
+        "title": "Terrestrial Ecoregions of the World",
+        "url": "https://doi.org/10.1641/0006-3568(2001)051[0933:TEOTWA]2.0.CO;2",
+        "supports": ["global_biome_taxonomy", "ecotone_interpretation"],
+        "summary": "Fourteen broad terrestrial biomes containing 867 ecoregions.",
     },
     {
-        "reference_id": "hengl_2018_potential_natural_vegetation",
-        "title": "Global mapping of potential natural vegetation",
-        "url": "https://doi.org/10.1111/geb.12759",
-        "supports": ["potential_natural_vegetation_structure"],
-        "summary": "Climate-conditioned potential vegetation independent of modern land use.",
+        "reference_id": "dinerstein_2017_ecoregions",
+        "title": "An Ecoregion-Based Approach to Protecting Half the Terrestrial Realm",
+        "url": "https://doi.org/10.1093/biosci/bix014",
+        "supports": ["global_biome_area_ranges"],
+        "summary": "Updated ecoregions and terrestrial area shares for fourteen biomes.",
     },
     {
         "reference_id": "schulte_2025_potential_ecosystems",
         "title": "Limited carbon sequestration potential from global ecosystem restoration",
         "url": "https://doi.org/10.1038/s41561-025-01742-z",
-        "supports": ["woody_herbaceous_shrub_wetland_ranges"],
-        "summary": "Broad global potential forest, shrubland, grassland, and wetland extents.",
+        "supports": ["potential_forest_shrub_grass_wetland_mixtures"],
+        "summary": "Potential ecosystem fractions permit forest-grass-shrub mosaics.",
     },
     {
-        "reference_id": "glwd_v2",
-        "title": "Global Lakes and Wetlands Database version 2",
-        "url": "https://doi.org/10.5194/essd-17-2277-2025",
-        "supports": ["hydrophytic_and_inland_water_ranges"],
-        "summary": "Fractional global inland-water and wetland maximum extents.",
-    },
-    {
-        "reference_id": "gfed4_burned_area",
-        "title": "Analysis of burned area using GFED4",
-        "url": "https://doi.org/10.1002/jgrg.20042",
-        "supports": ["fire_climate_structure"],
-        "summary": "Savannas dominate observed global burned area.",
+        "reference_id": "islscp_ii_potential_natural_vegetation",
+        "title": "ISLSCP II Potential Natural Vegetation Cover",
+        "url": "https://doi.org/10.3334/ORNLDAAC/961",
+        "supports": ["potential_natural_vegetation_classes"],
+        "summary": "Fifteen major potential-natural vegetation classes plus water.",
     },
 )
 
@@ -93,18 +87,25 @@ CLIMATE_DISTRIBUTION_SCHEMA = pa.schema(
 
 
 @dataclass(frozen=True)
-class FunctionalVegetationValidationConfig:
+class DerivedBiomeValidationConfig:
     minimum_reportable_zone_land_fraction: float = 0.005
+    highland_elevation_threshold_m: float = 1_200.0
+    highland_relief_threshold_m: float = 350.0
+    lowland_elevation_maximum_m: float = 800.0
+    lowland_relief_maximum_m: float = 220.0
+    wet_support_threshold: float = 0.20
+    dry_support_maximum: float = 0.02
+    minimum_nontrivial_biome_fraction: float = 0.002
     maximum_partition_absolute_error: float = 1e-6
     maximum_reconstruction_absolute_error: float = 1e-6
 
     @classmethod
-    def from_mapping(cls, mapping: Mapping[str, object]) -> "FunctionalVegetationValidationConfig":
+    def from_mapping(cls, mapping: Mapping[str, object]) -> "DerivedBiomeValidationConfig":
         known = set(cls.__dataclass_fields__)
         unknown = set(mapping) - known
         if unknown:
             raise ValueError(
-                "Unknown functional-vegetation-validation controls: " + ", ".join(sorted(unknown))
+                f"Unknown derived-biome-validation controls: {', '.join(sorted(unknown))}"
             )
         values: dict[str, float] = {}
         for name, field in cls.__dataclass_fields__.items():
@@ -116,8 +117,20 @@ class FunctionalVegetationValidationConfig:
                 raise ValueError(f"{name} must be finite")
             values[name] = value
         config = cls(**values)
-        if not 0.0 <= config.minimum_reportable_zone_land_fraction <= 1.0:
-            raise ValueError("minimum_reportable_zone_land_fraction must be in [0, 1]")
+        for name in (
+            "minimum_reportable_zone_land_fraction",
+            "wet_support_threshold",
+            "dry_support_maximum",
+            "minimum_nontrivial_biome_fraction",
+        ):
+            if not 0.0 <= getattr(config, name) <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1]")
+        if config.dry_support_maximum >= config.wet_support_threshold:
+            raise ValueError("dry_support_maximum must be below wet_support_threshold")
+        if config.lowland_elevation_maximum_m >= config.highland_elevation_threshold_m:
+            raise ValueError("lowland elevation maximum must be below highland threshold")
+        if config.lowland_relief_maximum_m >= config.highland_relief_threshold_m:
+            raise ValueError("lowland relief maximum must be below highland threshold")
         if config.maximum_partition_absolute_error <= 0.0:
             raise ValueError("maximum_partition_absolute_error must be positive")
         if config.maximum_reconstruction_absolute_error <= 0.0:
@@ -203,42 +216,58 @@ def _climate_distribution_catalog(
 
 
 @stage(
-    "functional_vegetation_validation",
-    inputs=("functional_vegetation", "biosphere_validation", "climate", "sea_level", "planet"),
+    "derived_biomes_validation",
+    inputs=(
+        "derived_biomes",
+        "functional_vegetation_validation",
+        "functional_vegetation",
+        "potential_biosphere",
+        "climate",
+        "surface_materials",
+        "elevation",
+        "sea_level",
+        "planet",
+    ),
     outputs=(
-        "FunctionalVegetationKpiCatalog",
-        "FunctionalVegetationClimateDistributionCatalog",
-        "FunctionalVegetationValidationMetadata",
+        "BiomeKpiCatalog",
+        "BiomeClimateDistributionCatalog",
+        "BiomeValidationMetadata",
     ),
     version="v2",
 )
-def functional_vegetation_validation_stage(
+def derived_biomes_validation_stage(
     context: PipelineContext,
     deps: Mapping[str, StageResult],
     config_mapping: Mapping[str, object],
 ) -> Mapping[str, object]:
-    config = FunctionalVegetationValidationConfig.from_mapping(config_mapping)
+    config = DerivedBiomeValidationConfig.from_mapping(config_mapping)
     if not isinstance(context.topology, CubedSphereGrid):
-        raise NotImplementedError(
-            "functional vegetation validation requires topology: cubed_sphere"
-        )
+        raise NotImplementedError("derived biome validation requires topology: cubed_sphere")
 
-    functional_result = deps["functional_vegetation"]
-    biosphere_metadata = _artifact_mapping(
-        deps["biosphere_validation"], "BiosphereValidationMetadata"
+    upstream_metadata = _artifact_mapping(
+        deps["functional_vegetation_validation"],
+        "FunctionalVegetationValidationMetadata",
     )
-    profile_is_earthlike = biosphere_metadata.get("profile_applicable") == 1
-    functional = np.asarray(
-        _artifact_array(functional_result, "FunctionalTypeFractions"), dtype=np.float64
+    profile_is_earthlike = upstream_metadata.get("profile_applicable") == 1
+    result = deps["derived_biomes"]
+    fractions = np.asarray(_artifact_array(result, "BiomeFractions"), dtype=np.float64)
+    confidence = np.asarray(
+        _artifact_array(result, "BiomeClassificationConfidence"), dtype=np.float64
     )
+    margin = np.asarray(_artifact_array(result, "BiomeDominanceMargin"), dtype=np.float64)
+    transition = np.asarray(_artifact_array(result, "BiomeTransitionIndex"), dtype=np.float64)
+    dominant = _artifact_array(result, "DominantBiomeCode").astype(np.uint8)
+    secondary = _artifact_array(result, "SecondaryBiomeCode").astype(np.uint8)
+    landscape = _artifact_array(result, "DominantLandscapeCode").astype(np.uint8)
     nonvegetated = np.asarray(
-        _artifact_array(functional_result, "NonVegetatedFractions"), dtype=np.float64
-    )
-    resources = np.asarray(
-        _artifact_array(functional_result, "FunctionalResourcePotentials"), dtype=np.float64
+        _artifact_array(deps["functional_vegetation"], "NonVegetatedFractions"),
+        dtype=np.float64,
     )
     ocean = _artifact_array(deps["sea_level"], "SurfaceOceanMask") >= 0.5
     land = ~ocean
+    ice = nonvegetated[2]
+    water = nonvegetated[3]
+    ground = np.maximum(0.0, 1.0 - ice - water)
     annual_temperature = _artifact_array(deps["climate"], "AnnualMeanTemperatureC")
     annual_precipitation = _artifact_array(deps["climate"], "AnnualPrecipitationMm")
     zones = classify_climate_strata(annual_temperature, annual_precipitation, land)
@@ -249,39 +278,49 @@ def functional_vegetation_validation_stage(
     areas_m2 = np.asarray(context.topology.cell_areas, dtype=np.float64) * radius_m**2
     land_weights = np.asarray(areas_m2[land], dtype=np.float64)
 
-    fields = {
-        "functional_vegetated_fraction": (np.sum(functional, axis=0), "fraction"),
-        "functional_woody_fraction": (np.sum(functional[0:3], axis=0), "fraction"),
-        "functional_xeric_shrub_fraction": (functional[3], "fraction"),
-        "functional_herbaceous_fraction": (np.sum(functional[4:6], axis=0), "fraction"),
-        "functional_hydrophytic_fraction": (functional[6], "fraction"),
-        "functional_low_stature_fraction": (functional[7], "fraction"),
-        "bare_ground_fraction": (nonvegetated[0], "fraction"),
-        "saline_barren_fraction": (nonvegetated[1], "fraction"),
-        "persistent_ice_fraction": (nonvegetated[2], "fraction"),
-        "inland_open_water_fraction": (nonvegetated[3], "fraction"),
-        "unsupported_surface_fraction": (nonvegetated[4], "fraction"),
-        "resource_fire_tendency": (resources[0], "index"),
-        "resource_grazing": (resources[1], "index"),
-        "resource_forest": (resources[2], "index"),
-        "resource_pasture": (resources[3], "index"),
-        "resource_crop": (resources[4], "index"),
+    fields: dict[str, tuple[np.ndarray, str]] = {
+        str(item["class_id"]): (fractions[cast(int, item["index"])], "fraction") for item in BIOMES
     }
-    fields["functional_xeric_low_stature_fraction"] = (
-        fields["functional_xeric_shrub_fraction"][0] + fields["functional_low_stature_fraction"][0],
-        "fraction",
-    )
-    fields["nonvegetated_ground_fraction"] = (
-        nonvegetated[0] + nonvegetated[1] + nonvegetated[4],
-        "fraction",
+    fields.update(
+        {
+            "forest_fraction": (
+                fractions[0] + fractions[1] + fractions[5] + fractions[8],
+                "fraction",
+            ),
+            "warm_open_fraction": (fractions[2], "fraction"),
+            "temperate_open_fraction": (fractions[6] + fractions[7], "fraction"),
+            "core_dryland_fraction": (
+                fractions[3] + fractions[4] + fractions[10],
+                "fraction",
+            ),
+            "cold_open_fraction": (fractions[9] + fractions[10], "fraction"),
+            "ecological_ground_fraction": (ground, "fraction"),
+            "inland_open_water_fraction": (water, "fraction"),
+            "persistent_ice_fraction": (ice, "fraction"),
+            "classification_confidence": (confidence, "index"),
+            "dominance_margin": (margin, "index"),
+            "transition_index": (transition, "index"),
+        }
     )
 
     finite_bounded = all(
         np.all(np.isfinite(values)) and np.all(values >= 0.0) and np.all(values <= 1.0)
-        for values in (functional, nonvegetated, resources)
+        for values in (fractions, confidence, margin, transition)
     )
-    partition = np.sum(functional, axis=0) + np.sum(nonvegetated, axis=0)
+    partition = np.sum(fractions, axis=0) + ice + water
     partition_error = float(np.max(np.abs(partition[land] - 1.0)))
+    expected_dominant = np.argmax(fractions, axis=0).astype(np.uint8) + 1
+    classifiable = land & (dominant > 0)
+    dominant_consistent = bool(np.all(expected_dominant[classifiable] == dominant[classifiable]))
+    secondary_distinct = bool(np.all(secondary[classifiable] != dominant[classifiable]))
+    codes_valid = bool(
+        np.all((dominant[classifiable] >= 1) & (dominant[classifiable] <= len(BIOMES)))
+        and np.all((secondary[classifiable] >= 1) & (secondary[classifiable] <= len(BIOMES)))
+        and np.all((landscape[land] >= 1) & (landscape[land] <= 15))
+        and np.all(dominant[ocean] == 0)
+        and np.all(secondary[ocean] == 0)
+        and np.all(landscape[ocean] == 0)
+    )
 
     zone_catalog, zone_summaries = _climate_distribution_catalog(
         zones=zones,
@@ -306,6 +345,18 @@ def functional_vegetation_validation_stage(
             - global_mean
         )
         for metric_id, global_mean in global_means.items()
+    )
+
+    dominant_area_fractions = {
+        str(item["class_id"]): float(
+            np.sum(land_weights[dominant[land] == cast(int, item["code"])], dtype=np.float64)
+            / max(float(np.sum(land_weights)), 1e-30)
+        )
+        for item in BIOMES
+    }
+    nontrivial_biome_count = sum(
+        value >= config.minimum_nontrivial_biome_fraction
+        for value in dominant_area_fractions.values()
     )
 
     rows: list[dict[str, object]] = []
@@ -359,17 +410,24 @@ def functional_vegetation_validation_stage(
             }
         )
 
-    add(
-        "finite_bounded_functional_fields",
-        "numerical",
-        "global_land",
-        int(finite_bounded),
-        "boolean",
-        gate_kind="hard_invariant",
-        minimum=1.0,
+    hard_specs = (
+        ("finite_bounded_biome_fields", int(finite_bounded), 1.0),
+        ("valid_biome_and_landscape_codes", int(codes_valid), 1.0),
+        ("dominant_biome_code_consistency", int(dominant_consistent), 1.0),
+        ("secondary_biome_code_distinct", int(secondary_distinct), 1.0),
     )
+    for kpi_id, value, minimum in hard_specs:
+        add(
+            kpi_id,
+            "numerical",
+            "global_land",
+            value,
+            "boolean",
+            gate_kind="hard_invariant",
+            minimum=minimum,
+        )
     add(
-        "functional_land_partition_absolute_error",
+        "biome_land_partition_absolute_error",
         "accounting",
         "global_land",
         partition_error,
@@ -378,7 +436,7 @@ def functional_vegetation_validation_stage(
         maximum=config.maximum_partition_absolute_error,
     )
     add(
-        "functional_climate_partition_absolute_error",
+        "biome_climate_partition_absolute_error",
         "accounting",
         "global_land",
         zone_area_error,
@@ -387,7 +445,7 @@ def functional_vegetation_validation_stage(
         maximum=config.maximum_partition_absolute_error,
     )
     add(
-        "functional_climate_reconstruction_absolute_error",
+        "biome_climate_reconstruction_absolute_error",
         "accounting",
         "global_land",
         reconstruction_error,
@@ -397,34 +455,51 @@ def functional_vegetation_validation_stage(
     )
 
     range_specs = (
-        ("functional_vegetated_fraction", 0.35, 0.75),
-        ("functional_woody_fraction", 0.13, 0.40),
-        ("functional_herbaceous_fraction", 0.12, 0.40),
-        ("functional_xeric_low_stature_fraction", 0.05, 0.30),
-        ("functional_hydrophytic_fraction", 0.005, 0.10),
-        ("nonvegetated_ground_fraction", 0.20, 0.60),
+        ("forest_fraction", 0.18, 0.55),
+        ("warm_open_fraction", 0.05, 0.30),
+        ("temperate_open_fraction", 0.12, 0.42),
+        ("core_dryland_fraction", 0.12, 0.42),
+        ("tundra", 0.02, 0.18),
+        ("alpine", 0.005, 0.10),
+        ("wetland", 0.003, 0.08),
         ("inland_open_water_fraction", 0.005, 0.06),
+        ("transition_index", 0.20, 0.75),
+        ("classification_confidence", 0.15, 0.80),
     )
     for metric_id, minimum, maximum in range_specs:
         add(
             f"land_mean_{metric_id}",
-            "global_cover",
+            "global_biome",
             "global_land",
             global_means[metric_id],
-            "fraction",
+            "fraction"
+            if metric_id not in {"transition_index", "classification_confidence"}
+            else "index",
             gate_kind="earth_diagnostic",
             minimum=minimum,
             maximum=maximum,
-            reference_scope="Broad potential-natural fractional cover on Earth-like land",
+            reference_scope="Broad potential-natural Earth-like biome mixture",
             reference_ids=(
-                "modis_vcf_c61",
-                "hengl_2018_potential_natural_vegetation",
+                "dinerstein_2017_ecoregions",
                 "schulte_2025_potential_ecosystems",
-                "glwd_v2",
+                "islscp_ii_potential_natural_vegetation",
             ),
             applicable=profile_is_earthlike,
-            note="Wide structural range; not a fit to modern land use.",
+            note="Wide taxonomy-aware range; not a fit to modern land cover.",
         )
+    add(
+        "nontrivial_dominant_biome_count",
+        "global_biome",
+        "global_land",
+        nontrivial_biome_count,
+        "count",
+        gate_kind="earth_structure",
+        minimum=9.0,
+        maximum=float(len(BIOMES)),
+        reference_scope="Nondegenerate Earth-like global biome diversity",
+        reference_ids=("olson_2001_terrestrial_ecoregions",),
+        applicable=profile_is_earthlike,
+    )
 
     def zone_value(zone_id: str, metric_id: str) -> tuple[float, bool]:
         summary = zone_summaries[zone_id]
@@ -448,56 +523,33 @@ def functional_vegetation_validation_stage(
             gate_kind="earth_structure",
             minimum=minimum,
             maximum=maximum,
-            reference_scope="Potential-natural cover conditioned on upstream climate",
+            reference_scope="Potential-natural biome mixture conditioned on upstream climate",
             reference_ids=(
-                "modis_vcf_c61",
-                "hengl_2018_potential_natural_vegetation",
+                "olson_2001_terrestrial_ecoregions",
+                "islscp_ii_potential_natural_vegetation",
             ),
             applicable=profile_is_earthlike and reportable,
         )
 
     add_zone_range(
-        "cool_moist_woody_cover_minimum",
-        "cool_moist",
-        "functional_woody_fraction",
-        minimum=0.15,
+        "warm_humid_rainforest_minimum", "warm_humid", "tropical_rainforest", minimum=0.25
     )
     add_zone_range(
-        "warm_humid_woody_cover_minimum",
-        "warm_humid",
-        "functional_woody_fraction",
-        minimum=0.30,
+        "warm_humid_tropical_forest_minimum", "warm_humid", "forest_fraction", minimum=0.45
+    )
+    add_zone_range("warm_dry_savanna_minimum", "warm_dry", "savanna", minimum=0.10)
+    add_zone_range(
+        "warm_dry_core_dryland_minimum", "warm_dry", "core_dryland_fraction", minimum=0.25
     )
     add_zone_range(
-        "warm_humid_hydrophytic_cover_maximum",
-        "warm_humid",
-        "functional_hydrophytic_fraction",
-        maximum=0.20,
+        "cool_moist_temperate_forest_minimum", "cool_moist", "temperate_forest", minimum=0.20
     )
     add_zone_range(
-        "warm_dry_xeric_low_stature_minimum",
-        "warm_dry",
-        "functional_xeric_low_stature_fraction",
-        minimum=0.08,
+        "cool_dry_temperate_open_minimum", "cool_dry", "temperate_open_fraction", minimum=0.35
     )
-    add_zone_range(
-        "polar_woody_cover_maximum",
-        "polar",
-        "functional_woody_fraction",
-        maximum=0.05,
-    )
-    add_zone_range(
-        "warm_humid_vegetated_cover_minimum",
-        "warm_humid",
-        "functional_vegetated_fraction",
-        minimum=0.65,
-    )
-    add_zone_range(
-        "warm_dry_vegetated_cover_maximum",
-        "warm_dry",
-        "functional_vegetated_fraction",
-        maximum=0.65,
-    )
+    add_zone_range("cold_boreal_forest_minimum", "cold", "boreal_forest", minimum=0.08)
+    add_zone_range("polar_cold_open_minimum", "polar", "cold_open_fraction", minimum=0.55)
+    add_zone_range("warm_humid_wetland_maximum", "warm_humid", "wetland", maximum=0.30)
 
     def add_ratio(
         kpi_id: str,
@@ -505,8 +557,6 @@ def functional_vegetation_validation_stage(
         denominator_zone: str,
         metric_id: str,
         minimum: float,
-        *,
-        reference_ids: tuple[str, ...],
     ) -> None:
         numerator, numerator_reportable = zone_value(numerator_zone, metric_id)
         denominator, denominator_reportable = zone_value(denominator_zone, metric_id)
@@ -518,103 +568,108 @@ def functional_vegetation_validation_stage(
             "ratio",
             gate_kind="earth_structure",
             minimum=minimum,
-            reference_scope="Directional Earth-like functional response",
-            reference_ids=reference_ids,
+            reference_scope="Directional Earth-like biome response",
+            reference_ids=(
+                "olson_2001_terrestrial_ecoregions",
+                "islscp_ii_potential_natural_vegetation",
+            ),
             applicable=(profile_is_earthlike and numerator_reportable and denominator_reportable),
         )
 
-    vegetation_references = (
-        "modis_vcf_c61",
-        "hengl_2018_potential_natural_vegetation",
-    )
     add_ratio(
-        "warm_humid_to_warm_dry_woody_ratio",
-        "warm_humid",
-        "warm_dry",
-        "functional_woody_fraction",
-        1.8,
-        reference_ids=vegetation_references,
+        "warm_humid_to_warm_dry_forest_ratio", "warm_humid", "warm_dry", "forest_fraction", 1.8
     )
+    add_ratio("warm_dry_to_warm_humid_savanna_ratio", "warm_dry", "warm_humid", "savanna", 1.8)
     add_ratio(
-        "cool_moist_to_cool_dry_woody_ratio",
+        "cool_moist_to_cool_dry_temperate_forest_ratio",
         "cool_moist",
         "cool_dry",
-        "functional_woody_fraction",
-        1.8,
-        reference_ids=vegetation_references,
-    )
-    add_ratio(
-        "warm_dry_to_warm_humid_xeric_low_stature_ratio",
-        "warm_dry",
-        "warm_humid",
-        "functional_xeric_low_stature_fraction",
+        "temperate_forest",
         1.5,
-        reference_ids=vegetation_references,
     )
     add_ratio(
-        "warm_humid_to_warm_dry_hydrophytic_ratio",
-        "warm_humid",
-        "warm_dry",
-        "functional_hydrophytic_fraction",
-        2.0,
-        reference_ids=("glwd_v2",),
+        "cool_dry_to_cool_moist_open_ratio",
+        "cool_dry",
+        "cool_moist",
+        "temperate_open_fraction",
+        1.05,
     )
-    add_ratio(
-        "warm_seasonal_to_warm_humid_fire_ratio",
-        "warm_seasonal",
-        "warm_humid",
-        "resource_fire_tendency",
-        1.2,
-        reference_ids=("gfed4_burned_area",),
-    )
-    add_ratio(
-        "warm_humid_to_warm_dry_forest_resource_ratio",
-        "warm_humid",
-        "warm_dry",
-        "resource_forest",
-        1.5,
-        reference_ids=vegetation_references,
-    )
-    add_ratio(
-        "warm_dry_to_warm_humid_grazing_ratio",
-        "warm_dry",
-        "warm_humid",
-        "resource_grazing",
-        1.2,
-        reference_ids=vegetation_references,
-    )
-    add_ratio(
-        "warm_seasonal_to_polar_crop_resource_ratio",
-        "warm_seasonal",
-        "polar",
-        "resource_crop",
-        1.5,
-        reference_ids=vegetation_references,
-    )
+    add_ratio("warm_humid_to_warm_dry_wetland_ratio", "warm_humid", "warm_dry", "wetland", 2.0)
 
-    resource_p90_minimums = {
-        "fire_tendency": 0.12,
-        "grazing": 0.25,
-        "forest": 0.15,
-        "pasture": 0.12,
-        "crop": 0.30,
-    }
-    for index, potential_id in enumerate(resource_p90_minimums):
-        values = np.asarray(resources[index][land], dtype=np.float64)
-        p90 = _weighted_quantile(values, land_weights, 0.90)
+    elevation = _artifact_array(deps["sea_level"], "SurfaceElevationM")
+    relief = _artifact_array(deps["elevation"], "TerrainReliefM")
+    highland = land & (
+        (elevation >= config.highland_elevation_threshold_m)
+        | (relief >= config.highland_relief_threshold_m)
+    )
+    lowland = land & (
+        (elevation <= config.lowland_elevation_maximum_m)
+        & (relief <= config.lowland_relief_maximum_m)
+    )
+    wet_support = np.maximum(
+        _artifact_array(deps["potential_biosphere"], "WaterloggingAdaptationPressure"),
+        _artifact_array(deps["surface_materials"], "EffectiveWetlandFraction"),
+    )
+    wet_mask = land & (wet_support >= config.wet_support_threshold)
+    dry_mask = land & (wet_support <= config.dry_support_maximum)
+
+    def conditional_mean(field: np.ndarray, mask: np.ndarray) -> tuple[float, bool]:
+        weights = np.asarray(areas_m2[mask], dtype=np.float64)
+        values = np.asarray(field[mask], dtype=np.float64)
+        area_fraction = float(np.sum(weights)) / max(float(np.sum(land_weights)), 1e-30)
+        return (
+            _weighted_mean(values, weights) if values.size else 0.0,
+            area_fraction >= config.minimum_reportable_zone_land_fraction,
+        )
+
+    structural_specs = (
+        (
+            "highland_alpine_fraction_minimum",
+            fractions[11],
+            highland,
+            0.05,
+            None,
+            "highland",
+        ),
+        (
+            "lowland_alpine_fraction_maximum",
+            fractions[11],
+            lowland,
+            None,
+            0.01,
+            "lowland",
+        ),
+        (
+            "wet_support_wetland_fraction_minimum",
+            fractions[12],
+            wet_mask,
+            0.05,
+            None,
+            "wet_support",
+        ),
+        (
+            "dry_support_wetland_fraction_maximum",
+            fractions[12],
+            dry_mask,
+            None,
+            0.02,
+            "dry_support",
+        ),
+    )
+    for kpi_id, field, mask, minimum, maximum, scope in structural_specs:
+        value, reportable = conditional_mean(field, mask)
         add(
-            f"land_{potential_id}_resource_p90",
-            "resource_distribution",
-            "global_land",
-            p90,
-            "index",
+            kpi_id,
+            "causal_response",
+            scope,
+            value,
+            "fraction",
             gate_kind="earth_structure",
-            minimum=resource_p90_minimums[potential_id],
-            maximum=0.95,
-            reference_scope="Nondegenerate physical suitability, not realized land use",
-            reference_ids=vegetation_references,
-            applicable=profile_is_earthlike,
-            note="Amplitude gate is deliberately broad; directional climate gates carry meaning.",
+            minimum=minimum,
+            maximum=maximum,
+            reference_scope="Causal topographic or hydrologic biome response",
+            reference_ids=("olson_2001_terrestrial_ecoregions",),
+            applicable=profile_is_earthlike and reportable,
         )
 
     catalog = pa.Table.from_pylist(rows, schema=KPI_SCHEMA)
@@ -631,11 +686,12 @@ def functional_vegetation_validation_stage(
     ]
     metadata = {
         **asdict(config),
-        "model": "earth_reference_functional_vegetation_validation_v1",
+        "model": "earth_reference_derived_biomes_validation_v1",
         "reference_profile_version": REFERENCE_PROFILE_VERSION,
         "references": list(EARTH_REFERENCE_PROFILE),
         "profile_applicable": int(profile_is_earthlike),
-        "profile_semantics": "potential_natural_functional_cover_not_modern_land_use",
+        "profile_semantics": "potential_natural_fuzzy_biomes_not_modern_land_cover",
+        "mixture_semantics": "physical_area_estimate_separate_from_classification_confidence",
         "climate_strata_semantics": "exclusive_upstream_climate_response_bins_not_biomes",
         "kpi_count": len(rows),
         "climate_distribution_row_count": zone_catalog.num_rows,
@@ -653,30 +709,29 @@ def functional_vegetation_validation_stage(
             else "outside_reference"
         ),
         "global_means": global_means,
+        "dominant_biome_land_area_fractions": dominant_area_fractions,
+        "nontrivial_dominant_biome_count": nontrivial_biome_count,
         "reportable_climate_strata": [
             zone_id for zone_id, summary in zone_summaries.items() if bool(summary["reportable"])
         ],
-        "resource_calibration_semantics": (
-            "broad amplitude and directional physical suitability; no modern land-use fit"
-        ),
     }
     context.logger.log_event(
         {
-            "type": "functional_vegetation_validation_summary",
-            "stage": "functional_vegetation_validation",
+            "type": "derived_biomes_validation_summary",
+            "stage": "derived_biomes_validation",
             **metadata,
         }
     )
     return {
-        "FunctionalVegetationKpiCatalog": catalog,
-        "FunctionalVegetationClimateDistributionCatalog": zone_catalog,
-        "FunctionalVegetationValidationMetadata": metadata,
+        "BiomeKpiCatalog": catalog,
+        "BiomeClimateDistributionCatalog": zone_catalog,
+        "BiomeValidationMetadata": metadata,
     }
 
 
 __all__ = [
+    "DerivedBiomeValidationConfig",
     "EARTH_REFERENCE_PROFILE",
-    "FunctionalVegetationValidationConfig",
     "REFERENCE_PROFILE_VERSION",
-    "functional_vegetation_validation_stage",
+    "derived_biomes_validation_stage",
 ]

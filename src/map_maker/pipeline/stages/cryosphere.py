@@ -136,9 +136,9 @@ def _visualizer(result: StageResult, request: VisualizationRequest) -> Visualiza
 
 @stage(  # type: ignore[untyped-decorator]
     "cryosphere",
-    inputs=("climate", "elevation", "world_age"),
+    inputs=("climate", "elevation", "sea_level"),
     outputs=(*MONTHLY_OUTPUTS, *ANNUAL_OUTPUTS, "CryosphereMetadata"),
-    version="v1",
+    version="v2",
     native_libraries=("cryosphere_native",),
     visualizer=_visualizer,
 )
@@ -170,10 +170,10 @@ def cryosphere_stage(
             areas=context.topology.cell_areas,
             neighbors=context.topology.neighbor_indices,
             ocean=np.ascontiguousarray(
-                _artifact_array(deps["world_age"], "BaseOceanMask"), dtype=np.float32
+                _artifact_array(deps["sea_level"], "SurfaceOceanMask"), dtype=np.float32
             ),
             elevation=np.ascontiguousarray(
-                _artifact_array(deps["elevation"], "BedrockElevationM"), dtype=np.float32
+                _artifact_array(deps["sea_level"], "SurfaceElevationM"), dtype=np.float32
             ),
             relief=np.ascontiguousarray(
                 _artifact_array(deps["elevation"], "TerrainReliefM"), dtype=np.float32

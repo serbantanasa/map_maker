@@ -1182,41 +1182,274 @@ fn repair_plate_connectivity(
     true
 }
 
-fn spherical_province_score(cells: &[SVec3], seed: u64) -> Vec<f64> {
+#[derive(Clone, Copy)]
+struct CrustNode {
+    center: SVec3,
+    radius: f64,
+    amplitude: f64,
+}
+
+#[derive(Clone, Copy)]
+struct AssemblyAxis {
+    center: SVec3,
+    tangent: SVec3,
+    half_length: f64,
+}
+
+fn tangent_direction(center: SVec3, rng: &mut ChaCha8Rng) -> SVec3 {
+    let raw = random_unit_vector(rng);
+    (raw - center * raw.dot(center)).normalized()
+}
+
+fn point_along_tangent(center: SVec3, tangent: SVec3, angle: f64) -> SVec3 {
+    (center * angle.cos() + tangent * angle.sin()).normalized()
+}
+
+fn project_tangent(direction: SVec3, center: SVec3) -> SVec3 {
+    (direction - center * direction.dot(center)).normalized()
+}
+
+fn rotate_tangent(center: SVec3, tangent: SVec3, angle: f64) -> SVec3 {
+    let cross = center.cross(tangent).normalized();
+    (tangent * angle.cos() + cross * angle.sin()).normalized()
+}
+
+fn node_response(point: SVec3, node: CrustNode) -> f64 {
+    let chord_squared = 2.0 * (1.0 - point.dot(node.center).clamp(-1.0, 1.0));
+    let chord_radius = (2.0 * (0.5 * node.radius).sin()).max(1e-6);
+    let normalized_distance = chord_squared.sqrt() / chord_radius;
+    if normalized_distance >= 1.0 {
+        return 0.0;
+    }
+    let inside = 1.0 - normalized_distance;
+    let smootherstep = inside * inside * inside * (inside * (inside * 6.0 - 15.0) + 10.0);
+    node.amplitude * smootherstep
+}
+
+fn append_chain(
+    nodes: &mut Vec<CrustNode>,
+    centers: &mut Vec<SVec3>,
+    mut center: SVec3,
+    mut tangent: SVec3,
+    count: usize,
+    step_range: std::ops::Range<f64>,
+    radius_range: std::ops::Range<f64>,
+    amplitude_range: std::ops::Range<f64>,
+    turn_range: std::ops::Range<f64>,
+    rng: &mut ChaCha8Rng,
+) {
+    for index in 0..count {
+        let end_taper = if index == 0 || index + 1 == count {
+            rng.gen_range(0.68..0.88)
+        } else {
+            1.0
+        };
+        nodes.push(CrustNode {
+            center,
+            radius: rng.gen_range(radius_range.clone()) * end_taper,
+            amplitude: rng.gen_range(amplitude_range.clone()) * end_taper,
+        });
+        centers.push(center);
+        if index + 1 == count {
+            break;
+        }
+        let next = point_along_tangent(center, tangent, rng.gen_range(step_range.clone()));
+        tangent = project_tangent(tangent, next);
+        tangent = rotate_tangent(next, tangent, rng.gen_range(turn_range.clone()));
+        center = next;
+    }
+}
+
+fn build_crust_assembly_nodes(seed: u64) -> (Vec<CrustNode>, Vec<CrustNode>, Vec<AssemblyAxis>) {
     let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0xD2B7_4407_B1CE_6E93);
-    let pole = random_unit_vector(&mut rng);
-    let raw_axis = random_unit_vector(&mut rng);
-    let first_axis = (raw_axis - pole * raw_axis.dot(pole)).normalized();
-    let second_axis = pole.cross(first_axis).normalized();
-    let bases = [
-        pole,
-        pole * -1.0,
-        first_axis,
-        first_axis * -1.0,
-        second_axis,
-        second_axis * -1.0,
-    ];
-    let foci: Vec<(SVec3, SVec3, f64)> = bases
-        .iter()
-        .map(|base| {
-            let raw_tangent = random_unit_vector(&mut rng);
-            let tangent = (raw_tangent - *base * raw_tangent.dot(*base)).normalized();
-            let elongation = rng.gen_range(0.16..0.46);
-            (
-                (*base + tangent * elongation).normalized(),
-                (*base - tangent * elongation).normalized(),
-                rng.gen_range(-0.055..0.055),
-            )
-        })
-        .collect();
-    let detail_terms: Vec<(SVec3, f64, f64, f64)> = (0..18)
+    let assembly_count = rng.gen_range(6usize..=8usize);
+    let centers = sample_spherical_plate_seeds(seed ^ 0x8A5C_D789_635D_2DFF, assembly_count);
+    let assembly_positions: Vec<SVec3> = centers.iter().map(|center| center.position).collect();
+    let mut positive = Vec::with_capacity(assembly_count * 32 + 48);
+    let mut negative = Vec::with_capacity(assembly_count * 16);
+    let mut axes = Vec::with_capacity(assembly_count);
+
+    for assembly in centers {
+        let center = assembly.position;
+        let tangent = tangent_direction(center, &mut rng);
+        let assembly_scale = rng.gen_range(0.78..1.24);
+        let main_count = rng.gen_range(7usize..=10usize);
+        let main_step = rng.gen_range(0.11..0.17);
+        let half_length = 0.5 * main_step * (main_count - 1) as f64;
+        let start = point_along_tangent(center, tangent, -half_length);
+        let start_tangent = project_tangent(tangent, start);
+        let mut main_centers = Vec::with_capacity(main_count);
+        append_chain(
+            &mut positive,
+            &mut main_centers,
+            start,
+            start_tangent,
+            main_count,
+            main_step * 0.82..main_step * 1.18,
+            0.22 * assembly_scale..0.36 * assembly_scale,
+            0.85..1.20,
+            -0.30..0.30,
+            &mut rng,
+        );
+        axes.push(AssemblyAxis {
+            center,
+            tangent,
+            half_length,
+        });
+
+        let branch_count = rng.gen_range(3usize..=5usize);
+        for branch_index in 0..branch_count {
+            let root_index = rng.gen_range(1..main_centers.len() - 1);
+            let root = main_centers[root_index];
+            let local_main = if root_index + 1 < main_centers.len() {
+                project_tangent(main_centers[root_index + 1] - root, root)
+            } else {
+                project_tangent(tangent, root)
+            };
+            let sign: f64 = if branch_index % 2 == 0 { 1.0 } else { -1.0 };
+            let angle: f64 = sign * rng.gen_range(0.52..1.28);
+            let direction = rotate_tangent(root, local_main, angle);
+            let branch_nodes = rng.gen_range(3usize..=7usize);
+            append_chain(
+                &mut positive,
+                &mut Vec::new(),
+                root,
+                direction,
+                branch_nodes,
+                0.11..0.20,
+                0.14 * assembly_scale..0.30 * assembly_scale,
+                0.45..0.90,
+                -0.44..0.44,
+                &mut rng,
+            );
+        }
+
+        let rift_from_start = rng.gen::<bool>();
+        let (rift_root, inward) = if rift_from_start {
+            let root = main_centers[0];
+            (root, project_tangent(main_centers[1] - root, root))
+        } else {
+            let last = main_centers.len() - 1;
+            let root = main_centers[last];
+            (root, project_tangent(main_centers[last - 1] - root, root))
+        };
+        let rift_start = point_along_tangent(rift_root, inward, -rng.gen_range(0.12..0.22));
+        let rift_direction = project_tangent(rift_root - rift_start, rift_start);
+        let rift_count = if rng.gen::<f64>() < 0.48 { 2 } else { 1 };
+        for rift in 0..rift_count {
+            let (start, direction) = if rift == 0 {
+                (rift_start, rift_direction)
+            } else {
+                let root_index = rng.gen_range(1..main_centers.len() - 1);
+                let root = main_centers[root_index];
+                let local_main = project_tangent(main_centers[root_index + 1] - root, root);
+                (
+                    root,
+                    rotate_tangent(root, local_main, rng.gen_range(0.90..1.35)),
+                )
+            };
+            append_chain(
+                &mut negative,
+                &mut Vec::new(),
+                start,
+                direction,
+                rng.gen_range(5usize..=9usize),
+                0.08..0.15,
+                0.10..0.21,
+                0.85..1.40,
+                -0.30..0.30,
+                &mut rng,
+            );
+        }
+
+        for _ in 0..rng.gen_range(1usize..=2usize) {
+            let basin_center = main_centers[rng.gen_range(1..main_centers.len() - 1)];
+            negative.push(CrustNode {
+                center: basin_center,
+                radius: rng.gen_range(0.18..0.34),
+                amplitude: rng.gen_range(0.65..1.05),
+            });
+        }
+    }
+
+    let mut separator_pairs = Vec::with_capacity(assembly_positions.len());
+    for (first, first_position) in assembly_positions.iter().enumerate() {
+        let nearest = assembly_positions
+            .iter()
+            .enumerate()
+            .filter(|(second, _)| *second != first)
+            .min_by(|(_, first_candidate), (_, second_candidate)| {
+                first_position
+                    .dot(**first_candidate)
+                    .total_cmp(&first_position.dot(**second_candidate))
+                    .reverse()
+            })
+            .map(|(index, _)| index)
+            .expect("multiple crust assemblies");
+        let pair = if first < nearest {
+            (first, nearest)
+        } else {
+            (nearest, first)
+        };
+        if !separator_pairs.contains(&pair) {
+            separator_pairs.push(pair);
+        }
+    }
+    for (first, second) in separator_pairs {
+        let first_position = assembly_positions[first];
+        let second_position = assembly_positions[second];
+        let midpoint_sum = first_position + second_position;
+        if midpoint_sum.norm() < 1e-6 {
+            continue;
+        }
+        let midpoint = midpoint_sum.normalized();
+        let toward_second = project_tangent(second_position - midpoint, midpoint);
+        let separator_direction =
+            rotate_tangent(midpoint, toward_second, std::f64::consts::FRAC_PI_2);
+        append_chain(
+            &mut negative,
+            &mut Vec::new(),
+            point_along_tangent(midpoint, separator_direction, -rng.gen_range(0.12..0.28)),
+            separator_direction,
+            rng.gen_range(4usize..=7usize),
+            0.09..0.16,
+            0.11..0.20,
+            0.90..1.35,
+            -0.22..0.22,
+            &mut rng,
+        );
+    }
+
+    for _ in 0..rng.gen_range(10usize..=16usize) {
+        let center = random_unit_vector(&mut rng);
+        let tangent = tangent_direction(center, &mut rng);
+        append_chain(
+            &mut positive,
+            &mut Vec::new(),
+            center,
+            tangent,
+            rng.gen_range(2usize..=5usize),
+            0.08..0.16,
+            0.10..0.23,
+            0.50..0.95,
+            -0.45..0.45,
+            &mut rng,
+        );
+    }
+    (positive, negative, axes)
+}
+
+fn spherical_province_score(cells: &[SVec3], seed: u64) -> Vec<f64> {
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x44C6_1E7A_8D91_052B);
+    let (positive_nodes, negative_nodes, axes) = build_crust_assembly_nodes(seed);
+    let detail_terms: Vec<(SVec3, f64, f64, f64)> = (0..36)
         .map(|index| {
-            let octave = index / 3;
-            let frequency = 2.6 * 1.68f64.powi(octave);
-            let weight = 1.0 / 1.35f64.powi(octave);
+            let octave = index / 6;
+            let frequency = 3.0 * 1.62f64.powi(octave);
+            let weight = 1.0 / 1.43f64.powi(octave);
             (
                 random_unit_vector(&mut rng),
-                frequency + rng.gen_range(-0.18..0.18),
+                frequency + rng.gen_range(-0.22..0.22),
                 rng.gen_range(0.0..std::f64::consts::TAU),
                 weight,
             )
@@ -1228,24 +1461,43 @@ fn spherical_province_score(cells: &[SVec3], seed: u64) -> Vec<f64> {
         .par_iter()
         .map(|cell| {
             let warped = warp_spherical_direction(*cell, &warp_terms);
-            let mut best_craton = f64::NEG_INFINITY;
-            let mut second_craton = f64::NEG_INFINITY;
-            for (first, second, bias) in &foci {
-                let score = warped.dot(*first).max(warped.dot(*second)) + *bias;
-                if score > best_craton {
-                    second_craton = best_craton;
-                    best_craton = score;
-                } else if score > second_craton {
-                    second_craton = score;
-                }
+            let mut strongest = 0.0f64;
+            let mut positive_sum = 0.0f64;
+            for node in &positive_nodes {
+                let response = node_response(warped, *node);
+                strongest = strongest.max(response);
+                positive_sum += response;
+            }
+            let mut strongest_negative = 0.0f64;
+            let mut negative_sum = 0.0f64;
+            for node in &negative_nodes {
+                let response = node_response(warped, *node);
+                strongest_negative = strongest_negative.max(response);
+                negative_sum += response;
             }
             let detail: f64 = detail_terms
                 .iter()
                 .map(|(axis, frequency, phase, weight)| {
                     (warped.dot(*axis) * *frequency + *phase).sin() * *weight
                 })
-                .sum();
-            best_craton + (best_craton - second_craton) * 0.5 + detail / detail_weight * 0.22
+                .sum::<f64>()
+                / detail_weight.max(1e-12);
+            let assembly_fabric: f64 = axes
+                .iter()
+                .map(|axis| {
+                    let normal = axis.center.cross(axis.tangent).normalized();
+                    let along = warped.dot(axis.tangent);
+                    let across = warped.dot(normal);
+                    (along * (4.0 + 2.0 * axis.half_length) + across * 2.3).sin()
+                })
+                .sum::<f64>()
+                / axes.len().max(1) as f64;
+            let support = strongest.clamp(0.0, 1.0);
+            strongest + 0.16 * (positive_sum - strongest).max(0.0)
+                - strongest_negative
+                - 0.12 * (negative_sum - strongest_negative).max(0.0)
+                + (0.08 + 0.24 * support) * detail
+                + 0.06 * support * assembly_fabric
         })
         .collect()
 }

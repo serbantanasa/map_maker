@@ -64,6 +64,8 @@ def test_generate_world_writes_preview_manifest_and_reuses_cache(tmp_path: Path)
         "planet_native",
         "potential_biosphere_native",
         "refinement_native",
+        "derived_biomes_native",
+        "sea_level_native",
         "surface_materials_native",
         "surface_water_native",
         "tectonics_native",

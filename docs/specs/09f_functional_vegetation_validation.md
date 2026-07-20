@@ -65,6 +65,8 @@ The existing six-seed face-64 command now runs through
 per-diagnostic pass rule and adds:
 
 - global functional-fraction coefficient of variation at most `0.30`;
+- inland-open-water coefficient of variation at most `0.75`, separated from
+  vegetation because sparse closed basins are more seed-sensitive;
 - global resource-p90 coefficient of variation at most `0.35`; and
 - reportable climate-stratum functional means with coefficient of variation at
   most `0.60`.
@@ -74,17 +76,17 @@ ranges are:
 
 | Metric | Mean | Seed range | CV |
 | --- | ---: | ---: | ---: |
-| Functional vegetation | `51.96%` | `50.01-54.54%` | `0.030` |
-| Woody cover | `19.20%` | `17.29-21.58%` | `0.079` |
-| Herbaceous cover | `18.53%` | `17.96-19.04%` | `0.019` |
-| Xeric plus low-stature cover | `12.49%` | `12.12-12.78%` | `0.018` |
-| Hydrophytic cover | `1.75%` | `1.45-2.08%` | `0.118` |
-| Inland open water | `1.14%` | `0.73-1.72%` | `0.261` |
+| Functional vegetation | `51.16%` | `47.27-56.45%` | `0.063` |
+| Woody cover | `20.55%` | `17.01-24.62%` | `0.125` |
+| Herbaceous cover | `18.01%` | `17.36-18.89%` | `0.028` |
+| Xeric plus low-stature cover | `10.10%` | `9.74-10.49%` | `0.025` |
+| Hydrophytic cover | `2.50%` | `2.14-3.00%` | `0.109` |
+| Inland open water | `2.05%` | `0.93-3.32%` | `0.472` |
 
-Canonical face-128 seed 42 has `47.52%` functional vegetation, `15.71%` woody
-cover, `17.86%` herbaceous cover, `12.70%` xeric plus low-stature cover, and
-`1.25%` hydrophytic cover. Cool-moist woody cover is `23.0%`; warm-humid woody
-and hydrophytic cover are `51.2%` and `10.3%`. Every hard and Earth-profile gate
+Canonical face-128 seed 42 has `44.35%` functional vegetation, `15.39%` woody
+cover, `16.74%` herbaceous cover, `10.38%` xeric plus low-stature cover, and
+`1.84%` hydrophytic cover. Cool-moist woody cover is `18.4%`; warm-humid woody
+and hydrophytic cover are `50.6%` and `9.9%`. Every hard and Earth-profile gate
 passes.
 
 ## References

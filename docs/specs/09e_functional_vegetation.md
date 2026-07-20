@@ -93,19 +93,19 @@ independent state variable and does not alter the physical fractions.
 
 ## Canonical Diagnostics
 
-The face-128 seed-42 world passes every hard gate. Land cover is `47.52%`
-functional vegetation, `32.70%` bare ground, `2.36%` saline barren, `2.86%`
-inland open water, approximately zero persistent ice, and `14.56%` unsupported
-surface. Maximum per-cell partition error is `4.00e-8`.
+The face-128 seed-42 world passes every hard gate. Land cover is `44.35%`
+functional vegetation, `36.38%` bare ground, `2.34%` saline barren, `3.17%`
+inland open water, approximately zero persistent ice, and `13.77%` unsupported
+surface. Maximum per-cell partition error is `4.30e-8`.
 
-Within the vegetated fraction, woody strategies account for `33.06%`,
-herbaceous strategies for `37.59%`, hydrophytic vegetation for `2.62%`, and
-the xeric-shrub plus low-stature strategies for the remaining `26.73%`.
+Within the vegetated fraction, woody strategies account for `34.69%`,
+herbaceous strategies for `37.74%`, hydrophytic vegetation for `4.16%`, and
+the xeric-shrub plus low-stature strategies for the remaining `23.41%`.
 
 Area-weighted land means for fire, grazing, forest-resource, pasture, and crop
-potential are `0.123`, `0.252`, `0.136`, `0.129`, and `0.305`. Their respective
-area-weighted 90th percentiles are `0.180`, `0.335`, `0.313`, `0.184`, and
-`0.410`. The 15b2b profile validates broad amplitude, climate response, and
+potential are `0.101`, `0.234`, `0.131`, `0.126`, and `0.294`. Their respective
+area-weighted 90th percentiles are `0.153`, `0.337`, `0.325`, `0.186`, and
+`0.408`. The 15b2b profile validates broad amplitude, climate response, and
 multi-seed stability without interpreting these suitability indices as actual
 land use.
 

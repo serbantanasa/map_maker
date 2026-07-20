@@ -210,22 +210,25 @@ def test_cubed_sphere_tectonics_is_seam_free_tangent_and_connected(
 
     continental = plate[..., 1].astype(bool).reshape(-1)
     unvisited_land = set(np.flatnonzero(continental).tolist())
-    continent_sizes = []
+    continent_areas = []
+    flat_areas = grid.cell_areas.reshape(-1)
     while unvisited_land:
         start = unvisited_land.pop()
         pending = [start]
-        size = 0
+        component_area = 0.0
         while pending:
             cell = pending.pop()
-            size += 1
+            component_area += float(flat_areas[cell])
             for neighbor in neighbors[cell]:
                 neighbor = int(neighbor)
                 if neighbor in unvisited_land:
                     unvisited_land.remove(neighbor)
                     pending.append(neighbor)
-        continent_sizes.append(size)
-    assert 3 <= len(continent_sizes) <= 16
-    assert max(continent_sizes) / sum(continent_sizes) < 0.55
+        continent_areas.append(component_area)
+    total_area = float(np.sum(flat_areas))
+    significant_continents = [area for area in continent_areas if area / total_area >= 0.001]
+    assert 3 <= len(significant_continents) <= 16
+    assert max(continent_areas) / sum(continent_areas) < 0.55
 
     face_edges = np.zeros(grid.face_shape, dtype=bool)
     face_edges[:, (0, -1), :] = True

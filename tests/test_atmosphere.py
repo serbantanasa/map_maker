@@ -21,6 +21,7 @@ def _ensure_atmosphere_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "atmosphere",
         "climate",
     ):
@@ -77,7 +78,7 @@ def test_atmosphere_persists_composition_and_hydrostatic_pressure(tmp_path: Path
     pressure = _array(atmosphere, "SurfacePressureKPa")
     oxygen = _array(atmosphere, "OxygenPartialPressureKPa")
     co2 = _array(atmosphere, "CO2PartialPressurePa")
-    elevation = _array(results["elevation"], "BedrockElevationM")
+    elevation = _array(results["sea_level"], "SurfaceElevationM")
 
     assert pressure.shape == engine.context.topology.face_shape
     assert pressure.dtype == np.float32

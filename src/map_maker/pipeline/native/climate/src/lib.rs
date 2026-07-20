@@ -141,6 +141,11 @@ fn equivalent_step_fraction(reference_fraction: f64, steps_per_month: usize) -> 
         .powf(REFERENCE_MOISTURE_STEPS_PER_MONTH / steps_per_month as f64)
 }
 
+fn mix_surface_property(land_value: f64, ocean_value: f64, ocean_fraction: f32) -> f64 {
+    let ocean_weight = f64::from(ocean_fraction).clamp(0.0, 1.0);
+    land_value + ocean_weight * (ocean_value - land_value)
+}
+
 fn smooth_orography(
     total: usize,
     neighbors: &[i32],
@@ -248,11 +253,7 @@ fn run_temperature(
     let equilibrium = |cell: usize, forcing: f64| -> f64 {
         let latitude_sine = latitudes[cell].sin();
         let transport = heat_transport_w_m2 * (3.0 * latitude_sine.powi(2) - 1.0);
-        let albedo = if ocean[cell] >= 0.5 {
-            ocean_albedo
-        } else {
-            land_albedo
-        };
+        let albedo = mix_surface_property(land_albedo, ocean_albedo, ocean[cell]);
         let lapse = lapse_rate_c_per_km * f64::from(elevation[cell]).max(0.0) / 1000.0;
         (((1.0 - albedo) * forcing + transport - olr_intercept_w_m2) / olr_slope_w_m2_c
             + greenhouse_offset_c
@@ -277,11 +278,11 @@ fn run_temperature(
                     .map(|edge| state[neighbors[cell * NEIGHBORS + edge] as usize])
                     .sum::<f64>()
                     / NEIGHBORS as f64;
-                let response = if ocean[cell] >= 0.5 {
-                    ocean_thermal_response
-                } else {
-                    land_thermal_response
-                };
+                let response = mix_surface_property(
+                    land_thermal_response,
+                    ocean_thermal_response,
+                    ocean[cell],
+                );
                 let target = equilibrium(cell, f64::from(insolation[month * total + cell]));
                 next[cell] = (state[cell]
                     + response * (target - state[cell])
@@ -397,7 +398,7 @@ fn run_moisture(
     let mut downslope = vec![0.0f64; total];
     for cell in 0..total {
         let capacity = moisture_capacity_mm(f64::from(temperature[cell]));
-        moisture[cell] = capacity * if ocean[cell] >= 0.5 { 0.78 } else { 0.45 };
+        moisture[cell] = capacity * mix_surface_property(0.45, 0.78, ocean[cell]);
     }
     let retained_fraction = 1.0 - advection_fraction - diffusion_fraction;
     let step_days = DAYS_PER_MONTH / steps_per_month as f64;
@@ -449,11 +450,11 @@ fn run_moisture(
                     let capacity = moisture_capacity_mm(temperature_c);
                     let relative_humidity = (moisture[cell] / capacity).clamp(0.0, 1.2);
                     let warmth = ((temperature_c + 15.0) / 35.0).clamp(0.15, 1.5);
-                    let evaporation_rate = if ocean[cell] >= 0.5 {
-                        6.2 * warmth * (1.0 - 0.45 * relative_humidity.min(1.0))
-                    } else {
-                        0.85 * warmth * relative_humidity.min(1.0)
-                    };
+                    let land_evaporation = 0.85 * warmth * relative_humidity.min(1.0);
+                    let ocean_evaporation =
+                        6.2 * warmth * (1.0 - 0.45 * relative_humidity.min(1.0));
+                    let evaporation_rate =
+                        mix_surface_property(land_evaporation, ocean_evaporation, ocean[cell]);
                     let evaporated = evaporation_rate.max(0.0) * step_days;
                     if year + 1 == spinup_years {
                         evaporation[month * total + cell] += evaporated as f32;
@@ -494,20 +495,22 @@ fn run_moisture(
                 for cell in 0..total {
                     let capacity =
                         moisture_capacity_mm(f64::from(temperature[month * total + cell]));
-                    let is_ocean = ocean[cell] >= 0.5;
+                    let ocean_fraction = ocean[cell];
                     let shadow = (-rain_shadow_factor * downslope[cell]).exp();
-                    let background_rate: f64 = if is_ocean { 0.0001 } else { 0.015 };
-                    let background = next[cell] * (background_rate * step_days).min(0.22) * shadow;
-                    let saturation_threshold = if is_ocean { 10.0 } else { 1.1 };
-                    let supersaturation = (next[cell] - saturation_threshold * capacity).max(0.0)
-                        * supersaturation_fraction;
-                    let orographic = if is_ocean {
-                        0.0
-                    } else {
-                        next[cell] * (1.0 - (-orographic_factor * upslope[cell]).exp()) * 0.65
-                    };
-                    let condensed = (background + supersaturation + orographic)
-                        .min(next[cell] * maximum_condensation_fraction);
+                    let land_background = next[cell] * (0.015 * step_days).min(0.22) * shadow;
+                    let ocean_background = next[cell] * (0.0001 * step_days).min(0.22);
+                    let land_supersaturation =
+                        (next[cell] - 1.1 * capacity).max(0.0) * supersaturation_fraction;
+                    let ocean_supersaturation =
+                        (next[cell] - 10.0 * capacity).max(0.0) * supersaturation_fraction;
+                    let land_orographic =
+                        next[cell] * (1.0 - (-orographic_factor * upslope[cell]).exp()) * 0.65;
+                    let land_condensation =
+                        land_background + land_supersaturation + land_orographic;
+                    let ocean_condensation = ocean_background + ocean_supersaturation;
+                    let condensed =
+                        mix_surface_property(land_condensation, ocean_condensation, ocean_fraction)
+                            .min(next[cell] * maximum_condensation_fraction);
                     next[cell] -= condensed;
                     if year + 1 == spinup_years {
                         precipitation[month * total + cell] += condensed as f32;
@@ -646,22 +649,21 @@ fn summarize(
         total_area += area;
         global_temperature_sum += f64::from(mean_temperature) * area;
         global_precipitation_sum += f64::from(precipitation_sum) * area;
-        if ocean[cell] >= 0.5 {
-            ocean_area += area;
-            ocean_temperature_sum += f64::from(mean_temperature) * area;
-        } else {
-            land_area += area;
-            land_temperature_sum += f64::from(mean_temperature) * area;
-            land_precipitation_sum += f64::from(precipitation_sum) * area;
-            if precipitation_sum < 250.0 {
-                dry_land_area += area;
-            }
-            if precipitation_sum > 2000.0 {
-                wet_land_area += area;
-            }
-            if maximum_snowpack > 100.0 {
-                snow_land_area += area;
-            }
+        let ocean_cell_area = area * f64::from(ocean[cell]);
+        let land_cell_area = area - ocean_cell_area;
+        ocean_area += ocean_cell_area;
+        land_area += land_cell_area;
+        ocean_temperature_sum += f64::from(mean_temperature) * ocean_cell_area;
+        land_temperature_sum += f64::from(mean_temperature) * land_cell_area;
+        land_precipitation_sum += f64::from(precipitation_sum) * land_cell_area;
+        if precipitation_sum < 250.0 {
+            dry_land_area += land_cell_area;
+        }
+        if precipitation_sum > 2000.0 {
+            wet_land_area += land_cell_area;
+        }
+        if maximum_snowpack > 100.0 {
+            snow_land_area += land_cell_area;
         }
     }
 
@@ -991,6 +993,13 @@ mod tests {
         let coarse_month = 1.0 - (1.0 - coarse).powi(8);
         let canonical_month = 1.0 - (1.0 - canonical).powi(16);
         assert!((coarse_month - canonical_month).abs() < 1e-12);
+    }
+
+    #[test]
+    fn coastal_surface_properties_are_area_weighted() {
+        assert_eq!(mix_surface_property(10.0, 20.0, 0.0), 10.0);
+        assert_eq!(mix_surface_property(10.0, 20.0, 1.0), 20.0);
+        assert!((mix_surface_property(10.0, 20.0, 0.35) - 13.5).abs() < 1e-6);
     }
 
     #[test]

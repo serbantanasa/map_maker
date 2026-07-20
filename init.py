@@ -7,4 +7,4 @@ SRC_DIR = Path(__file__).resolve().parent / "src"
 if SRC_DIR.exists():
     sys.path.insert(0, str(SRC_DIR))
 
-from map_maker import *  # noqa: F401,F403
+from map_maker import *  # noqa: E402,F401,F403

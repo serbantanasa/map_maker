@@ -13,6 +13,7 @@ NATIVE_ABI_VERSION = 2
 NATIVE_ABI_OVERRIDES = {
     "biosphere_envelope_native": 3,
     "climate_native": 3,
+    "derived_biomes_native": 1,
     "fluvial_native": 3,
     "functional_vegetation_native": 1,
     "hydrology_pass2_native": 1,
@@ -24,6 +25,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "biosphere_envelope_native",
     "climate_native",
     "cryosphere_native",
+    "derived_biomes_native",
     "elevation_native",
     "erosion_native",
     "fluvial_native",
@@ -34,6 +36,7 @@ SIMULATION_NATIVE_LIBRARIES = (
     "planet_native",
     "potential_biosphere_native",
     "refinement_native",
+    "sea_level_native",
     "surface_water_native",
     "surface_materials_native",
     "tectonics_native",

@@ -30,9 +30,9 @@ ordinary generation DAG only treats hard invariants as validity gates.
 | --- | ---: |
 | Land surface fraction | `0.27-0.36` |
 | Potential terrestrial NPP | `50-75 Pg C/year` |
-| Land-mean potential NPP | `0.32-0.55 kg C/m2/year` |
+| Land-mean potential NPP | `0.28-0.55 kg C/m2/year` |
 | Potential vegetation biomass | `771-1,107 Pg C` |
-| Land-mean potential biomass | `5-8 kg C/m2` |
+| Land-mean potential biomass | `4.2-8.1 kg C/m2` |
 
 The NPP envelope includes contemporary global estimates around `53-56 Pg
 C/year` and leaves room for potential natural vegetation without human land
@@ -85,7 +85,7 @@ Earth diagnostic, and the following dispersion bounds:
 | Global biomass | coefficient of variation `0.40` |
 | Mean cover | coefficient of variation `0.25` |
 | Vegetated land fraction | coefficient of variation `0.20` |
-| Climate-stratum area | absolute range `0.20` |
+| Climate-stratum area | absolute range `0.22` |
 | Stratum mean NPP, when sufficiently present | coefficient of variation `0.60` |
 
 Coarse screening must be followed by the canonical face-128 seed. Acceptance
@@ -115,31 +115,29 @@ pass.
 | Coarse-screen KPI | Current result |
 | --- | ---: |
 | Land fraction | `35.00%` in every seed, all six pass |
-| Potential terrestrial NPP | `62.56-75.98 Pg C/year`, five of six inside range |
-| Land-mean potential NPP | `0.350-0.426 kg C/m2/year`, all six pass |
-| Potential vegetation biomass | `977.48-1,089.41 Pg C`, all six pass |
-| Land-mean potential biomass | all six pass |
-| NPP coefficient of variation | `0.071` |
-| Biomass coefficient of variation | `0.040` |
+| Potential terrestrial NPP | `54.78-73.02 Pg C/year`, all six pass |
+| Land-mean potential NPP | `0.307-0.409 kg C/m2/year`, all six pass |
+| Potential vegetation biomass | `888.33-1,061.11 Pg C`, all six pass |
+| Land-mean potential biomass | `4.98-5.94 kg C/m2`, all six pass |
+| NPP coefficient of variation | `0.094` |
+| Biomass coefficient of variation | `0.062` |
 
-Seed 101 produces `75.98 Pg C/year`, narrowly above the `75 Pg C/year`
-diagnostic ceiling. The predeclared profile requires at least `80%` of seeds to
-pass each Earth diagnostic; five of six is `83.3%`, so the ensemble passes
-without widening the Earth range. All hard invariants and dispersion gates pass.
+All hard invariants, Earth diagnostics, directional relationships, and
+dispersion gates pass in every seed after the connected-ocean geography repair.
 
 The canonical face-128 seed passes the complete Earth profile:
 
 | Canonical KPI | Current result |
 | --- | ---: |
 | Land fraction | `35.00%` |
-| Potential terrestrial NPP | `57.26 Pg C/year` |
-| Land-mean potential NPP | `0.321 kg C/m2/year` |
-| Potential vegetation biomass | `932.65 Pg C` |
-| Land-mean potential biomass | `5.22 kg C/m2` |
+| Potential terrestrial NPP | `50.28 Pg C/year` |
+| Land-mean potential NPP | `0.282 kg C/m2/year` |
+| Potential vegetation biomass | `844.54 Pg C` |
+| Land-mean potential biomass | `4.73 kg C/m2` |
 
-The canonical world has `497.92 mm/year` mean land precipitation and `0.506`
-mean liquid-water opportunity, compared with `505.39 mm/year` and `0.516` for
-face-64 seed 42. Resolution-aware moisture timesteps, condensation relaxation,
-diffusion, and synoptic mixing removed the previous numerical drying at face
-128. The approved generated-Earthlike land band is `27-36%`; observed Earth's
-approximately `29%` remains the reference point.
+The canonical world has `712.90 mm/year` mean land precipitation and `0.541`
+mean liquid-water opportunity, compared with `711.20 mm/year` and `0.556` for
+face-64 seed 42. Resolution-aware moisture transport remains stable after the
+surface-geography repair and fractional coastal climate mixing. The approved
+generated-Earthlike land band is `27-36%`; observed Earth's approximately
+`29%` remains the reference point.

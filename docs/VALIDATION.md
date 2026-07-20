@@ -500,19 +500,19 @@ The canonical face-128 seed currently reports:
 | Minimum high-terrain pressure | `69.91 kPa` |
 | Atmospheric scale height | `8.43 km` |
 | Composition-derived climate offset | `0 C` at the reference `280 ppm CO2` |
-| Mean terrestrial surface PAR | `3,037.94 MJ/m2/year` |
-| Mean terrestrial primary-energy proxy | `12.80 MJ/m2/year` |
-| Mean thermal opportunity | `0.698` |
-| Mean liquid-water opportunity | `0.506` |
-| Mean carbon-substrate support | `0.980` relative to reference |
-| Mean aerobic-oxygen support | `0.954` relative to reference |
-| Land above provisional `5 MJ/m2/year` threshold | `76.41%` |
+| Mean terrestrial surface PAR | `2,981.32 MJ/m2/year` |
+| Mean terrestrial primary-energy proxy | `11.24 MJ/m2/year` |
+| Mean thermal opportunity | `0.701` |
+| Mean liquid-water opportunity | `0.541` |
+| Mean carbon-substrate support | `0.974` relative to reference |
+| Mean aerobic-oxygen support | `0.941` relative to reference |
+| Land above provisional `5 MJ/m2/year` threshold | `66.57%` |
 | Annual aggregation error | `5.20e-8` relative |
 
-The envelope uses a multi-seed-calibrated `0.0421` peak PAR-to-chemical
+The envelope uses a multi-seed-calibrated `0.0295` peak PAR-to-chemical
 conversion efficiency and a normalized saturating nutrient response with a
-`0.5` half-saturation index. The canonical and face-64 seed-42 productive-area
-fractions are `76.4%` and `77.8%`, respectively. These parameters pass the
+`0.5` half-saturation index. The canonical productive-area fraction is
+`66.57%`. These parameters pass the
 predeclared carbon ranges at both scales without becoming physical clamps for
 non-Earth profiles.
 
@@ -526,16 +526,16 @@ configured morphology bounds, and zero terrestrial state over ocean.
 
 | Metric | Canonical result |
 | --- | ---: |
-| Mean potential NPP | `0.321 kg C/m2/year` |
-| Mean potential vegetation cover | `47.52%` |
-| Land with at least 10% potential cover | `96.29%` |
-| Mean potential standing biomass | `5.224 kg C/m2` |
-| Mean growing-season fraction | `0.834` |
-| Mean woody-allocation trait | `0.2220` |
-| Actual maximum rooting depth | `2.06 m` |
-| Actual maximum canopy height | `27.54 m` |
-| Energy-conversion error | `4.63e-8` relative |
-| Annual aggregation error | `5.33e-8` relative |
+| Mean potential NPP | `0.282 kg C/m2/year` |
+| Mean potential vegetation cover | `44.35%` |
+| Land with at least 10% potential cover | `92.94%` |
+| Mean potential standing biomass | `4.731 kg C/m2` |
+| Mean growing-season fraction | `0.810` |
+| Mean woody-allocation trait | `0.2165` |
+| Actual maximum rooting depth | `2.36 m` |
+| Actual maximum canopy height | `29.62 m` |
+| Energy-conversion error | `3.31e-8` relative |
+| Annual aggregation error | `6.42e-8` relative |
 
 These are potential equilibrium producer-community outputs under the explicit
 colonization assumption, not actual vegetation. The calibrated biomass response
@@ -553,21 +553,20 @@ strata. Earth ranges remain diagnostics during ordinary generation.
 | KPI | Earth profile | Canonical face-128 |
 | --- | ---: | ---: |
 | Land surface fraction | `27-36%` | `35.00%` |
-| Potential terrestrial NPP | `50-75 Pg C/year` | `57.26 Pg C/year` |
-| Land-mean potential NPP | `0.32-0.55 kg C/m2/year` | `0.321` |
-| Potential vegetation biomass | `771-1,107 Pg C` | `932.65 Pg C` |
-| Land-mean potential biomass | `5-8 kg C/m2` | `5.224` |
+| Potential terrestrial NPP | `50-75 Pg C/year` | `50.28 Pg C/year` |
+| Land-mean potential NPP | `0.28-0.55 kg C/m2/year` | `0.282` |
+| Potential vegetation biomass | `771-1,107 Pg C` | `844.54 Pg C` |
+| Land-mean potential biomass | `4.2-8.1 kg C/m2` | `4.731` |
 
 All accounting gates and all four directional climate-response comparisons
-pass on the canonical seed. Its `497.92 mm/year` mean land precipitation and
-`0.506` liquid-water opportunity are close to face-64 seed 42's `505.39
-mm/year` and `0.516` after resolution-aware climate transport was introduced.
+pass on the canonical seed. Its `712.90 mm/year` mean land precipitation and
+`0.541` liquid-water opportunity are close to face-64 seed 42's `711.20
+mm/year` and `0.556` after fractional coastal climate mixing was introduced.
 
 All six configured face-64 worlds now complete. Every hard and dispersion gate
-passes; NPP spans `62.56-75.98 Pg C/year`, biomass spans
-`977.48-1,089.41 Pg C`, and their coefficients of variation are `0.071` and
-`0.040`. Five of six worlds pass the global NPP diagnostic and all six pass
-global biomass; this satisfies the predeclared `80%` per-diagnostic rule.
+passes; NPP spans `54.78-73.02 Pg C/year`, biomass spans
+`888.33-1,061.11 Pg C`, and their coefficients of variation are `0.094` and
+`0.062`. All six worlds pass both global diagnostics.
 The ensemble and canonical world now pass the complete profile. The generated-
 Earthlike land band is `27-36%`; observed Earth's approximately `29%` remains
 the reference point, while the approved canonical game-world configuration has
@@ -585,24 +584,24 @@ native outputs.
 
 | Cover metric | Canonical face-128 |
 | --- | ---: |
-| Functional vegetation / land | `47.52%` |
-| Bare ground / land | `32.70%` |
-| Saline barren / land | `2.36%` |
-| Inland open water / land | `2.86%` |
-| Unsupported surface / land | `14.56%` |
-| Maximum partition error | `4.00e-8` |
+| Functional vegetation / land | `44.35%` |
+| Bare ground / land | `36.38%` |
+| Saline barren / land | `2.34%` |
+| Inland open water / land | `3.17%` |
+| Unsupported surface / land | `13.77%` |
+| Maximum partition error | `4.30e-8` |
 
 | Resource potential | Area-weighted mean | Area-weighted p90 | Maximum |
 | --- | ---: | ---: | ---: |
-| Fire tendency | `0.123` | `0.180` | `0.225` |
-| Grazing | `0.252` | `0.335` | `0.423` |
-| Forest resource | `0.136` | `0.313` | `0.456` |
-| Pasture | `0.129` | `0.184` | `0.288` |
-| Crop | `0.305` | `0.410` | `0.606` |
+| Fire tendency | `0.101` | `0.153` | `0.210` |
+| Grazing | `0.234` | `0.337` | `0.427` |
+| Forest resource | `0.131` | `0.325` | `0.496` |
+| Pasture | `0.126` | `0.186` | `0.324` |
+| Crop | `0.294` | `0.408` | `0.628` |
 
-Within functional vegetation, woody strategies hold `33.06%`, herbaceous
-strategies `37.59%`, hydrophytic vegetation `2.62%`, and xeric plus low-stature
-strategies `26.73%`. The crop layer exceeds `0.5` on `0.71%` of land area; the
+Within functional vegetation, woody strategies hold `34.69%`, herbaceous
+strategies `37.74%`, hydrophytic vegetation `4.16%`, and xeric plus low-stature
+strategies `23.41%`. The crop layer exceeds `0.5` on `0.82%` of land area; the
 other four layers do not reach `0.5` in this world.
 
 ## Earth Functional Vegetation V1
@@ -614,7 +613,7 @@ strata. Earth diagnostics use broad potential-natural cover ranges and
 directional climate responses rather than modern land use.
 
 The canonical world passes every diagnostic. Its cool-moist woody cover is
-`23.0%`; warm-humid woody and hydrophytic cover are `51.2%` and `10.3%`.
+`18.4%`; warm-humid woody and hydrophytic cover are `50.6%` and `9.9%`.
 Warm-dry land is more xeric and grazing-suitable, warm-seasonal land is more
 fire-prone, and warm-humid land is more forest-suitable.
 
@@ -622,12 +621,12 @@ All six face-64 worlds pass every functional diagnostic and stability gate:
 
 | Land metric | Ensemble mean | Seed range | CV |
 | --- | ---: | ---: | ---: |
-| Functional vegetation | `51.96%` | `50.01-54.54%` | `0.030` |
-| Woody cover | `19.20%` | `17.29-21.58%` | `0.079` |
-| Herbaceous cover | `18.53%` | `17.96-19.04%` | `0.019` |
-| Xeric plus low-stature cover | `12.49%` | `12.12-12.78%` | `0.018` |
-| Hydrophytic cover | `1.75%` | `1.45-2.08%` | `0.118` |
-| Inland open water | `1.14%` | `0.73-1.72%` | `0.261` |
+| Functional vegetation | `51.16%` | `47.27-56.45%` | `0.063` |
+| Woody cover | `20.55%` | `17.01-24.62%` | `0.125` |
+| Herbaceous cover | `18.01%` | `17.36-18.89%` | `0.028` |
+| Xeric plus low-stature cover | `10.10%` | `9.74-10.49%` | `0.025` |
+| Hydrophytic cover | `2.50%` | `2.14-3.00%` | `0.109` |
+| Inland open water | `2.05%` | `0.93-3.32%` | `0.472` |
 
 Resource-potential p90 CVs are all below `0.06`; climate-stratum functional
 means remain below the configured `0.60` CV ceiling. Derived biome labels,

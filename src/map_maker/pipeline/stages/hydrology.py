@@ -512,7 +512,7 @@ ARRAY_DTYPES = {
 
 @stage(
     "hydrology",
-    inputs=("climate", "cryosphere", "elevation", "geology", "world_age", "planet"),
+    inputs=("climate", "cryosphere", "elevation", "geology", "sea_level", "planet"),
     outputs=(
         *ARRAY_DTYPES,
         "DepressionCatalog",
@@ -525,7 +525,7 @@ ARRAY_DTYPES = {
         "RiverReachCatalog",
         "HydrologyMetadata",
     ),
-    version="v7",
+    version="v8",
     native_libraries=("hydrology_native",),
     visualizer=_hydrology_visualizer,
 )
@@ -551,7 +551,7 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
     radius_m = float(planet_metadata["planet_radius_earth"]) * EARTH_RADIUS_M
     radius_km = radius_m / 1_000.0
     physical_areas_km2 = context.topology.cell_areas * radius_km * radius_km
-    land_mask = _artifact_array(deps["world_age"], "BaseOceanMask") < 0.5
+    land_mask = _artifact_array(deps["sea_level"], "SurfaceOceanMask") < 0.5
     median_land_cell_area = float(np.median(physical_areas_km2[land_mask]))
     controls = {
         **asdict(config),
@@ -569,7 +569,7 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             areas=context.topology.cell_areas,
             neighbors=context.topology.neighbor_indices,
             xyz=context.topology.xyz,
-            elevation=_artifact_array(deps["elevation"], "BedrockElevationM"),
+            elevation=_artifact_array(deps["sea_level"], "SurfaceElevationM"),
             relief=_artifact_array(deps["elevation"], "TerrainReliefM"),
             rock_strength=_artifact_array(deps["geology"], "RockStrength"),
             accommodation=_artifact_array(deps["geology"], "SedimentAccommodation"),

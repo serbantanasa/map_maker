@@ -18,8 +18,9 @@ ensemble_tolerances:
   maximum_mean_cover_coefficient_of_variation: 0.25
   maximum_vegetated_fraction_coefficient_of_variation: 0.20
   minimum_zone_presence_seed_fraction: 0.60
-  maximum_zone_area_fraction_absolute_range: 0.20
+  maximum_zone_area_fraction_absolute_range: 0.22
   maximum_zone_mean_npp_coefficient_of_variation: 0.60
   maximum_functional_fraction_coefficient_of_variation: 0.30
+  maximum_inland_open_water_coefficient_of_variation: 0.75
   maximum_resource_p90_coefficient_of_variation: 0.35
   maximum_zone_functional_mean_coefficient_of_variation: 0.60

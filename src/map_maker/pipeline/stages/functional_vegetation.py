@@ -379,7 +379,7 @@ def _visualizer(
         "climate",
         "cryosphere",
         "elevation",
-        "world_age",
+        "sea_level",
     ),
     outputs=(
         "FunctionalTypeFractions",
@@ -390,7 +390,7 @@ def _visualizer(
         "FunctionalVegetationCatalog",
         "FunctionalVegetationMetadata",
     ),
-    version="v4",
+    version="v5",
     native_libraries=("functional_vegetation_native",),
     visualizer=_visualizer,
 )
@@ -442,7 +442,7 @@ def functional_vegetation_stage(
             strategy_confidence_multiplier=config.strategy_confidence_multiplier,
             areas=np.ascontiguousarray(context.topology.cell_areas, dtype=np.float64),
             ocean=np.ascontiguousarray(
-                _artifact_array(deps["world_age"], "BaseOceanMask"), dtype=np.float32
+                _artifact_array(deps["sea_level"], "SurfaceOceanMask"), dtype=np.float32
             ),
             vegetation_cover=np.ascontiguousarray(
                 _artifact_array(potential, "PotentialVegetationCoverFraction"), dtype=np.float32
@@ -526,7 +526,7 @@ def functional_vegetation_stage(
     resources = np.asarray(views["FunctionalResourcePotentials"], dtype=np.float64)
     confidence = np.asarray(views["FunctionalVegetationConfidence"], dtype=np.float64)
     dominant = np.asarray(views["DominantFunctionalCoverCode"], dtype=np.uint8)
-    ocean = _artifact_array(deps["world_age"], "BaseOceanMask") >= 0.5
+    ocean = _artifact_array(deps["sea_level"], "SurfaceOceanMask") >= 0.5
     land = ~ocean
     bounded_outputs = (functional, nonvegetated, resources, confidence)
     if any(np.any(~np.isfinite(values)) for values in bounded_outputs):

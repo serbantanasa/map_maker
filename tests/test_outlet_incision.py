@@ -28,6 +28,7 @@ def _ensure_stages_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",
@@ -313,7 +314,9 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
             "AnnualTerrestrialPrimaryEnergyPotentialMJm2"
         ].value.array()
     )
-    ocean = np.asarray(results["world_age"].artifact_records["BaseOceanMask"].value.array()) >= 0.5
+    ocean = (
+        np.asarray(results["sea_level"].artifact_records["SurfaceOceanMask"].value.array()) >= 0.5
+    )
     assert np.all(annual_energy[ocean] == 0.0)
     assert np.any(annual_energy[~ocean] > 0.0)
     potential_cover = np.asarray(

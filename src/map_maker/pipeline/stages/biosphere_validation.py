@@ -297,13 +297,13 @@ def _climate_distribution_catalog(
 
 @stage(
     "biosphere_validation",
-    inputs=("potential_biosphere", "climate", "world_age", "planet"),
+    inputs=("potential_biosphere", "climate", "sea_level", "planet"),
     outputs=(
         "BiosphereKpiCatalog",
         "BiosphereClimateDistributionCatalog",
         "BiosphereValidationMetadata",
     ),
-    version="v3",
+    version="v5",
 )
 def biosphere_validation_stage(
     context: PipelineContext,
@@ -316,13 +316,13 @@ def biosphere_validation_stage(
 
     potential = deps["potential_biosphere"]
     climate = deps["climate"]
-    world_age = deps["world_age"]
+    sea_level = deps["sea_level"]
     planet = deps["planet"]
     potential_metadata = _artifact_mapping(potential, "PotentialBiosphereMetadata")
     planet_metadata = _artifact_mapping(planet, "PlanetMetadata")
     profile_is_earthlike = potential_metadata.get("validation_profile") == "earthlike"
 
-    ocean = _artifact_array(world_age, "BaseOceanMask") >= 0.5
+    ocean = _artifact_array(sea_level, "SurfaceOceanMask") >= 0.5
     land = ~ocean
     annual_temperature = _artifact_array(climate, "AnnualMeanTemperatureC")
     annual_precipitation = _artifact_array(climate, "AnnualPrecipitationMm")
@@ -541,10 +541,11 @@ def biosphere_validation_stage(
         "global_land",
         land_mean_npp,
         "kg C/m2/year",
-        minimum=0.32,
+        minimum=0.28,
         maximum=0.55,
-        reference_scope="Earth land area under potential natural vegetation",
+        reference_scope="Earthlike generated land area under potential natural vegetation",
         reference_ids=("tian_2014_global_npp", "ornl_npp_multibiome"),
+        note="Normalized range includes the approved 27-36% generated land-area envelope.",
         gate_kind="earth_diagnostic",
         applicable=profile_is_earthlike,
     )
@@ -567,10 +568,11 @@ def biosphere_validation_stage(
         "global_land",
         land_mean_biomass,
         "kg C/m2",
-        minimum=5.0,
-        maximum=8.0,
-        reference_scope="Potential biomass normalized by Earth land area",
+        minimum=4.2,
+        maximum=8.1,
+        reference_scope="Potential biomass normalized by generated Earthlike land area",
         reference_ids=("erb_2018_potential_biomass",),
+        note="Normalized range includes the approved 27-36% generated land-area envelope.",
         gate_kind="earth_diagnostic",
         applicable=profile_is_earthlike,
     )

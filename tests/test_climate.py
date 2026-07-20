@@ -24,6 +24,7 @@ def _ensure_climate_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
     ):
         module = importlib.import_module(f"map_maker.pipeline.stages.{module_name}")
@@ -142,7 +143,7 @@ def test_climate_outputs_seasonal_causal_fields_and_visuals(tmp_path: Path):
     )
     assert np.all(np.isfinite(aridity)) and np.all(aridity >= 0.0)
 
-    ocean = _array(results["world_age"], "BaseOceanMask") >= 0.5
+    ocean = _array(results["sea_level"], "SurfaceOceanMask") >= 0.5
     assert np.all(orography[ocean] == 0.0)
     assert np.all(orography[~ocean] >= 0.0)
     assert float(np.max(orography[~ocean])) > 500.0

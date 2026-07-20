@@ -437,7 +437,7 @@ def _visualizer(
         "climate",
         "elevation",
         "geology",
-        "world_age",
+        "sea_level",
     ),
     outputs=(
         *MATERIAL_OUTPUTS,
@@ -447,7 +447,7 @@ def _visualizer(
         *EFFECTIVE_SURFACE_WATER_OUTPUTS,
         "SurfaceMaterialsMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("surface_materials_native",),
     visualizer=_visualizer,
 )
@@ -494,7 +494,7 @@ def surface_materials_stage(
     hydrology = deps["hydrology"]
     climate = deps["climate"]
     cryosphere = deps["cryosphere"]
-    world_age = deps["world_age"]
+    sea_level = deps["sea_level"]
     coarse_lake = np.ascontiguousarray(_artifact_array(hydrology, "LakeFraction"), dtype=np.float32)
     coarse_wetland = np.ascontiguousarray(
         _artifact_array(hydrology, "WetlandFraction"), dtype=np.float32
@@ -563,7 +563,7 @@ def surface_materials_stage(
             monthly_deep_drainage_fraction=config.monthly_deep_drainage_fraction,
             areas=np.ascontiguousarray(context.topology.cell_areas, dtype=np.float64),
             ocean=np.ascontiguousarray(
-                _artifact_array(world_age, "BaseOceanMask"), dtype=np.float32
+                _artifact_array(sea_level, "SurfaceOceanMask"), dtype=np.float32
             ),
             province_class=np.ascontiguousarray(
                 _artifact_array(geology, "GeologicalProvinceClass"), dtype=np.uint8
@@ -640,7 +640,7 @@ def surface_materials_stage(
             },
         )
 
-    ocean = _artifact_array(world_age, "BaseOceanMask") >= 0.5
+    ocean = _artifact_array(sea_level, "SurfaceOceanMask") >= 0.5
     land = ~ocean
     material_sum = np.sum(
         np.stack([np.asarray(views[name], dtype=np.float64) for name in MATERIAL_OUTPUTS]),

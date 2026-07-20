@@ -24,6 +24,7 @@ def _ensure_stages_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",
@@ -214,7 +215,7 @@ def test_depression_catalog_accepts_an_empty_candidate_set():
 
 
 def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
-    engine = ExecutionEngine(_config(tmp_path, "pass2"), generate_visuals=True)
+    engine = ExecutionEngine(_config(tmp_path, "pass2", rng_seed=4), generate_visuals=True)
     results = engine.run(["basin_erosion", "hydrology_pass2"])
     erosion = results["basin_erosion"]
     result = results["hydrology_pass2"]

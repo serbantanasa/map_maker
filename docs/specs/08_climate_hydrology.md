@@ -19,8 +19,8 @@ monthly climatology, not research-grade atmospheric dynamics or daily weather.
 ## Inputs
 
 - `planet`: monthly top-of-atmosphere insolation and solar declination.
-- `elevation`: pre-erosion bedrock and broad relief.
-- `world_age`: provisional land/ocean mask.
+- `elevation`: pre-erosion broad relief.
+- `sea_level`: signed surface elevation, connected ocean, and fractional coast.
 - `geometry`: consumed through the dependency graph as canonical cell area,
   latitude, XYZ unit vectors, and D4 neighbors.
 
@@ -34,9 +34,11 @@ becoming a false coastal atmospheric wall while preserving broad mountain belts.
 ### Temperature
 
 1. Linearized outgoing-longwave energy balance consumes monthly insolation,
-   land/ocean albedo, and a zero-integral meridional heat-transport tendency.
-2. Land and ocean use separate thermal response rates, producing greater land
-   seasonality and ocean lag.
+   fractionally mixed land/ocean albedo, and a zero-integral meridional
+   heat-transport tendency.
+2. Land and ocean thermal response rates are mixed by coarse-cell ocean area,
+   producing greater land seasonality and ocean lag without making a mixed
+   coastal cell physically atomic.
 3. Neighbor exchange represents unresolved atmospheric heat transport.
 4. Positive climate orography applies a configurable environmental lapse rate.
 5. Multiple climatological years are integrated to a periodic seasonal state.
@@ -53,7 +55,9 @@ becoming a false coastal atmospheric wall while preserving broad mountain belts.
 
 ### Moisture And Orography
 
-1. Warm ocean cells evaporate into a persistent atmospheric moisture column.
+1. Warm ocean area evaporates into a persistent atmospheric moisture column.
+   Initial moisture, evaporation, and land/ocean condensation fluxes are mixed
+   by `SurfaceOceanFraction` in coastal cells.
 2. Each transport step combines wind-directed advection, lateral synoptic mixing,
    and retained local moisture.
    The configured step count is defined at face-128 and scales with face
@@ -62,7 +66,8 @@ becoming a false coastal atmospheric wall while preserving broad mountain belts.
    leeward descent. Rainout is rate-limited so a single coarse coastal cell cannot
    remove an entire air mass.
 4. Ocean and land condensation thresholds differ so moisture can be exported from
-   oceans and penetrate continents.
+   oceans and penetrate continents. Their resulting condensation fluxes are
+   mixed by area rather than interpolating the nonlinear thresholds themselves.
 5. A conservative graph mixing pass turns transport-cell events into a monthly
    climatology footprint while preserving area-weighted precipitation totals.
 
@@ -128,9 +133,9 @@ contract for inspection and surrogate training.
 
 - Cryosphere: monthly melt-aware runoff potential.
 - Climate: monthly evaporation plus annual aridity index.
-- Elevation: pre-erosion bedrock elevation and terrain relief.
+- Elevation and sea level: signed surface elevation, terrain relief, and the
+  connected surface-ocean mask.
 - Geology: rock strength and sediment accommodation.
-- World age: provisional ocean mask.
 - Planet and geometry: physical radius, cell areas, XYZ unit vectors, and global
   cubed-sphere D4 neighbors.
 

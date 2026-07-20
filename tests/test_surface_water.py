@@ -23,6 +23,7 @@ def _ensure_stages_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",

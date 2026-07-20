@@ -23,6 +23,7 @@ def _ensure_stages_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",
@@ -317,7 +318,7 @@ def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: 
             tmp_path,
             "connector-exclusion",
             face_resolution=16,
-            rng_seed=22,
+            rng_seed=4,
         )
     )
     results = engine.run(["basin_refinement", "basin_erosion"])

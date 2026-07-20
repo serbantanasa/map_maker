@@ -67,7 +67,7 @@ class BiosphereEnvelopeConfig:
     nutrient_half_saturation_index: float = 0.5
     co2_half_saturation_pa: float = 20.0
     reference_oxygen_partial_pressure_kpa: float = 21.22
-    photosynthetic_conversion_efficiency: float = 0.0421
+    photosynthetic_conversion_efficiency: float = 0.0295
     minimum_productive_energy_mj_m2_year: float = 5.0
     nonreference_profile_confidence_multiplier: float = 0.75
     maximum_annual_aggregation_relative_error: float = 1e-5
@@ -189,14 +189,14 @@ def _visualizer(
         "atmosphere",
         "planet",
         "climate",
-        "world_age",
+        "sea_level",
     ),
     outputs=(
         *MONTHLY_ENVELOPE_OUTPUTS,
         *ANNUAL_ENVELOPE_OUTPUTS,
         "BiosphereEnvelopeMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("biosphere_envelope_native",),
     visualizer=_visualizer,
 )
@@ -275,7 +275,7 @@ def biosphere_envelope_stage(
             confidence_multiplier=confidence_multiplier,
             areas=np.ascontiguousarray(context.topology.cell_areas, dtype=np.float64),
             ocean=np.ascontiguousarray(
-                _artifact_array(deps["world_age"], "BaseOceanMask"), dtype=np.float32
+                _artifact_array(deps["sea_level"], "SurfaceOceanMask"), dtype=np.float32
             ),
             monthly_insolation=np.ascontiguousarray(
                 _artifact_array(deps["planet"], "MonthlyInsolationWm2"), dtype=np.float32
@@ -345,7 +345,7 @@ def biosphere_envelope_stage(
             raise RuntimeError(f"{name} falls outside [0, 1]")
     if np.any(monthly_primary > monthly_par * config.photosynthetic_conversion_efficiency + 1e-5):
         raise RuntimeError("primary-energy potential exceeds its PAR energy bound")
-    ocean = _artifact_array(deps["world_age"], "BaseOceanMask") >= 0.5
+    ocean = _artifact_array(deps["sea_level"], "SurfaceOceanMask") >= 0.5
     if np.any(annual_primary[ocean] != 0.0):
         raise RuntimeError("terrestrial primary energy is nonzero over ocean")
 

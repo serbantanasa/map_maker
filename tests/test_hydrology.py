@@ -26,6 +26,7 @@ def _ensure_hydrology_registered():
         "world_age",
         "geology",
         "elevation",
+        "sea_level",
         "climate",
         "cryosphere",
         "hydrology",
@@ -129,7 +130,7 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
         assert arrays[name].dtype == dtype
         assert np.all(np.isfinite(arrays[name]))
 
-    ocean = _array(results["world_age"], "BaseOceanMask") >= 0.5
+    ocean = _array(results["sea_level"], "SurfaceOceanMask") >= 0.5
     land = ~ocean
     receiver = arrays["FlowReceiverID"]
     _assert_acyclic(receiver, ocean)
