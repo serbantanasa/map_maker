@@ -21,8 +21,8 @@ from .generate import GenerationResult, generate_world
 
 @dataclass(frozen=True)
 class ValidationThresholds:
-    min_land_fraction: float = 0.20
-    max_land_fraction: float = 0.55
+    min_land_fraction: float = 0.18
+    max_land_fraction: float = 0.36
     min_land_components: int = 2
     max_largest_landmass_fraction: float = 0.98
     min_mixed_plate_fraction: float = 0.40

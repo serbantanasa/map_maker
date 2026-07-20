@@ -15,6 +15,7 @@ from ..models import StageResult
 from ..registry import stage
 from ..visualization import VisualizationRequest, VisualizationResult
 from .climate import _cube_net_rgb, _palette
+from .sea_level import _equirectangular_rgb
 
 if TYPE_CHECKING:
     from ..execution import PipelineContext
@@ -318,7 +319,7 @@ def _visualizer(
     colors = np.zeros((16, 3), dtype=np.uint8)
     for item in (*BIOMES, *LANDSCAPES):
         colors[cast(int, item["code"])] = cast(tuple[int, int, int], item["color"])
-    dominant_rgb = colors[np.asarray(landscape, dtype=np.uint8)]
+    dominant_rgb = dominant_landscape_rgb(landscape)
 
     float_colors = np.asarray(
         [cast(tuple[int, int, int], item["color"]) for item in BIOMES], dtype=np.float64
@@ -347,28 +348,47 @@ def _visualizer(
     )
 
     outputs = []
-    for filename, image, artifact, metadata in (
+    renderings = (
         (
             "dominant_biomes.png",
-            dominant_rgb,
+            _cube_net_rgb(dominant_rgb),
             "DominantLandscapeCode",
-            {"palette": "BiomeCatalog"},
+            {"palette": "BiomeCatalog", "projection": "cube_net"},
+        ),
+        (
+            "dominant_biomes_global.png",
+            _equirectangular_rgb(dominant_rgb),
+            "DominantLandscapeCode",
+            {"palette": "BiomeCatalog", "projection": "equirectangular"},
         ),
         (
             "biome_mixture.png",
-            mixture_rgb,
+            _cube_net_rgb(mixture_rgb),
             "BiomeFractions",
-            {"blend": "area_weighted_biome_palette"},
+            {"blend": "area_weighted_biome_palette", "projection": "cube_net"},
+        ),
+        (
+            "biome_mixture_global.png",
+            _equirectangular_rgb(mixture_rgb),
+            "BiomeFractions",
+            {"blend": "area_weighted_biome_palette", "projection": "equirectangular"},
         ),
         (
             "biome_transitions.png",
-            transition_rgb,
+            _cube_net_rgb(transition_rgb),
             "BiomeTransitionIndex",
-            {"scale": [0.0, 1.0]},
+            {"scale": [0.0, 1.0], "projection": "cube_net"},
         ),
-    ):
+        (
+            "biome_transitions_global.png",
+            _equirectangular_rgb(transition_rgb),
+            "BiomeTransitionIndex",
+            {"scale": [0.0, 1.0], "projection": "equirectangular"},
+        ),
+    )
+    for filename, image, artifact, metadata in renderings:
         output = request.output_dir / filename
-        Image.fromarray(_cube_net_rgb(image), mode="RGB").save(output)
+        Image.fromarray(image, mode="RGB").save(output)
         outputs.append(
             VisualizationResult(
                 output,
@@ -377,6 +397,18 @@ def _visualizer(
             )
         )
     return outputs
+
+
+def dominant_landscape_rgb(landscape: np.ndarray) -> np.ndarray:
+    """Map persisted landscape codes to the canonical biome palette."""
+
+    colors = np.zeros((16, 3), dtype=np.uint8)
+    for item in (*BIOMES, *LANDSCAPES):
+        colors[cast(int, item["code"])] = cast(tuple[int, int, int], item["color"])
+    codes = np.asarray(landscape, dtype=np.uint8)
+    if np.any(codes > 15):
+        raise ValueError("landscape contains an unknown palette code")
+    return colors[codes]
 
 
 @stage(
@@ -587,4 +619,9 @@ def derived_biomes_stage(
     }
 
 
-__all__ = ["BIOMES", "DerivedBiomeConfig", "derived_biomes_stage"]
+__all__ = [
+    "BIOMES",
+    "DerivedBiomeConfig",
+    "derived_biomes_stage",
+    "dominant_landscape_rgb",
+]

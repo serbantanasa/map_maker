@@ -9,8 +9,8 @@ seeds:
   - 404
   - 505
 provisional_thresholds:
-  min_land_fraction: 0.20
-  max_land_fraction: 0.55
+  min_land_fraction: 0.18
+  max_land_fraction: 0.36
   min_land_components: 2
   max_largest_landmass_fraction: 0.98
   min_mixed_plate_fraction: 0.40

@@ -289,6 +289,7 @@ def main(args: Iterable[str] | None = None) -> int:
             "functional_vegetation",
             "functional_vegetation_validation",
             "derived_biomes",
+            "derived_biomes_validation",
         ],
         default="topology",
     )
@@ -391,6 +392,8 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "functional_vegetation_validation"
         elif parsed.stage == "derived_biomes":
             stage_name = "derived_biomes"
+        elif parsed.stage == "derived_biomes_validation":
+            stage_name = "derived_biomes_validation"
         else:
             stage_name = "surface_water_final"
         started = time.perf_counter()
@@ -434,6 +437,7 @@ def main(args: Iterable[str] | None = None) -> int:
         "functional_vegetation",
         "functional_vegetation_validation",
         "derived_biomes",
+        "derived_biomes_validation",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

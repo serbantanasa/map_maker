@@ -6,7 +6,8 @@ Milestone 15b2a is implemented and calibrated by the 15b2b
 `earth_functional_vegetation_v1` profile. This stage follows the passing
 `earth_biosphere_v1` calibration and converts continuous potential-biosphere
 traits into mixed functional vegetation. Familiar biome labels remain a
-derived view and are not part of this milestone.
+derived view and are implemented downstream in 15b2c; they are not state owned
+by this stage.
 
 ## Interpretation
 
@@ -111,7 +112,8 @@ land use.
 
 ## Deferred
 
-- Familiar biome and vegetation-zone labels.
+- Finer biome and vegetation-zone taxonomies beyond the downstream 15b2c
+  broad familiar-biome mixtures.
 - Earth-observation calibration of global and climate-stratum PFT mixtures.
 - Species, competition, succession, migration, disturbance events, consumers,
   and actual land use.

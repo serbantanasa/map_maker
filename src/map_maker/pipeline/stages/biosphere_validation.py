@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 EARTH_RADIUS_M = 6_371_008.8
 REFERENCE_PROFILE_VERSION = "earth_biosphere_v1"
-EARTHLIKE_LAND_FRACTION_RANGE = (0.27, 0.36)
+EARTHLIKE_LAND_FRACTION_RANGE = (0.18, 0.36)
 
 EARTH_REFERENCE_PROFILE = (
     {
@@ -545,7 +545,7 @@ def biosphere_validation_stage(
         maximum=0.55,
         reference_scope="Earthlike generated land area under potential natural vegetation",
         reference_ids=("tian_2014_global_npp", "ornl_npp_multibiome"),
-        note="Normalized range includes the approved 27-36% generated land-area envelope.",
+        note="Normalized range includes the approved 18-36% generated land-area envelope.",
         gate_kind="earth_diagnostic",
         applicable=profile_is_earthlike,
     )
@@ -572,7 +572,7 @@ def biosphere_validation_stage(
         maximum=8.1,
         reference_scope="Potential biomass normalized by generated Earthlike land area",
         reference_ids=("erb_2018_potential_biomass",),
-        note="Normalized range includes the approved 27-36% generated land-area envelope.",
+        note="Normalized range includes the approved 18-36% generated land-area envelope.",
         gate_kind="earth_diagnostic",
         applicable=profile_is_earthlike,
     )

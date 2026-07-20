@@ -1,6 +1,7 @@
 format_version: 1
 reference_profile: earth_biosphere_v1
 functional_reference_profile: earth_functional_vegetation_v1
+biome_reference_profile: earth_biomes_v1
 base_config: cubed_sphere_crust_state.yaml
 output_dir: ../out/biosphere_validation
 
@@ -24,3 +25,5 @@ ensemble_tolerances:
   maximum_inland_open_water_coefficient_of_variation: 0.75
   maximum_resource_p90_coefficient_of_variation: 0.35
   maximum_zone_functional_mean_coefficient_of_variation: 0.60
+  maximum_biome_group_coefficient_of_variation: 0.50
+  maximum_zone_biome_mean_coefficient_of_variation: 0.75

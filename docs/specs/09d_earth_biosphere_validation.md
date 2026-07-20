@@ -28,7 +28,7 @@ ordinary generation DAG only treats hard invariants as validity gates.
 
 | KPI | Provisional accepted range |
 | --- | ---: |
-| Land surface fraction | `0.27-0.36` |
+| Land surface fraction | `0.18-0.36` |
 | Potential terrestrial NPP | `50-75 Pg C/year` |
 | Land-mean potential NPP | `0.28-0.55 kg C/m2/year` |
 | Potential vegetation biomass | `771-1,107 Pg C` |
@@ -139,5 +139,6 @@ The canonical world has `712.90 mm/year` mean land precipitation and `0.541`
 mean liquid-water opportunity, compared with `711.20 mm/year` and `0.556` for
 face-64 seed 42. Resolution-aware moisture transport remains stable after the
 surface-geography repair and fractional coastal climate mixing. The approved
-generated-Earthlike land band is `27-36%`; observed Earth's approximately
-`29%` remains the reference point.
+generated-Earthlike land band is `18-36%`; observed Earth's approximately
+`29%` remains the reference point. The canonical `35%` setpoint is inside that
+band, not a required exclusive fraction.

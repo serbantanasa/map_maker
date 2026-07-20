@@ -77,8 +77,8 @@ climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
 reaches. Explicit geological event history, spherical global erosion and
-sediment feedback, derived biome labels, ecosystem dynamics, and complete
-regional terrain remain implementation milestones. The canonical path now also
+sediment feedback, ecosystem dynamics, and complete regional terrain remain
+implementation milestones. The canonical path now also
 publishes fractional L2 surface materials, initial mineral-soil properties, and
 a conservative monthly soil-water partition. Atmospheric composition and
 hydrostatic pressure are now explicit pre-climate artifacts, and the post-soil
@@ -117,8 +117,12 @@ eight continuous producer-community strategies and five nonvegetated classes,
 then publishes fire, grazing, forest-resource, pasture, and crop suitability.
 The six-seed `earth_functional_vegetation_v1` profile gates broad global cover,
 climate-stratum response, resource-potential shape, and ensemble stability. The
-dominant cover code is a hierarchical rendering/query artifact; biome names and
-actual land use are not canonical state.
+dominant cover code is a hierarchical rendering/query artifact. The downstream
+`derived_biomes` stage preserves a 13-component full-cell mixture while exposing
+familiar primary, secondary, and landscape codes. Its `earth_biomes_v1` profile
+gates broad global abundance, causal climate response, and six-seed stability.
+Biome names remain derived views over canonical physical and functional state;
+actual land use is not implemented.
 
 Run the fixed six-seed integration gallery and provisional hard gates:
 
@@ -225,7 +229,13 @@ uv run map-maker-pipeline --stage functional_vegetation --config configs/cubed_s
 # Per-world functional cover, climate-response, and resource-potential profile
 uv run map-maker-pipeline --stage functional_vegetation_validation --config configs/cubed_sphere_crust_state.yaml
 
-# Fixed-seed biosphere and functional-vegetation profiles plus dispersion tolerances
+# Familiar biome mixtures derived from causal functional vegetation
+uv run map-maker-pipeline --stage derived_biomes --config configs/cubed_sphere_crust_state.yaml
+
+# Per-world Earth biome-mixture and causal-response diagnostics
+uv run map-maker-pipeline --stage derived_biomes_validation --config configs/cubed_sphere_crust_state.yaml
+
+# Fixed-seed biosphere, vegetation, and biome profiles plus a biome gallery
 uv run map-maker validate-biosphere --config configs/biosphere_validation.yaml
 ```
 

@@ -237,3 +237,14 @@ stage_overrides:
     ambiguity_margin_threshold: 0.12
     transition_confidence_weight: 0.45
     maximum_partition_absolute_error: 0.000001
+  derived_biomes_validation:
+    minimum_reportable_zone_land_fraction: 0.005
+    highland_elevation_threshold_m: 1200.0
+    highland_relief_threshold_m: 350.0
+    lowland_elevation_maximum_m: 800.0
+    lowland_relief_maximum_m: 220.0
+    wet_support_threshold: 0.20
+    dry_support_maximum: 0.02
+    minimum_nontrivial_biome_fraction: 0.002
+    maximum_partition_absolute_error: 0.000001
+    maximum_reconstruction_absolute_error: 0.000001

@@ -8,8 +8,9 @@ and biosphere resource envelope is implemented in
 `09b_environmental_biosphere_envelope.md`. The trait-first potential biosphere
 is implemented in `09c_trait_first_potential_biosphere.md`. Functional vegetation
 mixtures are implemented in `09e_functional_vegetation.md` and calibrated by
-`09f_functional_vegetation_validation.md`. Biome labels and the optional
-one-pass feedback remain later work.
+`09f_functional_vegetation_validation.md`. Familiar biome mixtures and their
+Earth profile are implemented in `09g_derived_biomes.md`. The optional one-pass
+feedback remains later work.
 The pre-15b2 Earth calibration contract is implemented in
 `09d_earth_biosphere_validation.md`.
 
@@ -74,6 +75,11 @@ The `earth_functional_vegetation_v1` profile now gates global cover,
 climate-stratum response, resource-potential shape, and fixed-seed stability.
 It is deliberately based on potential natural vegetation rather than modern
 human land cover.
+
+Milestone 15b2c derives 13 familiar biome fractions from this accepted state,
+retains primary and secondary query codes, and validates global mixture shape,
+upstream-climate response, highland/alpine response, wet-support response, and
+six-seed stability through `earth_biomes_v1`.
 
 High carbon dioxide is likewise not a giant-life or high-productivity switch.
 Potential productivity and organism scale remain constrained by energy,

@@ -622,7 +622,9 @@ def derived_biomes_validation_stage(
             area_fraction >= config.minimum_reportable_zone_land_fraction,
         )
 
-    structural_specs = (
+    structural_specs: tuple[
+        tuple[str, np.ndarray, np.ndarray, float | None, float | None, str], ...
+    ] = (
         (
             "highland_alpine_fraction_minimum",
             fractions[11],
@@ -656,20 +658,27 @@ def derived_biomes_validation_stage(
             "dry_support",
         ),
     )
-    for kpi_id, field, mask, minimum, maximum, scope in structural_specs:
-        value, reportable = conditional_mean(field, mask)
+    for (
+        kpi_id,
+        field,
+        mask,
+        reference_minimum,
+        reference_maximum,
+        structural_scope,
+    ) in structural_specs:
+        conditional_value, is_reportable = conditional_mean(field, mask)
         add(
             kpi_id,
             "causal_response",
-            scope,
-            value,
+            structural_scope,
+            conditional_value,
             "fraction",
             gate_kind="earth_structure",
-            minimum=minimum,
-            maximum=maximum,
+            minimum=reference_minimum,
+            maximum=reference_maximum,
             reference_scope="Causal topographic or hydrologic biome response",
             reference_ids=("olson_2001_terrestrial_ecoregions",),
-            applicable=profile_is_earthlike and reportable,
+            applicable=profile_is_earthlike and is_reportable,
         )
 
     catalog = pa.Table.from_pylist(rows, schema=KPI_SCHEMA)

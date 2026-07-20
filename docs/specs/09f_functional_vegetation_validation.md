@@ -2,15 +2,16 @@
 
 ## Status
 
-Milestone 15b2b implemented and passing. This is the final nested 15b milestone;
-subsequent work returns to the numbered pipeline stages.
+Milestone 15b2b is implemented and passing. It gates the downstream 15b2c
+derived-biome interpretation documented in `09g_derived_biomes.md`.
 
 ## Contract
 
 `earth_functional_vegetation_v1` validates functional cover after the
-independent `earth_biosphere_v1` carbon gate. It does not classify named biomes
-and does not fit modern agriculture, deforestation, fire suppression, or other
-human land use.
+independent `earth_biosphere_v1` carbon gate. This profile does not classify
+named biomes; 15b2c derives them without changing functional state. It also does
+not fit modern agriculture, deforestation, fire suppression, or other human
+land use.
 
 The profile uses three kinds of evidence:
 
@@ -99,7 +100,8 @@ passes.
 
 ## Deferred
 
-- Named biome and vegetation-zone labels.
+- Finer biome and vegetation-zone labels beyond the downstream 15b2c broad
+  familiar-biome mixtures.
 - Actual land use and domestication.
 - Disturbance history, succession, competition, and migration.
 - The bounded vegetation feedback pass.

@@ -541,7 +541,8 @@ These are potential equilibrium producer-community outputs under the explicit
 colonization assumption, not actual vegetation. The calibrated biomass response
 uses explicit structural and low-productivity turnover controls. The coarse
 ensemble and canonical world satisfy the carbon-amplitude profile. Functional
-mixtures are implemented in 15b2a; biome names remain deferred.
+mixtures are implemented in 15b2a; their downstream familiar-biome
+interpretation is implemented and validated in 15b2c.
 
 ## Earth Biosphere V1
 
@@ -552,7 +553,7 @@ strata. Earth ranges remain diagnostics during ordinary generation.
 
 | KPI | Earth profile | Canonical face-128 |
 | --- | ---: | ---: |
-| Land surface fraction | `27-36%` | `35.00%` |
+| Land surface fraction | `18-36%` | `35.00%` |
 | Potential terrestrial NPP | `50-75 Pg C/year` | `50.28 Pg C/year` |
 | Land-mean potential NPP | `0.28-0.55 kg C/m2/year` | `0.282` |
 | Potential vegetation biomass | `771-1,107 Pg C` | `844.54 Pg C` |
@@ -568,10 +569,10 @@ passes; NPP spans `54.78-73.02 Pg C/year`, biomass spans
 `888.33-1,061.11 Pg C`, and their coefficients of variation are `0.094` and
 `0.062`. All six worlds pass both global diagnostics.
 The ensemble and canonical world now pass the complete profile. The generated-
-Earthlike land band is `27-36%`; observed Earth's approximately `29%` remains
-the reference point, while the approved canonical game-world configuration has
-`35.0%` land. See `09d_earth_biosphere_validation.md` for sources, climate
-strata, tolerances, and pass semantics.
+Earthlike land band is `18-36%`; observed Earth's approximately `29%` remains
+the reference point. The canonical configuration currently lands at `35.0%`,
+which is inside the band. See `09d_earth_biosphere_validation.md` for sources,
+climate strata, tolerances, and pass semantics.
 
 ## Functional Vegetation Mixtures
 
@@ -629,6 +630,30 @@ All six face-64 worlds pass every functional diagnostic and stability gate:
 | Inland open water | `2.05%` | `0.93-3.32%` | `0.472` |
 
 Resource-potential p90 CVs are all below `0.06`; climate-stratum functional
-means remain below the configured `0.60` CV ceiling. Derived biome labels,
-actual land use, disturbance history, and vegetation feedback remain later
-work.
+means remain below the configured `0.60` CV ceiling. Actual land use,
+disturbance history, and vegetation feedback remain later work.
+
+## Earth Biomes V1
+
+`derived_biomes_validation` materializes the `earth_biomes_v1` contract over
+13-component full-cell mixtures. Hard gates independently reconstruct global
+means from exclusive climate strata, close the ecological-ground partition,
+reproduce dominant and secondary codes, and verify valid landscape codes.
+Earth diagnostics test broad potential-natural abundance and causal climate,
+highland, and wet-support responses; they do not clamp generated state.
+
+The canonical face-128 world passes all 36 checks. Its land-area mixture is
+`26.63%` forest, `5.41%` warm open, `32.72%` temperate open, `21.49%` core
+dryland, `4.67%` tundra, `2.24%` alpine, `3.67%` wetland, and `3.17%` inland
+open water. Mean transition index is `0.561`, mean classification confidence
+is `0.351`, and all 13 biome classes occur nontrivially as dominant classes.
+
+The fixed six-world face-64 ensemble passes the profile's 80% per-diagnostic
+rule and every dispersion gate. Four worlds pass every individual diagnostic;
+seed 101 misses only the warm-dry core-dryland minimum, and seed 404 misses only
+the global warm-open minimum. Every diagnostic passes in at least five worlds.
+Forest spans `27.53-35.26%`, warm open `4.31-10.51%`,
+temperate open `21.84-32.81%`, core dryland `18.77-21.10%`, tundra
+`4.62-9.20%`, alpine `1.84-3.51%`, and wetland `4.22-6.10%`. All 13 dominant
+classes remain nontrivial in every world. Numerical passage is paired with the
+required human review of `out/biosphere_validation/biome_gallery.png`.

@@ -16,7 +16,12 @@ from map_maker.pipeline.stages.biosphere_validation import (
 def test_earthlike_land_fraction_profile_accepts_configured_baseline():
     minimum, maximum = EARTHLIKE_LAND_FRACTION_RANGE
 
+    assert minimum == pytest.approx(0.18)
+    assert maximum == pytest.approx(0.36)
+    assert minimum <= 0.18 <= maximum
+    assert minimum <= 0.29 <= maximum
     assert minimum <= 0.35 <= maximum
+    assert minimum <= 0.36 <= maximum
 
 
 def test_climate_strata_are_exclusive_complete_and_upstream_only():

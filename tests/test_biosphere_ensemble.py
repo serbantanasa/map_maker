@@ -11,6 +11,7 @@ from map_maker.pipeline.biosphere_ensemble import (
     BiosphereEnsembleResult,
     BiosphereEnsembleThresholds,
     BiosphereSeedReport,
+    DerivedBiomeSeedReport,
     EnsembleGate,
     FunctionalVegetationSeedReport,
     evaluate_biosphere_ensemble,
@@ -152,6 +153,81 @@ def _with_functional(
     )
 
 
+def _biome_report(*, outside_reference: bool = False) -> DerivedBiomeSeedReport:
+    global_values = {
+        "land_mean_forest_fraction": 0.30,
+        "land_mean_warm_open_fraction": 0.12,
+        "land_mean_temperate_open_fraction": 0.25,
+        "land_mean_core_dryland_fraction": 0.20,
+        "land_mean_tundra": 0.06,
+        "land_mean_alpine": 0.03,
+        "land_mean_wetland": 0.02,
+        "land_mean_transition_index": 0.50,
+        "land_mean_classification_confidence": 0.40,
+    }
+    kpi_rows = [
+        {
+            "kpi_id": kpi_id,
+            "value": value,
+            "gate_kind": "earth_diagnostic",
+            "comparison_status": "within_reference",
+        }
+        for kpi_id, value in global_values.items()
+    ]
+    kpi_rows.append(
+        {
+            "kpi_id": "warm_humid_to_warm_dry_forest_ratio",
+            "value": 3.0,
+            "gate_kind": "earth_structure",
+            "comparison_status": "outside_reference" if outside_reference else "within_reference",
+        }
+    )
+    zone_rows = []
+    for definition in CLIMATE_STRATA:
+        for metric_id, value in (
+            ("tropical_rainforest", 0.25),
+            ("savanna", 0.15),
+            ("core_dryland_fraction", 0.30),
+            ("temperate_forest", 0.25),
+            ("temperate_open_fraction", 0.30),
+            ("boreal_forest", 0.15),
+            ("cold_open_fraction", 0.50),
+            ("wetland", 0.03),
+        ):
+            zone_rows.append(
+                {
+                    "zone_id": definition["zone_id"],
+                    "zone_land_area_fraction": 1.0 / len(CLIMATE_STRATA),
+                    "metric_id": metric_id,
+                    "statistic": "mean",
+                    "value": value,
+                    "reportable": True,
+                }
+            )
+    return DerivedBiomeSeedReport(
+        pa.Table.from_pylist(kpi_rows),
+        pa.Table.from_pylist(zone_rows),
+        {
+            "hard_gate_pass": 1,
+            "reference_profile_version": "earth_biomes_v1",
+        },
+    )
+
+
+def _with_biomes(
+    report: BiosphereSeedReport, *, outside_reference: bool = False
+) -> BiosphereSeedReport:
+    functional = report.functional_vegetation or _functional_report()
+    return BiosphereSeedReport(
+        report.seed,
+        report.kpis,
+        report.climate_distributions,
+        report.metadata,
+        functional,
+        _biome_report(outside_reference=outside_reference),
+    )
+
+
 def test_ensemble_accepts_stable_multi_seed_earth_profile():
     evaluation = evaluate_biosphere_ensemble(
         [_seed_report(1), _seed_report(2, npp=64.0, biomass=940.0)],
@@ -190,6 +266,34 @@ def test_ensemble_separates_functional_profile_miss_from_stability():
 
     assert evaluation.stability_pass
     assert not evaluation.functional_profile_pass
+    assert not evaluation.passed
+
+
+def test_ensemble_accepts_stable_derived_biome_profile():
+    evaluation = evaluate_biosphere_ensemble(
+        [_with_biomes(_seed_report(1)), _with_biomes(_seed_report(2))],
+        _thresholds(),
+    )
+
+    assert evaluation.passed
+    assert evaluation.biome_profile_pass
+    assert any(
+        gate.name == "biome_profile.warm_humid_to_warm_dry_forest_ratio" and gate.passed
+        for gate in evaluation.gates
+    )
+
+
+def test_ensemble_separates_biome_profile_miss_from_stability():
+    evaluation = evaluate_biosphere_ensemble(
+        [
+            _with_biomes(_seed_report(1)),
+            _with_biomes(_seed_report(2), outside_reference=True),
+        ],
+        _thresholds(),
+    )
+
+    assert evaluation.stability_pass
+    assert not evaluation.biome_profile_pass
     assert not evaluation.passed
 
 
@@ -252,6 +356,13 @@ ensemble_tolerances:
     )
     config_path.write_text(config_path.read_text().replace("[1, 2]", "[1, 1]"))
     with pytest.raises(ValueError, match="unique"):
+        BiosphereEnsembleConfig.from_file(config_path)
+
+    config_path.write_text(
+        config_path.read_text().replace("[1, 1]", "[1, 2]")
+        + "\nbiome_reference_profile: experimental_v2\n"
+    )
+    with pytest.raises(ValueError, match="biome_reference_profile"):
         BiosphereEnsembleConfig.from_file(config_path)
 
 

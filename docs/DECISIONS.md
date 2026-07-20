@@ -1888,7 +1888,7 @@ C/year`, biomass is `977.48-1,089.41 Pg C`, NPP coefficient of variation is
 NPP diagnostics and all global biomass diagnostics pass, satisfying the
 predeclared `80%` requirement. Every land-mean diagnostic and ensemble-
 dispersion gate passes. The configured `35.0%` landmass is inside the approved
-generated-Earthlike profile.
+`18-36%` generated-Earthlike land band.
 
 The canonical face-128 world produces `57.26 Pg C/year` NPP, `0.321 kg
 C/m2/year` land-mean NPP, `932.65 Pg C` biomass, and `5.22 kg C/m2` land-mean
@@ -1935,32 +1935,30 @@ resolutions changes physical transport distance and monthly condensation. That
 numerical artifact made the canonical world appear substantially drier and
 could not be repaired honestly in the biosphere stage.
 
-## Decision 038: Accept 35 Percent Land In The Earthlike World Profile
+## Decision 038: Earthlike Emerged Land Band Is 18 To 36 Percent
 
 Status: approved and implemented
 
 Decision:
-`earth_biosphere_v1` accepts generated Earthlike land fractions from `27%` to
-`36%`. Earth's observed approximately `29%` emerged-land fraction remains the
-reference point, but a generated world with the canonical `35%` landmass is an
-accepted game-world variant rather than a calibration failure.
+`earth_biosphere_v1` and provisional morphology validation accept generated
+Earthlike emerged-land fractions from a **minimum of `18%` to a maximum of
+`36%`**. Earth's observed approximately `29%` emerged-land fraction remains the
+reference point inside that band. A configured ocean-area target (for example
+the current canonical `65%` ocean → `35%` land) is only one legal setpoint; it
+is not a required exclusive land fraction.
 
-This decision changes only the profile diagnostic. It does not retune
-tectonics, move coastlines, alter carbon output, or constrain non-Earth
-scenarios. A future model that separates continental crust, shelf, sea level,
-and emerged land must rerun this profile instead of assuming the current mask
-semantics are permanent.
+This decision is a profile and validation band. It does not force every world
+to the same land share. Non-Earth scenarios may leave the band when they use a
+different validation profile.
 
 Validation:
-All six face-64 worlds and the canonical face-128 world now satisfy the full
-`earth_biosphere_v1` profile, including land fraction, carbon amplitude,
-directional climate response, hard invariants, and ensemble stability.
+All six face-64 worlds and the canonical face-128 world currently land at
+`35.0%` under the canonical ocean target, which remains inside `18-36%`.
 
 Reason:
-The target is a plausible and useful simulation world, not an exact copy of
-modern Earth. The user explicitly accepted `35%` landmass, and the profile
-should not reject an approved scenario characteristic while all causal carbon
-and climate checks pass.
+Useful Earthlike game worlds may be somewhat wetter or drier than modern Earth,
+but not arbitrarily land-dominated or nearly ocean-only. The user-specified
+acceptance band is `18%` minimum and `36%` maximum emerged land.
 
 ## Decision 039: Functional Vegetation Is A Conservative Cover Mixture
 
@@ -2094,10 +2092,12 @@ signed elevation relative to the solved datum, ocean depth, shelf fraction,
 coastal cells, and inland-below-sea-level evidence.
 
 For the canonical Earthlike profile, continental-crust candidate area is
-`42%`, fractional ocean area is `65%`, and emerged land remains the approved
-`35%`. Crust share and land share are independent controls. `BaseOceanMask`
-retains only its documented oceanic-crust-candidate semantics; surface stages
-must consume the new sea-level artifacts.
+`42%` and the default ocean-area target is `65%` (emerged land `35%`). Crust
+share and land share are independent controls. Emerged land must stay inside
+the Decision 038 band of `18-36%`; the `35%` setpoint is one legal value in
+that band, not a fixed product requirement. `BaseOceanMask` retains only its
+documented oceanic-crust-candidate semantics; surface stages must consume the
+new sea-level artifacts.
 
 Validation:
 The face-128 seed-42 surface has `35.0%` emerged land, ten significant
@@ -2166,3 +2166,52 @@ Replacing compact crust blobs with separated terranes, rifts, shelves, and a
 connected ocean increased coastal exposure and changed precipitation,
 hydrology, and productivity. Retaining the old calibration would have hidden
 that causal change and made cache provenance misleading.
+
+## Decision 044: Familiar Biomes Are Derived Conserved Mixtures
+
+Status: approved and implemented
+
+Decision:
+Derive familiar game-facing biomes only after climate, soils, potential
+biosphere, and functional vegetation. Persist 13 nonnegative full-cell biome
+fractions rather than painting one categorical label per coarse cell. Inland
+open water and persistent ice remain separate physical landscape classes;
+ocean remains outside the terrestrial partition. Primary, secondary, and
+dominant-landscape codes are reproducible query and rendering views, not new
+canonical physical state.
+
+This supersedes only Decision 039's temporary deferral of familiar biome names;
+its functional-cover ownership and conservation rules remain in force.
+
+The V1 taxonomy is tropical rainforest, tropical seasonal forest, savanna, hot
+desert, xeric shrubland, temperate forest, temperate grassland, steppe, boreal
+forest, tundra, cold desert, alpine, and wetland. It is deliberately broad.
+Finer ecoregions may later derive from these mixtures and physical context
+without replacing upstream state.
+
+`earth_biomes_v1` validates partition closure, code integrity, broad global
+abundance, and directional climate, highland, and wet-support relationships.
+The fixed six-seed profile retains the established 80% per-diagnostic rule and
+adds global and climate-zone dispersion gates. A generated world is never
+clamped into an Earth diagnostic range. This stage has no vegetation feedback;
+feedback belongs to the next bounded process pass.
+
+Validation:
+The canonical face-128 seed passes all 36 checks. Its land mixture is `26.63%`
+forest, `5.41%` warm open, `32.72%` temperate open, `21.49%` core dryland,
+`4.67%` tundra, `2.24%` alpine, and `3.67%` wetland, plus `3.17%` inland open
+water. Every one of the 13 biome classes is a nontrivial dominant class.
+
+The fixed six-world face-64 ensemble passes the profile and stability gates;
+every diagnostic passes in at least five seeds and every biome remains
+nontrivially represented in every world. Four seeds pass every individual
+diagnostic; seeds 101 and 404 each miss one soft Earth diagnostic. Automated
+passage does not replace visual acceptance: the ensemble command writes
+`biome_gallery.png`, and human gallery review remains a required gate against
+plausible statistics over visibly implausible maps.
+
+Reason:
+A single coarse categorical biome would erase ecotones and misrepresent cells
+that span tens of kilometres. Conserved mixtures preserve subgrid diversity,
+support later 100 m refinement, and provide richer surrogate-training targets,
+while familiar labels give the game and map renderer an ergonomic vocabulary.

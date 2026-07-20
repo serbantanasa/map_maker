@@ -90,9 +90,14 @@
      physical suitability, not disturbance history or actual land use.
    - `earth_functional_vegetation_v1` gates broad global cover, upstream-climate
      response, resource-potential shape, and six-seed stability.
-22. Derived biomes and bounded vegetation feedback.
-23. Mineral and energy systems.
-24. Selected-region refinement and map export.
+22. Derived biome mixtures and Earth profile.
+   - Thirteen familiar biome fractions are derived from causal climate,
+     functional vegetation, terrain, wet support, and physical surface state.
+   - `earth_biomes_v1` gates global shape, causal response, and six-seed
+     stability while retaining the full mixture for ecotones and refinement.
+23. Bounded vegetation feedback.
+24. Mineral and energy systems.
+25. Selected-region refinement and map export.
 
 The current canonical cubed-sphere implementation reaches converged bounded
 outlet incision, final lake-coupled river hydrographs, and a bounded V1
@@ -102,8 +107,8 @@ atmospheric composition and pressure, and a Rust-backed environmental resource
 envelope plus continuous potential producer-community traits. It includes a
 passing Earth-profile gate and the first Rust-backed functional-vegetation
 mixture, exact cover partition, derived dominant-cover query, and resource-
-suitability layers plus a passing functional-vegetation Earth profile. Familiar
-biome labels and vegetation feedback remain deferred. It includes a causal,
+suitability layers plus passing functional-vegetation and derived-biome Earth
+profiles. The bounded vegetation feedback remains deferred. It includes a causal,
 pre-erosion bedrock surface; separate crustal,
 orogenic, basin, and relief-prior artifacts; persisted monthly orbital forcing;
 an explicit connected sea-level datum with fractional coasts and shelves; and a

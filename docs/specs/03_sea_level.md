@@ -14,9 +14,11 @@ vertical datum. Continental versus oceanic crust is geological evidence; it is
 not a shoreline.
 
 The Earthlike profile currently uses approximately `42%` continental-crust
-candidate area and independently targets `65%` ocean area, retaining the
-approved `35%` emerged-land world while allowing continental margins and rifts
-to flood. Other world profiles may choose different values.
+candidate area and independently targets ocean area so emerged land stays in
+the Decision 038 band of `18-36%`. The default config targets `65%` ocean
+(`35%` land), one legal point in that band, while allowing continental margins
+and rifts to flood. Other world profiles may choose different setpoints inside
+or outside the Earthlike band.
 
 ## Inputs
 
