@@ -47,11 +47,13 @@ stage_overrides:
     isostasy_factor: 0.6
     radiogenic_heat_scale: 1.0
   elevation:
+    # Height scales feed subgrid TerrainReliefM strongly; cell-mean orogeny is
+    # internally scaled/capped so ~72 km tiles stay range-mean, not sky plateaus.
     collision_height_m: 5200.0
-    arc_height_m: 2800.0
-    ridge_height_m: 1800.0
-    trench_depth_m: 3600.0
-    rift_depth_m: 950.0
+    arc_height_m: 3000.0
+    ridge_height_m: 2200.0
+    trench_depth_m: 6200.0
+    rift_depth_m: 1100.0
   sea_level:
     target_ocean_area_fraction: 0.65
     shelf_depth_m: 200.0
@@ -83,16 +85,17 @@ stage_overrides:
   cryosphere:
     spinup_years: 120
     lapse_rate_c_per_km: 6.5
-    relief_elevation_multiplier: 3.0
-    maximum_highland_fraction: 0.40
-    snow_degree_day_melt_mm_c_month: 12.0
-    glacier_degree_day_melt_mm_c_month: 16.0
-    firn_conversion_fraction_year: 0.65
+    # Multiplies TerrainReliefM (subgrid peak height) for snowline cooling.
+    relief_elevation_multiplier: 1.6
+    maximum_highland_fraction: 0.55
+    snow_degree_day_melt_mm_c_month: 10.0
+    glacier_degree_day_melt_mm_c_month: 12.0
+    firn_conversion_fraction_year: 0.72
     snow_sublimation_fraction_month: 0.004
     glacier_sublimation_fraction_month: 0.0002
-    glacier_flow_activation_mm: 1000.0
+    glacier_flow_activation_mm: 800.0
     glacier_flow_fraction_year: 0.08
-    glacier_reference_thickness_mm: 100000.0
+    glacier_reference_thickness_mm: 80000.0
     runoff_base_fraction: 0.35
     maximum_mass_balance_relative_error: 0.00001
   hydrology:

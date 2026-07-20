@@ -108,8 +108,8 @@ beds by physical volume, preserves ordinary-cell and physical-trunk identities,
 reruns routing in Rust, and repeats monthly balance to a zero-feedback gate.
 Final lake coupling keeps losses on their owning branch and records unresolved
 coarse/fine discharge mismatch instead of borrowing flow from a sibling
-tributary. The current output is a functional prototype rather than an atlas-
-grade world.
+tributary. The canonical state now has a first projected physical-atlas export;
+visual acceptance and finer vector shoreline generalization remain provisional.
 
 Current feature development is frozen after derived biomes until the global
 map-export milestone is accepted. Hydrology and biosphere work is bugfix-only;
@@ -154,6 +154,20 @@ geological provinces, and initial elevation now run directly on cubed-sphere
 neighbor IDs. The legacy whole-grid `erosion` stage remains on the provisional
 two-dimensional path and explicitly rejects six-face fields; canonical sparse
 cubed-sphere fluvial processing runs through `basin_erosion`.
+
+Export the canonical physical atlas from cached world artifacts:
+
+```bash
+uv run map-maker atlas
+```
+
+The checked-in `configs/physical_atlas.yaml` writes an Equal Earth PNG, an
+RGB-alpha GeoTIFF with the selected central meridian in its CRS, and provenance
+JSON under `out/cubed-sphere-crust-state-42/atlas/`. The renderer automatically
+places the map seam through an ocean-heavy meridian and draws only globally
+significant rivers at world-map scale. Atlas styling and projection do not alter
+or invalidate simulation artifacts. See `docs/specs/11_physical_atlas_export.md`
+for the export contract and current source-resolution limits.
 
 Run the previous procedural generator for comparison:
 

@@ -113,6 +113,13 @@ implemented before later physical stages without changing their causal order.
 The freeze ends only through a new recorded decision after the export acceptance
 bar is met.
 
+The first global presentation-layer implementation is now available through
+`map-maker atlas`. It exports a deterministic Equal Earth PNG and georeferenced
+GeoTIFF plus checksummed provenance from immutable stage artifacts. This
+implementation does not by itself thaw late simulation work: the canonical
+render still requires explicit human acceptance, and vector coast/lake geometry,
+regional maps, and a rotatable globe remain open parts of Decision 018.
+
 The current canonical cubed-sphere implementation reaches converged bounded
 outlet incision, final lake-coupled river hydrographs, and a bounded V1
 cryosphere after erosion, sedimentation, and Hydrology Pass 2. It now reaches

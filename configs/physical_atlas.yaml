@@ -1,0 +1,14 @@
+format_version: 1
+world_config: cubed_sphere_crust_state.yaml
+output_dir: ../out/cubed-sphere-crust-state-42/atlas
+style:
+  width_px: 2400
+  border_fraction: 0.025
+  central_meridian_deg: auto
+  terrain_vertical_exaggeration: 16.0
+  land_hillshade_strength: 0.52
+  ocean_hillshade_strength: 0.22
+  coastline_width_px: 0
+  draw_rivers: true
+  minimum_river_discharge_m3s: 4000.0
+  maximum_river_width_px: 3.5

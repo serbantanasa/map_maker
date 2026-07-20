@@ -218,6 +218,10 @@ fn gaussian(distance: f32, center: f32, sigma: f32) -> f32 {
     (-0.5 * z * z).exp()
 }
 
+fn age_factor_for_noise(crust_age_ga: f32) -> f32 {
+    (crust_age_ga.max(0.0) / 0.22).clamp(0.0, 1.0).powf(0.85)
+}
+
 fn corridor_activity(value: f32) -> f32 {
     let normalized = ((value + 1.0) * 0.5).clamp(0.0, 1.0);
     let smooth = normalized * normalized * (3.0 - 2.0 * normalized);
@@ -450,78 +454,93 @@ unsafe fn run_elevation(
         let structural_variation = noise[cell];
         let corridor_variation = corridor_activity(corridor_noise[cell]);
         let crustal = if continental[cell] {
-            320.0
-                + (isostasy[cell] - mean_land_iso) * 620.0
-                + (crust_thickness[cell] - mean_land_thickness) * 52.0
+            // Continental freeboard: modest plateaus and platforms before orogeny.
+            380.0
+                + (isostasy[cell] - mean_land_iso) * 780.0
+                + (crust_thickness[cell] - mean_land_thickness) * 68.0
         } else {
-            let age_factor = (crust_age[cell].max(0.0) / 0.25).clamp(0.0, 1.0).sqrt();
-            -2650.0 - age_factor * 2450.0
-                + (isostasy[cell] - mean_ocean_iso) * 420.0
-                + (crust_thickness[cell] - mean_ocean_thickness) * 70.0
+            // Age-deepened abyssal plain with more vertical range than the prior
+            // near-constant mid-ocean floor.
+            let age_factor = (crust_age[cell].max(0.0) / 0.22).clamp(0.0, 1.0).powf(0.85);
+            -2_150.0 - age_factor * 3_350.0
+                + (isostasy[cell] - mean_ocean_iso) * 520.0
+                + (crust_thickness[cell] - mean_ocean_thickness) * 95.0
         };
 
-        let collision_width = km_to_radians(270.0 + 210.0 * stiffness[cell]);
-        let collision_offset = km_to_radians(70.0 + 85.0 * (corridor_noise[cell] + 1.0));
-        let collision_relief = collision_height_m
-            * collision_strength[cell]
+        // Config heights are peak-of-corridor *scales*. Cell-mean orogeny uses a
+        // reduced factor so ~5e3 km² tiles stay in range/plateau-mean territory;
+        // TerrainReliefM uses the full scales for subgrid peaks.
+        const MEAN_OROG_SCALE: f32 = 0.62;
+        const OROGENIC_MEAN_CAP_M: f32 = 3_000.0;
+        const CONTINENTAL_MEAN_CAP_M: f32 = 3_500.0;
+
+        let collision_width = km_to_radians(240.0 + 190.0 * stiffness[cell]);
+        let collision_offset = km_to_radians(55.0 + 70.0 * (corridor_noise[cell] + 1.0));
+        let collision_kernel = collision_strength[cell]
             * gaussian(collision_distance[cell], collision_offset, collision_width)
-            * (0.78 + 0.34 * structural_variation);
+            * (0.82 + 0.38 * structural_variation);
+        let collision_relief = collision_height_m * MEAN_OROG_SCALE * collision_kernel;
         let arc_center =
-            if continental[cell] { 190.0 } else { 150.0 } + 85.0 * corridor_noise[cell];
-        let arc_width = if continental[cell] { 145.0 } else { 110.0 };
-        let arc_relief = arc_height_m
-            * overriding_strength[cell]
+            if continental[cell] { 170.0 } else { 135.0 } + 75.0 * corridor_noise[cell];
+        let arc_width = if continental[cell] { 130.0 } else { 100.0 };
+        let arc_kernel = overriding_strength[cell]
             * gaussian(
                 overriding_distance[cell],
                 km_to_radians(arc_center),
                 km_to_radians(arc_width),
             )
-            * (0.76 + 0.42 * structural_variation);
+            * (0.80 + 0.45 * structural_variation);
+        let arc_relief = arc_height_m * MEAN_OROG_SCALE * arc_kernel;
         let ridge_relief = if continental[cell] {
             0.0
         } else {
             ridge_height_m
+                * MEAN_OROG_SCALE
                 * ridge_strength[cell]
                 * gaussian(
                     ridge_distance[cell],
-                    km_to_radians((95.0 + 95.0 * corridor_noise[cell]).max(0.0)),
-                    km_to_radians(285.0),
+                    km_to_radians((80.0 + 80.0 * corridor_noise[cell]).max(0.0)),
+                    km_to_radians(250.0),
                 )
                 * corridor_variation
         };
         let rift_shoulder = rift_depth_m
-            * 0.42
+            * 0.55
+            * MEAN_OROG_SCALE
             * rift_strength[cell]
             * gaussian(
                 rift_distance[cell],
-                km_to_radians(220.0),
-                km_to_radians(115.0),
+                km_to_radians(200.0),
+                km_to_radians(105.0),
             );
-        let transform_relief = 420.0
+        let transform_relief = 680.0
+            * MEAN_OROG_SCALE
             * transform_strength[cell]
-            * gaussian(transform_distance[cell], 0.0, km_to_radians(85.0))
+            * gaussian(transform_distance[cell], 0.0, km_to_radians(75.0))
             * (0.55 + 0.45 * structural_variation.abs());
         let volcanic_relief = hotspot_strength[cell].clamp(0.0, 1.5)
-            * if continental[cell] { 1800.0 } else { 2800.0 }
+            * if continental[cell] { 1_400.0 } else { 2_200.0 }
             * gaussian(
                 hotspot_distance[cell],
                 0.0,
-                km_to_radians(if continental[cell] { 220.0 } else { 165.0 }),
+                km_to_radians(if continental[cell] { 200.0 } else { 150.0 }),
             )
             * (0.72 + 0.34 * structural_variation);
         let distributed_compression = if continental[cell] {
-            let compression_factor = (regional_compression[cell].clamp(0.0, 1.0) / 0.13)
+            let compression_factor = (regional_compression[cell].clamp(0.0, 1.0) / 0.11)
                 .clamp(0.0, 1.0)
-                .powf(1.05);
-            3000.0
+                .powf(0.95);
+            2_800.0
+                * MEAN_OROG_SCALE
                 * compression_factor
-                * (0.62 + 0.38 * uplift[cell].clamp(0.0, 1.0))
-                * (0.76 + 0.32 * structural_variation)
-                * (0.48 + 0.52 * corridor_variation)
+                * (0.58 + 0.42 * uplift[cell].clamp(0.0, 1.0))
+                * (0.74 + 0.36 * structural_variation)
+                * (0.42 + 0.58 * corridor_variation)
         } else {
             0.0
         };
-        let orogenic = (collision_relief
+        // Max-of-processes for cell-mean massifs (no stacking to sky plateaus).
+        let orogenic_raw = (collision_relief
             + arc_relief
             + ridge_relief
             + rift_shoulder
@@ -529,55 +548,78 @@ unsafe fn run_elevation(
             + volcanic_relief)
             .max(distributed_compression)
             .max(0.0);
+        let orogenic = orogenic_raw.min(OROGENIC_MEAN_CAP_M);
 
         let accommodation_depth = accommodation[cell].clamp(0.0, 1.0)
-            * if continental[cell] { 1250.0 } else { 520.0 }
+            * if continental[cell] { 780.0 } else { 640.0 }
             * (0.45 + 0.55 * subsidence[cell].clamp(0.0, 1.0));
         let extension_depth = if continental[cell] {
-            extension[cell].clamp(0.0, 1.0) * 380.0
+            extension[cell].clamp(0.0, 1.0) * 420.0
         } else {
-            subsidence[cell].clamp(0.0, 1.0) * 320.0
+            subsidence[cell].clamp(0.0, 1.0) * 380.0
         };
+        // Full trench/forearc only on oceanic lithosphere. Continental cells may
+        // feel a shallow margin trench shadow, not multi-kilometre dry holes.
+        let trench_weight = if continental[cell] { 0.12 } else { 1.0 };
         let trench = trench_depth_m
+            * trench_weight
             * descending_strength[cell]
             * gaussian(
                 descending_distance[cell],
-                km_to_radians((115.0 + 90.0 * corridor_noise[cell]).max(20.0)),
-                km_to_radians(155.0),
+                km_to_radians((100.0 + 80.0 * corridor_noise[cell]).max(20.0)),
+                km_to_radians(if continental[cell] { 90.0 } else { 140.0 }),
             )
             * corridor_variation;
         let forearc = trench_depth_m
-            * 0.13
+            * if continental[cell] { 0.04 } else { 0.16 }
             * overriding_strength[cell]
             * gaussian(
                 overriding_distance[cell],
-                km_to_radians(55.0),
-                km_to_radians(48.0),
+                km_to_radians(50.0),
+                km_to_radians(42.0),
             );
         let rift_axis = rift_depth_m
             * rift_strength[cell]
             * gaussian(
                 rift_distance[cell],
-                km_to_radians((95.0 + 95.0 * corridor_noise[cell]).max(0.0)),
-                km_to_radians(210.0),
+                km_to_radians((90.0 + 90.0 * corridor_noise[cell]).max(0.0)),
+                km_to_radians(190.0),
             )
             * corridor_variation;
-        let basin = (accommodation_depth + extension_depth + trench + forearc + rift_axis).max(0.0);
+        let mut basin =
+            (accommodation_depth + extension_depth + trench + forearc + rift_axis).max(0.0);
+        if continental[cell] {
+            // Keep emerged continental basins as sedimentary lowlands, not
+            // unfilled oceanic chasms without ice or lake cover.
+            basin = basin.min(1_350.0);
+        }
 
         let background_amplitude = if continental[cell] {
-            210.0 + 430.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0))
+            280.0 + 620.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0))
         } else {
-            85.0 + 95.0 * shear[cell].clamp(0.0, 1.0)
+            // Abyssal roughness and fracture-zone scale variation.
+            180.0 + 260.0 * shear[cell].clamp(0.0, 1.0) + 140.0 * age_factor_for_noise(crust_age[cell])
         };
         let background =
-            structural_variation * (background_amplitude + 0.055 * orogenic + 0.025 * basin);
-        let bedrock = crustal + orogenic - basin + background;
-        let relief = (if continental[cell] { 120.0 } else { 75.0 }
-            + 0.22 * orogenic
-            + 0.10 * basin
-            + 360.0 * shear[cell].clamp(0.0, 1.0)
-            + 260.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0)))
-        .clamp(50.0, 2200.0);
+            structural_variation * (background_amplitude + 0.08 * orogenic + 0.04 * basin);
+        let mut bedrock = crustal + orogenic - basin + background;
+        if continental[cell] {
+            // Bound dry continental lows; true hydrologic lakes are later stages.
+            bedrock = bedrock.max(-650.0);
+            // Hard stop: no ~5e3 km² sky plateaus (user contract).
+            bedrock = bedrock.min(CONTINENTAL_MEAN_CAP_M);
+        }
+        // Subgrid amplitude: peaks over a moderate cell-mean range.
+        // Uses full config height scales + uncapped orogenic potential.
+        let relief_orogen = orogenic_raw.max(orogenic);
+        let relief = (if continental[cell] { 220.0 } else { 110.0 }
+            + 1.05 * relief_orogen
+            + 0.22 * basin
+            + 620.0 * shear[cell].clamp(0.0, 1.0)
+            + 480.0 * (1.0 - rock_strength[cell].clamp(0.0, 1.0))
+            + 0.55 * collision_kernel * collision_height_m
+            + 0.35 * arc_kernel * arc_height_m)
+        .clamp(100.0, 5_500.0);
         let boundary_evidence = (collision_strength[cell]
             * gaussian(collision_distance[cell], 0.0, km_to_radians(700.0)))
         .max(

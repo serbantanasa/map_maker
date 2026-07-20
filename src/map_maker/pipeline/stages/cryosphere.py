@@ -138,7 +138,7 @@ def _visualizer(result: StageResult, request: VisualizationRequest) -> Visualiza
     "cryosphere",
     inputs=("climate", "elevation", "sea_level"),
     outputs=(*MONTHLY_OUTPUTS, *ANNUAL_OUTPUTS, "CryosphereMetadata"),
-    version="v2",
+    version="v3",
     native_libraries=("cryosphere_native",),
     visualizer=_visualizer,
 )

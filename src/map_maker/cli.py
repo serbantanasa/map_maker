@@ -73,6 +73,31 @@ def _biosphere_validation_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _atlas_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "atlas", help="Export the canonical projected physical world map."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/physical_atlas.yaml"),
+        help="Atlas YAML configuration (default: configs/physical_atlas.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override atlas output directory.")
+    parser.add_argument("--width", type=int, help="Override output width in pixels.")
+    parser.add_argument(
+        "--central-meridian",
+        type=float,
+        help="Override automatic ocean-seam placement, in degrees longitude.",
+    )
+    parser.add_argument(
+        "--no-rivers",
+        action="store_true",
+        help="Omit vector river channels from this export.",
+    )
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -197,6 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _generate_parser(subparsers)
     _validation_parser(subparsers)
     _biosphere_validation_parser(subparsers)
+    _atlas_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -288,6 +314,40 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not gate.passed:
                 print(f"  {gate.name}: {gate.value} (expected {gate.expectation})")
         return 1
+
+    if args.command == "atlas":
+        try:
+            from .pipeline.atlas import AtlasExportConfig, export_physical_atlas
+
+            atlas_config = AtlasExportConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+                width_px=args.width,
+                central_meridian_deg=args.central_meridian,
+                draw_rivers=False if args.no_rivers else None,
+            )
+            atlas = export_physical_atlas(atlas_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Physical atlas: {atlas.png_path}")
+        print(f"Projected GeoTIFF: {atlas.geotiff_path}")
+        print(f"Atlas metadata: {atlas.metadata_path}")
+        print(
+            f"Rendered {atlas.width_px}x{atlas.height_px} Equal Earth map at "
+            f"{atlas.central_meridian_deg:.2f} degrees central longitude "
+            f"with {atlas.rendered_river_count} river reaches."
+        )
+        return 0
 
     if args.command == "topology":
         try:
