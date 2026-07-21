@@ -73,6 +73,7 @@ def _config(
                     "maximum_deposition_fraction": 0.35,
                     "deposition_slope_scale": 0.001,
                     "maximum_deposition_depth_m": 10.0,
+                    "bank_incision_fraction": 0.35,
                 },
             },
         }
@@ -93,6 +94,7 @@ def _native_connector_fixture() -> dict[str, object]:
             "maximum_deposition_fraction": 0.25,
             "deposition_slope_scale": 0.001,
             "maximum_deposition_depth_m": 10.0,
+            "bank_incision_fraction": 0.35,
         },
         "cell_ids": np.array([10, 11, 12, 13, 14, 99], dtype=np.int32),
         "cell_parent_ids": np.array([1, 1, 2, 3, 3, 9], dtype=np.int32),
@@ -146,6 +148,24 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
     assert metadata["minimum_realized_slope"] >= metadata["minimum_bed_slope"] - 1e-8
     assert metadata["emitted_minimum_realized_slope"] >= metadata["minimum_bed_slope"] - 1e-12
     assert metadata["total_eroded_volume_km3"] > 0.0
+    assert metadata["bank_carve_valid"] == 1
+    assert metadata["local_dem_low_valid"] == 1
+    assert metadata["vector_uphill_segment_count"] == 0
+    assert metadata["total_bank_eroded_volume_m3"] > 0.0
+
+    vectors = _table(result, "FluvialRiverVectorCatalog")
+    assert vectors.num_rows == profiles.num_rows > 0
+    vector_slopes = np.asarray(
+        vectors["bed_slope_to_next"].combine_chunks().to_numpy(zero_copy_only=False),
+        dtype=np.float64,
+    )
+    finite_vector_slopes = vector_slopes[np.isfinite(vector_slopes)]
+    assert len(finite_vector_slopes)
+    assert np.min(finite_vector_slopes) >= metadata["minimum_bed_slope"] - 1e-12
+    assert np.all(
+        np.asarray(vectors["bed_elevation_m"], dtype=np.float64)
+        <= np.asarray(vectors["terrain_elevation_m"], dtype=np.float64) + 1e-5
+    )
 
     terrain = np.asarray(profiles["terrain_elevation_m"], dtype=np.float64)
     bed = np.asarray(profiles["bed_elevation_m"], dtype=np.float64)
@@ -160,7 +180,7 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
             strict=True,
         )
     )
-    expected_volume = sum(
+    expected_channel_volume = sum(
         width_by_reach[int(reach_id)] * length_m * incision_depth
         for reach_id, length_m, incision_depth in zip(
             np.asarray(profiles["reach_id"], dtype=np.int32),
@@ -170,8 +190,13 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
         )
     )
     profile_volume = np.sum(np.asarray(profiles["eroded_volume_m3"], dtype=np.float64))
-    assert profile_volume == pytest.approx(expected_volume, rel=1e-7)
-    assert profile_volume == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-12)
+    bank_volume = np.sum(np.asarray(reaches["bank_eroded_volume_m3"], dtype=np.float64))
+    assert profile_volume == pytest.approx(expected_channel_volume, rel=1e-7)
+    assert profile_volume == pytest.approx(metadata["total_channel_eroded_volume_m3"], rel=1e-9)
+    assert bank_volume == pytest.approx(metadata["total_bank_eroded_volume_m3"], rel=1e-9)
+    assert profile_volume + bank_volume == pytest.approx(
+        metadata["total_eroded_volume_m3"], rel=1e-9
+    )
 
     cell_ids = np.asarray(profiles["fine_cell_id"], dtype=np.int32)
     order = np.argsort(cell_ids, kind="stable")
@@ -224,6 +249,7 @@ def test_basin_erosion_is_independently_deterministic_and_cacheable(tmp_path: Pa
     for artifact in (
         "ChannelBedProfileCatalog",
         "FluvialRiverReachCatalog",
+        "FluvialRiverVectorCatalog",
         "ErodedBasinCellCatalog",
         "BasinErosionParentCatalog",
     ):
@@ -246,6 +272,8 @@ def test_basin_erosion_config_rejects_unknown_and_invalid_controls():
         BasinErosionConfig.from_mapping({"maximum_deposition_fraction": 1.1})
     with pytest.raises(ValueError, match="deposition_slope_scale"):
         BasinErosionConfig.from_mapping({"deposition_slope_scale": 0.0})
+    with pytest.raises(ValueError, match="bank_incision_fraction"):
+        BasinErosionConfig.from_mapping({"bank_incision_fraction": 1.5})
 
 
 def test_native_layout_round_trips_double_precision_profile_fields():
@@ -351,6 +379,7 @@ def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: 
                         "maximum_deposition_fraction": 0.35,
                         "deposition_slope_scale": 0.001,
                         "maximum_deposition_depth_m": 10.0,
+                        "bank_incision_fraction": 0.35,
                     },
                 },
             }

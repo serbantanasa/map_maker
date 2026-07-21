@@ -43,10 +43,24 @@ sediment transfer but never enter the physical DAG.
 ## Volume Budgets
 
 Incision is calculated at every centerline membership from physical channel
-width, represented in-cell length, and solved depth. Eroded volume accumulates
-to the reach and fine cell. Floodplain deposition is allocated in proportion to
-the already-conserved per-reach floodplain support area, including lateral
+width, represented in-cell length, and solved depth (channel prism). In addition,
+`bank_incision_fraction` carves valley support area
+`(valley_fraction - channel_fraction) * cell_area` to a depth equal to that
+fraction of the associated channel incision. Lateral valley memberships (zero
+in-cell reach length) receive bank carve from the same-path or reach-max channel
+incision. Bank volume enters the same source-to-sink sediment budget as the
+channel prism. Floodplain deposition is allocated in proportion to the
+already-conserved per-reach floodplain support area, including lateral
 memberships, and is capped by support area times maximum deposition depth.
+
+The stage publishes `FluvialRiverVectorCatalog`: ordered polyline vertices with
+xyz, channel width, terrain prior, and solved bed elevation, plus per-segment
+length and bed slope. Hard gates reject uphill vector segments, zero bank carve
+when valley support and channel incision both exist, and any sediment budget
+residual. Placement relative to directly adjacent valley-support cells is a
+reported morphology diagnostic rather than a hard gate: at this resolution an
+adjacent refined cell can represent a separate valley while the channel remains
+subgrid.
 
 Sparse cell budgets are expanded onto the full selected child catalog only when
 artifacts are published. Coarse-parent budgets are exact sums of child erosion
@@ -62,15 +76,18 @@ and deposition. Neither routing nor restriction changes total material.
 ## Validation
 
 Synthetic native tests cover a downstream terrain rise, a shared confluence,
-and channel-to-connector-to-channel transport. CFFI tests also cover a grade
-smaller than float32 precision at the profile elevation, connector transfer,
-physical-component separation at a path gap, native record layout, and rejected
-connector membership. Pipeline tests independently recompute emitted grade,
-physical volume, junction equality, reach flow balances, profile-to-reach and
-profile-to-cell allocations, cell-mean feedback, parent sums, connector
-emptiness, source-to-sink conservation, independent-run determinism, and cache
-reuse. A fixture with real connectors and process-excluded parents prevents
-those gates from passing vacuously.
+channel-to-connector-to-channel transport, and non-zero bank carve on valley
+laterals. CFFI tests also cover a grade smaller than float32 precision at the
+profile elevation, connector transfer, physical-component separation at a path
+gap, native record layout, and rejected connector membership. Pipeline tests
+independently recompute emitted grade, channel and bank volume, junction
+equality, reach flow balances, profile-to-reach and cell allocations, cell-mean
+feedback, parent sums, connector emptiness, source-to-sink conservation,
+first-class vector polyline slopes (no uphill beds), diagnostic local DEM-low
+placement against directly adjacent valley-support cells, independent-run
+determinism, and cache reuse. A fixture
+with real connectors and process-excluded parents prevents those gates from
+passing vacuously.
 
 ## Downstream Stabilization
 

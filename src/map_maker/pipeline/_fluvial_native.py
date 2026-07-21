@@ -34,6 +34,7 @@ REACH_BUDGET_DTYPE = np.dtype(
         ("maximum_incision_depth_m", "=f8"),
         ("upstream_input_volume_m3", "=f8"),
         ("local_erosion_volume_m3", "=f8"),
+        ("bank_eroded_volume_m3", "=f8"),
         ("available_sediment_volume_m3", "=f8"),
         ("floodplain_deposition_volume_m3", "=f8"),
         ("downstream_transfer_volume_m3", "=f8"),
@@ -61,6 +62,7 @@ typedef struct {
     double maximum_deposition_fraction;
     double deposition_slope_scale;
     double maximum_deposition_depth_m;
+    double bank_incision_fraction;
 } FluvialConfig;
 
 typedef struct {
@@ -84,6 +86,7 @@ typedef struct {
     double maximum_incision_depth_m;
     double upstream_input_volume_m3;
     double local_erosion_volume_m3;
+    double bank_eroded_volume_m3;
     double available_sediment_volume_m3;
     double floodplain_deposition_volume_m3;
     double downstream_transfer_volume_m3;
@@ -113,6 +116,8 @@ typedef struct {
     double maximum_incision_depth_m;
     double minimum_realized_slope;
     double total_eroded_volume_m3;
+    double total_channel_eroded_volume_m3;
+    double total_bank_eroded_volume_m3;
     double total_floodplain_deposition_volume_m3;
     double total_terminal_deposition_volume_m3;
     double total_exported_sediment_volume_m3;
@@ -238,6 +243,7 @@ def run_fluvial_erosion(
         "maximum_deposition_fraction",
         "deposition_slope_scale",
         "maximum_deposition_depth_m",
+        "bank_incision_fraction",
     }
     if set(controls) != expected_controls:
         raise ValueError(
@@ -325,6 +331,7 @@ def run_fluvial_erosion(
                 "maximum_deposition_fraction",
                 "deposition_slope_scale",
                 "maximum_deposition_depth_m",
+                "bank_incision_fraction",
             )
         },
     )[0]
@@ -392,6 +399,8 @@ def run_fluvial_erosion(
         "maximum_incision_depth_m": float(stats.maximum_incision_depth_m),
         "minimum_realized_slope": float(stats.minimum_realized_slope),
         "total_eroded_volume_m3": float(stats.total_eroded_volume_m3),
+        "total_channel_eroded_volume_m3": float(stats.total_channel_eroded_volume_m3),
+        "total_bank_eroded_volume_m3": float(stats.total_bank_eroded_volume_m3),
         "total_floodplain_deposition_volume_m3": float(stats.total_floodplain_deposition_volume_m3),
         "total_terminal_deposition_volume_m3": float(stats.total_terminal_deposition_volume_m3),
         "total_exported_sediment_volume_m3": float(stats.total_exported_sediment_volume_m3),

@@ -10,7 +10,7 @@ const TERMINAL_SINK: u8 = 2;
 
 #[no_mangle]
 pub extern "C" fn fluvial_native_abi_version() -> u32 {
-    3
+    4
 }
 
 #[repr(C)]
@@ -21,6 +21,9 @@ pub struct FluvialConfig {
     pub maximum_deposition_fraction: f64,
     pub deposition_slope_scale: f64,
     pub maximum_deposition_depth_m: f64,
+    /// Bank/valley carve depth as a fraction of local channel incision depth.
+    /// Zero disables bank carving (channel prism only).
+    pub bank_incision_fraction: f64,
 }
 
 #[repr(C)]
@@ -48,6 +51,7 @@ pub struct ReachBudgetRecord {
     pub maximum_incision_depth_m: f64,
     pub upstream_input_volume_m3: f64,
     pub local_erosion_volume_m3: f64,
+    pub bank_eroded_volume_m3: f64,
     pub available_sediment_volume_m3: f64,
     pub floodplain_deposition_volume_m3: f64,
     pub downstream_transfer_volume_m3: f64,
@@ -95,6 +99,8 @@ pub struct FluvialStats {
     pub maximum_incision_depth_m: f64,
     pub minimum_realized_slope: f64,
     pub total_eroded_volume_m3: f64,
+    pub total_channel_eroded_volume_m3: f64,
+    pub total_bank_eroded_volume_m3: f64,
     pub total_floodplain_deposition_volume_m3: f64,
     pub total_terminal_deposition_volume_m3: f64,
     pub total_exported_sediment_volume_m3: f64,
@@ -185,6 +191,8 @@ fn validate_inputs(config: FluvialConfig, inputs: &Inputs<'_>) -> Result<(), i32
         || !config.deposition_slope_scale.is_finite()
         || config.deposition_slope_scale <= 0.0
         || !finite_nonnegative(config.maximum_deposition_depth_m)
+        || !finite_nonnegative(config.bank_incision_fraction)
+        || config.bank_incision_fraction > 1.0
     {
         return Err(1);
     }
@@ -474,6 +482,79 @@ fn run_fluvial(config: FluvialConfig, inputs: &Inputs<'_>) -> Result<Outcome, i3
     }
     profiles.sort_by_key(|record| (record.reach_id, record.path_order, record.fine_cell_id));
 
+    // Bank / valley carve: lower valley-support area (including lateral memberships)
+    // by a fraction of local channel incision. This is additional solid volume beyond
+    // the channel prism and feeds the same source-to-sink sediment budget.
+    let mut bank_erosion = vec![0.0f64; inputs.reach_ids.len()];
+    let mut channel_incision_by_cell = HashMap::<i32, f64>::new();
+    for record in &profiles {
+        channel_incision_by_cell
+            .entry(record.fine_cell_id)
+            .and_modify(|depth| *depth = depth.max(record.incision_depth_m))
+            .or_insert(record.incision_depth_m);
+    }
+    if config.bank_incision_fraction > 0.0 {
+        for (reach, support) in support_by_reach.iter().enumerate() {
+            if inputs.reach_kinds[reach] != REACH_CHANNEL || maximum_reach_incision[reach] <= 0.0 {
+                continue;
+            }
+            let mut path_incision = HashMap::<i32, f64>::new();
+            for &membership in &centerline_by_reach[reach] {
+                let cell_id = inputs.membership_cell_ids[membership];
+                let depth = *channel_incision_by_cell.get(&cell_id).unwrap_or(&0.0);
+                let path_order = inputs.membership_path_order[membership];
+                path_incision
+                    .entry(path_order)
+                    .and_modify(|value| *value = value.max(depth))
+                    .or_insert(depth);
+            }
+            let reach_max_incision = maximum_reach_incision[reach];
+            for &membership in support {
+                let valley = inputs.membership_valley_fraction[membership] as f64;
+                let channel = inputs.membership_channel_fraction[membership] as f64;
+                let bank_fraction = (valley - channel).max(0.0);
+                if bank_fraction <= 0.0 {
+                    continue;
+                }
+                let cell_id = inputs.membership_cell_ids[membership];
+                let cell = *cell_row_by_id.get(&cell_id).ok_or(3)?;
+                let associated_incision = if inputs.membership_reach_length_m[membership] > 0.0 {
+                    *channel_incision_by_cell.get(&cell_id).unwrap_or(&0.0)
+                } else {
+                    // Lateral valley support inherits the same-path centerline cut when
+                    // positive; otherwise the reach-max incision so banks still carve
+                    // around any incised reach segment.
+                    let path_depth = path_incision
+                        .get(&inputs.membership_path_order[membership])
+                        .copied()
+                        .unwrap_or(0.0);
+                    if path_depth > 0.0 {
+                        path_depth
+                    } else {
+                        reach_max_incision
+                    }
+                };
+                if associated_incision <= 0.0 {
+                    continue;
+                }
+                let bank_depth_m = config.bank_incision_fraction * associated_incision;
+                let area_m2 = inputs.cell_areas_km2[cell] * 1_000_000.0;
+                let bank_volume_m3 = bank_depth_m * bank_fraction * area_m2;
+                if bank_volume_m3 <= 0.0 {
+                    continue;
+                }
+                bank_erosion[reach] += bank_volume_m3;
+                local_erosion[reach] += bank_volume_m3;
+                let accumulator = cell_accumulators.entry(cell_id).or_insert(CellAccumulator {
+                    parent_cell_id: inputs.cell_parent_ids[cell],
+                    ..CellAccumulator::default()
+                });
+                accumulator.eroded_volume_m3 += bank_volume_m3;
+                // Bank carve is not channel bed incision; do not raise maximum_channel_incision.
+            }
+        }
+    }
+
     let mut reach_adjacency = vec![Vec::<usize>::new(); inputs.reach_ids.len()];
     let mut reach_indegree = vec![0usize; inputs.reach_ids.len()];
     for (reach, downstream_targets) in reach_adjacency.iter_mut().enumerate() {
@@ -565,6 +646,7 @@ fn run_fluvial(config: FluvialConfig, inputs: &Inputs<'_>) -> Result<Outcome, i3
             maximum_incision_depth_m: maximum_reach_incision[reach],
             upstream_input_volume_m3: upstream_input[reach],
             local_erosion_volume_m3: local_erosion[reach],
+            bank_eroded_volume_m3: bank_erosion[reach],
             available_sediment_volume_m3: available,
             floodplain_deposition_volume_m3: deposition,
             downstream_transfer_volume_m3: downstream_transfer,
@@ -584,6 +666,8 @@ fn run_fluvial(config: FluvialConfig, inputs: &Inputs<'_>) -> Result<Outcome, i3
         })
         .collect::<Vec<_>>();
     let total_eroded = local_erosion.iter().sum::<f64>();
+    let total_bank_eroded = bank_erosion.iter().sum::<f64>();
+    let total_channel_eroded = (total_eroded - total_bank_eroded).max(0.0);
     let conservation_residual =
         total_eroded - total_floodplain_deposition - total_terminal_deposition - total_exported;
     let conservation_tolerance = 1e-9 * total_eroded.max(1.0);
@@ -617,6 +701,8 @@ fn run_fluvial(config: FluvialConfig, inputs: &Inputs<'_>) -> Result<Outcome, i3
             0.0
         },
         total_eroded_volume_m3: total_eroded,
+        total_channel_eroded_volume_m3: total_channel_eroded,
+        total_bank_eroded_volume_m3: total_bank_eroded,
         total_floodplain_deposition_volume_m3: total_floodplain_deposition,
         total_terminal_deposition_volume_m3: total_terminal_deposition,
         total_exported_sediment_volume_m3: total_exported,
@@ -802,6 +888,7 @@ mod tests {
             maximum_deposition_fraction: 0.25,
             deposition_slope_scale: 0.001,
             maximum_deposition_depth_m: 10.0,
+            bank_incision_fraction: 0.0,
         }
     }
 
@@ -840,6 +927,50 @@ mod tests {
         assert_eq!(outcome.stats.sediment_conservation_valid, 1);
         assert!(outcome.stats.total_eroded_volume_m3 > 0.0);
         assert!(outcome.stats.total_exported_sediment_volume_m3 > 0.0);
+        assert_eq!(outcome.stats.total_bank_eroded_volume_m3, 0.0);
+    }
+
+    #[test]
+    fn bank_carve_adds_valley_volume_and_still_conserves() {
+        let mut controls = config();
+        controls.bank_incision_fraction = 0.4;
+        let inputs = Inputs {
+            cell_ids: &[10, 11, 12, 99],
+            cell_parent_ids: &[1, 1, 1, 1],
+            cell_terrain_m: &[10.0, 8.0, 9.0, 9.5],
+            cell_areas_km2: &[1.0, 1.0, 1.0, 1.0],
+            cell_xyz: &[
+                1.0, 0.0, 0.0, 0.999, 0.04, 0.0, 0.996, 0.08, 0.0, 0.999, 0.0, 0.04,
+            ],
+            reach_ids: &[1],
+            downstream_reach_ids: &[-1],
+            reach_kinds: &[REACH_CHANNEL],
+            terminal_kinds: &[TERMINAL_OCEAN],
+            channel_width_m: &[10.0],
+            reach_slope: &[0.01],
+            membership_reach_ids: &[1, 1, 1, 1],
+            membership_cell_ids: &[10, 11, 12, 99],
+            membership_parent_ids: &[1, 1, 1, 1],
+            membership_path_order: &[0, 1, 2, 1],
+            membership_reach_length_m: &[50.0, 100.0, 50.0, 0.0],
+            membership_channel_fraction: &[0.0005, 0.001, 0.0005, 0.0],
+            membership_valley_fraction: &[0.01, 0.01, 0.01, 0.02],
+            membership_floodplain_fraction: &[0.005, 0.005, 0.005, 0.01],
+        };
+        let outcome = run_fluvial(controls, &inputs).expect("bank carve result");
+        assert!(outcome.stats.total_bank_eroded_volume_m3 > 0.0);
+        assert!(
+            outcome.stats.total_eroded_volume_m3
+                > outcome.stats.total_channel_eroded_volume_m3 + 1e-9
+        );
+        assert_eq!(outcome.stats.sediment_conservation_valid, 1);
+        assert!(outcome.reaches[0].bank_eroded_volume_m3 > 0.0);
+        let lateral = outcome
+            .cells
+            .iter()
+            .find(|cell| cell.fine_cell_id == 99)
+            .expect("lateral bank cell");
+        assert!(lateral.eroded_volume_m3 > 0.0);
     }
 
     #[test]

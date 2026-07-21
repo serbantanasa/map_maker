@@ -14,7 +14,7 @@ NATIVE_ABI_OVERRIDES = {
     "biosphere_envelope_native": 3,
     "climate_native": 3,
     "derived_biomes_native": 1,
-    "fluvial_native": 3,
+    "fluvial_native": 4,
     "functional_vegetation_native": 1,
     "hydrology_pass2_native": 1,
     "potential_biosphere_native": 3,

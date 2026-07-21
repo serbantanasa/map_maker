@@ -622,6 +622,8 @@ def _draw_rivers(
     maximum_discharge = max(float(row["discharge_mean"]) for row in rows)
     minimum_log = math.log1p(style.minimum_river_discharge_m3s)
     maximum_log = max(math.log1p(maximum_discharge), minimum_log + 1e-9)
+    widths = [float(row.get("channel_width_m") or 0.0) for row in rows]
+    maximum_width = max(widths) if any(width > 0.0 for width in widths) else 0.0
     inverse_transform = ~transform
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay, "RGBA")
@@ -636,9 +638,16 @@ def _draw_rivers(
         )
         segments = np.split(np.arange(len(xyz)), split_after)
         discharge = float(row["discharge_mean"])
-        scale = (math.log1p(discharge) - minimum_log) / (maximum_log - minimum_log)
+        discharge_scale = (math.log1p(discharge) - minimum_log) / (maximum_log - minimum_log)
+        physical_width = float(row.get("channel_width_m") or 0.0)
+        if maximum_width > 0.0 and physical_width > 0.0:
+            width_scale = math.log1p(physical_width) / math.log1p(maximum_width)
+            # Prefer physical width for stroke mass, keep discharge for hierarchy.
+            scale = 0.65 * width_scale + 0.35 * discharge_scale
+        else:
+            scale = discharge_scale
         line_width = max(1, round(1.0 + scale * (style.maximum_river_width_px - 1.0)))
-        opacity = round(92 + 112 * scale)
+        opacity = round(100 + 120 * scale)
         any_segment = False
         for segment in segments:
             if len(segment) < 2:
@@ -652,7 +661,7 @@ def _draw_rivers(
             points = _smooth_polyline(
                 [inverse_transform * (x, y) for x, y in zip(xs, ys, strict=True)]
             )
-            draw.line(points, fill=(28, 92, 137, opacity), width=line_width, joint="curve")
+            draw.line(points, fill=(24, 86, 132, opacity), width=line_width, joint="curve")
             any_segment = True
         rendered += int(any_segment)
     return Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB"), rendered
@@ -848,7 +857,15 @@ def export_physical_atlas(config: AtlasExportConfig) -> AtlasExportResult:
                 else f"fractional coast plus {config.style.coastline_width_px}-pixel outline"
             ),
             "lake_generalization": "subgrid fractional area receives bounded display emphasis",
-            "river_generalization": "vector reaches filtered and width-scaled by mean discharge",
+            "river_generalization": (
+                "coarse vector reaches filtered by mean discharge; stroke width blends "
+                "physical channel_width_m with log discharge hierarchy"
+            ),
+            "river_geometry_source": "hydrology.RiverReachCatalog.polyline_on_cubed_sphere",
+            "river_physical_detail": (
+                "basin_erosion.FluvialRiverVectorCatalog carries fine polyline + width + bed z "
+                "for the refined basin; global atlas remains coarse until multi-basin refine"
+            ),
             "projection_source": "nearest cubed-sphere sampling followed by bilinear atlas warp",
         },
     }

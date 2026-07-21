@@ -23,6 +23,7 @@ class BasinErosionConfig:
     maximum_deposition_fraction: float = 0.35
     deposition_slope_scale: float = 0.001
     maximum_deposition_depth_m: float = 10.0
+    bank_incision_fraction: float = 0.35
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> "BasinErosionConfig":
@@ -51,6 +52,9 @@ class BasinErosionConfig:
             or values["maximum_deposition_depth_m"] < 0.0
         ):
             raise ValueError("maximum_deposition_depth_m must be finite and non-negative")
+        bank_incision_fraction = values["bank_incision_fraction"]
+        if not np.isfinite(bank_incision_fraction) or not (0.0 <= bank_incision_fraction <= 1.0):
+            raise ValueError("bank_incision_fraction must be finite and in [0, 1]")
         return cls(**values)
 
 
@@ -117,6 +121,7 @@ def _reach_table(source: pa.Table, records: np.ndarray) -> pa.Table:
     for name in (
         "upstream_input_volume_m3",
         "local_erosion_volume_m3",
+        "bank_eroded_volume_m3",
         "available_sediment_volume_m3",
         "floodplain_deposition_volume_m3",
         "downstream_transfer_volume_m3",
@@ -319,6 +324,7 @@ def _budget_audit(
     profile_reach_ids = np.asarray(profiles["reach_id"], dtype=np.int32)
     profile_volume = np.asarray(profiles["eroded_volume_m3"], dtype=np.float64)
     local_erosion = np.asarray(reaches["local_erosion_volume_m3"], dtype=np.float64)
+    bank_eroded = np.asarray(reaches["bank_eroded_volume_m3"], dtype=np.float64)
     profile_by_reach = _group_sums(
         reach_ids, profile_reach_ids, profile_volume, label="profile erosion reach"
     )
@@ -357,26 +363,36 @@ def _budget_audit(
     published_parent_eroded = np.asarray(parents["child_eroded_volume_m3"], dtype=np.float64)
     published_parent_deposited = np.asarray(parents["child_deposited_volume_m3"], dtype=np.float64)
 
-    total_profile_eroded = float(np.sum(profile_volume))
+    # Channel prism is profile-accounted; bank carve is reach-accounted; cells hold both.
+    total_channel_eroded = float(np.sum(profile_volume))
+    total_bank_eroded = float(np.sum(bank_eroded))
+    total_process_eroded = total_channel_eroded + total_bank_eroded
+    total_cell_eroded = float(np.sum(cell_eroded))
     total_cell_deposited = float(np.sum(cell_deposited))
     independent_sediment_residual = (
-        total_profile_eroded
+        total_process_eroded
         - total_cell_deposited
         - float(np.sum(terminal))
         - float(np.sum(exported))
     )
     return {
-        "independent_total_eroded_volume_m3": total_profile_eroded,
+        "independent_total_eroded_volume_m3": total_process_eroded,
+        "independent_total_channel_eroded_volume_m3": total_channel_eroded,
+        "independent_total_bank_eroded_volume_m3": total_bank_eroded,
         "independent_total_floodplain_deposition_volume_m3": total_cell_deposited,
         "independent_total_terminal_deposition_volume_m3": float(np.sum(terminal)),
         "independent_total_exported_sediment_volume_m3": float(np.sum(exported)),
         "independent_sediment_conservation_residual_m3": independent_sediment_residual,
         "maximum_reach_local_erosion_residual_m3": float(
-            np.max(np.abs(profile_by_reach - local_erosion), initial=0.0)
+            np.max(np.abs(profile_by_reach + bank_eroded - local_erosion), initial=0.0)
         ),
-        "maximum_cell_erosion_residual_m3": float(
-            np.max(np.abs(profile_by_cell - cell_eroded), initial=0.0)
+        "maximum_reach_channel_erosion_residual_m3": float(
+            np.max(np.abs(profile_by_reach - (local_erosion - bank_eroded)), initial=0.0)
         ),
+        "maximum_cell_channel_erosion_residual_m3": float(
+            np.max(np.maximum(profile_by_cell - cell_eroded, 0.0), initial=0.0)
+        ),
+        "cell_total_erosion_catalog_residual_m3": total_cell_eroded - total_process_eroded,
         "floodplain_deposition_catalog_residual_m3": total_cell_deposited
         - float(np.sum(reach_deposited)),
         "maximum_reach_available_residual_m3": float(
@@ -397,6 +413,203 @@ def _budget_audit(
         "maximum_parent_deposition_residual_m3": float(
             np.max(np.abs(deposited_by_parent - published_parent_deposited), initial=0.0)
         ),
+    }
+
+
+def _vector_catalog(
+    profiles: pa.Table,
+    reaches: pa.Table,
+    cells: pa.Table,
+    *,
+    radius_m: float,
+) -> tuple[pa.Table, dict[str, float | int]]:
+    """First-class river vectors: polyline vertices with width and bed z."""
+
+    if profiles.num_rows == 0:
+        empty = pa.table(
+            {
+                "reach_id": pa.array([], type=pa.int32()),
+                "path_order": pa.array([], type=pa.int32()),
+                "fine_cell_id": pa.array([], type=pa.int32()),
+                "xyz": pa.array([], type=pa.list_(pa.float32(), 3)),
+                "terrain_elevation_m": pa.array([], type=pa.float64()),
+                "bed_elevation_m": pa.array([], type=pa.float64()),
+                "channel_width_m": pa.array([], type=pa.float32()),
+                "segment_length_m": pa.array([], type=pa.float64()),
+                "bed_slope_to_next": pa.array([], type=pa.float64()),
+            }
+        )
+        return empty, {
+            "vector_vertex_count": 0,
+            "vector_reach_count": 0,
+            "vector_minimum_bed_slope": 0.0,
+            "vector_uphill_segment_count": 0,
+        }
+
+    reach_ids = np.asarray(profiles["reach_id"], dtype=np.int32)
+    path_order = np.asarray(profiles["path_order"], dtype=np.int32)
+    fine_ids = np.asarray(profiles["fine_cell_id"], dtype=np.int32)
+    terrain = np.asarray(profiles["terrain_elevation_m"], dtype=np.float64)
+    bed = np.asarray(profiles["bed_elevation_m"], dtype=np.float64)
+    catalog_reach_ids = np.asarray(reaches["reach_id"], dtype=np.int32)
+    width_by_row = _lookup_rows(catalog_reach_ids, reach_ids, label="vector reach width")
+    widths = np.asarray(reaches["channel_width_m"], dtype=np.float32)[width_by_row]
+
+    cell_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
+    cell_rows = _lookup_rows(cell_ids, fine_ids, label="vector cell xyz")
+    xyz = _fixed_list_column(cells, "xyz", 3).astype(np.float64)[cell_rows]
+
+    order = np.lexsort((path_order, reach_ids))
+    reach_ids = reach_ids[order]
+    path_order = path_order[order]
+    fine_ids = fine_ids[order]
+    terrain = terrain[order]
+    bed = bed[order]
+    widths = widths[order]
+    xyz = xyz[order]
+
+    segment_length = np.full(len(reach_ids), np.nan, dtype=np.float64)
+    bed_slope = np.full(len(reach_ids), np.nan, dtype=np.float64)
+    consecutive = (reach_ids[1:] == reach_ids[:-1]) & (path_order[1:] == path_order[:-1] + 1)
+    consecutive_rows = np.flatnonzero(consecutive)
+    if len(consecutive_rows):
+        source = xyz[consecutive_rows]
+        target = xyz[consecutive_rows + 1]
+        dot = np.sum(source * target, axis=1)
+        length_m = np.arccos(np.clip(dot, -1.0, 1.0)) * radius_m
+        slopes = (bed[consecutive_rows] - bed[consecutive_rows + 1]) / length_m
+        segment_length[consecutive_rows] = length_m
+        bed_slope[consecutive_rows] = slopes
+
+    finite_slopes = bed_slope[np.isfinite(bed_slope)]
+    uphill = int(np.sum(finite_slopes < -1e-12)) if len(finite_slopes) else 0
+    minimum_slope = float(np.min(finite_slopes)) if len(finite_slopes) else 0.0
+    segment_mask = ~np.isfinite(segment_length)
+    slope_mask = ~np.isfinite(bed_slope)
+    table = pa.table(
+        {
+            "reach_id": pa.array(reach_ids, type=pa.int32()),
+            "path_order": pa.array(path_order, type=pa.int32()),
+            "fine_cell_id": pa.array(fine_ids, type=pa.int32()),
+            "xyz": pa.FixedSizeListArray.from_arrays(
+                pa.array(xyz.reshape(-1).astype(np.float32), type=pa.float32()),
+                3,
+            ),
+            "terrain_elevation_m": pa.array(terrain, type=pa.float64()),
+            "bed_elevation_m": pa.array(bed, type=pa.float64()),
+            "channel_width_m": pa.array(widths, type=pa.float32()),
+            # Null (not NaN) for terminal vertices so Arrow equality is stable.
+            "segment_length_m": pa.array(segment_length, mask=segment_mask, type=pa.float64()),
+            "bed_slope_to_next": pa.array(bed_slope, mask=slope_mask, type=pa.float64()),
+        }
+    )
+    return table, {
+        "vector_vertex_count": int(table.num_rows),
+        "vector_reach_count": int(len(np.unique(reach_ids))),
+        "vector_minimum_bed_slope": minimum_slope,
+        "vector_uphill_segment_count": uphill,
+    }
+
+
+def _local_dem_low_audit(
+    profiles: pa.Table,
+    cells: pa.Table,
+    memberships: pa.Table,
+) -> dict[str, float | int]:
+    """Require channel bed samples sit at or below valley-support bank DEM cells.
+
+    Uses lateral valley memberships (zero in-cell reach length) for the same
+    reach and nearby path order — not arbitrary D4 neighbors, which may be ocean
+    or out-of-corridor terrain and are not process banks.
+    """
+
+    if profiles.num_rows == 0 or cells.num_rows == 0 or memberships.num_rows == 0:
+        return {
+            "local_dem_sample_count": 0,
+            "local_dem_unchecked_profile_count": int(profiles.num_rows),
+            "local_dem_low_violation_count": 0,
+            "local_dem_low_violation_fraction": 0.0,
+            "maximum_local_dem_excess_m": 0.0,
+            "local_dem_low_valid": 1,
+        }
+
+    fine_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
+    cell_faces = np.asarray(cells["face"], dtype=np.int32)
+    cell_rows = np.asarray(cells["row"], dtype=np.int32)
+    cell_cols = np.asarray(cells["col"], dtype=np.int32)
+    terrain_after = np.asarray(cells["terrain_elevation_after_m"], dtype=np.float64)
+    terrain_by_id = {
+        int(cell_id): float(elevation)
+        for cell_id, elevation in zip(fine_ids, terrain_after, strict=True)
+    }
+    coordinate_by_id = {
+        int(cell_id): (int(face), int(row), int(col))
+        for cell_id, face, row, col in zip(
+            fine_ids, cell_faces, cell_rows, cell_cols, strict=True
+        )
+    }
+
+    membership_reach = np.asarray(memberships["reach_id"], dtype=np.int32)
+    membership_cell = np.asarray(memberships["fine_cell_id"], dtype=np.int32)
+    membership_path = np.asarray(memberships["path_order"], dtype=np.int32)
+    membership_length = np.asarray(memberships["reach_length_m"], dtype=np.float64)
+    membership_valley = np.asarray(memberships["valley_fraction"], dtype=np.float64)
+    lateral_mask = (membership_length <= 0.0) & (membership_valley > 0.0)
+    laterals_by_reach_path: dict[tuple[int, int], list[int]] = {}
+    for reach_id, cell_id, path_order in zip(
+        membership_reach[lateral_mask],
+        membership_cell[lateral_mask],
+        membership_path[lateral_mask],
+        strict=True,
+    ):
+        laterals_by_reach_path.setdefault((int(reach_id), int(path_order)), []).append(int(cell_id))
+
+    profile_reach = np.asarray(profiles["reach_id"], dtype=np.int32)
+    profile_path = np.asarray(profiles["path_order"], dtype=np.int32)
+    profile_cell = np.asarray(profiles["fine_cell_id"], dtype=np.int32)
+    profile_bed = np.asarray(profiles["bed_elevation_m"], dtype=np.float64)
+
+    samples = 0
+    violations = 0
+    maximum_excess = 0.0
+    for reach_id, path_order, centerline_cell, bed in zip(
+        profile_reach, profile_path, profile_cell, profile_bed, strict=True
+    ):
+        centerline_coordinate = coordinate_by_id.get(int(centerline_cell))
+        if centerline_coordinate is None:
+            continue
+        face, row, col = centerline_coordinate
+        bank_elevations: list[float] = []
+        for candidate_path in range(int(path_order) - 1, int(path_order) + 2):
+            for lateral_cell in laterals_by_reach_path.get(
+                (int(reach_id), candidate_path), ()
+            ):
+                coordinate = coordinate_by_id.get(lateral_cell)
+                if coordinate is None:
+                    continue
+                lateral_face, lateral_row, lateral_col = coordinate
+                # Lateral memberships are corridor support, not necessarily banks.
+                # Only a true D4 neighbor on this face is a defensible DEM-low sample;
+                # face-edge samples are left unchecked rather than misclassified.
+                if lateral_face != face or abs(lateral_row - row) + abs(lateral_col - col) != 1:
+                    continue
+                bank_elevations.append(terrain_by_id[lateral_cell])
+        if not bank_elevations:
+            continue
+        samples += 1
+        local_bank_min = min(bank_elevations)
+        excess = max(0.0, float(bed) - local_bank_min)
+        maximum_excess = max(maximum_excess, excess)
+        if excess > 1e-3:
+            violations += 1
+
+    return {
+        "local_dem_sample_count": samples,
+        "local_dem_unchecked_profile_count": int(profiles.num_rows) - samples,
+        "local_dem_low_violation_count": violations,
+        "local_dem_low_violation_fraction": violations / max(samples, 1),
+        "maximum_local_dem_excess_m": maximum_excess,
+        "local_dem_low_valid": int(violations == 0),
     }
 
 
@@ -613,11 +826,12 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
     outputs=(
         "ChannelBedProfileCatalog",
         "FluvialRiverReachCatalog",
+        "FluvialRiverVectorCatalog",
         "ErodedBasinCellCatalog",
         "BasinErosionParentCatalog",
         "BasinErosionMetadata",
     ),
-    version="v2",
+    version="v3",
     native_libraries=("fluvial_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -713,8 +927,12 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
     eroded_reaches = _reach_table(reaches, reach_records)
     eroded_cells, cell_metadata = _cell_table(cells, cell_records)
     eroded_parents, parent_metadata = _parent_table(parents, eroded_cells)
+    vectors, vector_audit = _vector_catalog(
+        profiles, eroded_reaches, eroded_cells, radius_m=radius_m
+    )
     profile_audit = _profile_audit(profiles, eroded_reaches, eroded_cells, radius_m=radius_m)
     budget_audit = _budget_audit(profiles, eroded_reaches, eroded_cells, eroded_parents)
+    dem_low_audit = _local_dem_low_audit(profiles, eroded_cells, memberships)
     cell_process = (cell_records["eroded_volume_m3"] != 0.0) | (
         cell_records["deposited_volume_m3"] != 0.0
     )
@@ -726,15 +944,35 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
         np.all(reach_records["has_physical_bed"][connector] == 0)
         and np.all(reach_records["local_erosion_volume_m3"][connector] == 0.0)
         and np.all(reach_records["floodplain_deposition_volume_m3"][connector] == 0.0)
+        and np.all(reach_records["bank_eroded_volume_m3"][connector] == 0.0)
         and not np.any(np.isin(profile_records["reach_id"], connector_ids))
     )
     potential_volume_m3 = float(
         np.sum(np.asarray(memberships["potential_incised_volume_m3"], dtype=np.float64))
     )
     total_eroded_m3 = float(budget_audit["independent_total_eroded_volume_m3"])
+    total_bank_m3 = float(budget_audit["independent_total_bank_eroded_volume_m3"])
+    total_channel_m3 = float(budget_audit["independent_total_channel_eroded_volume_m3"])
+    valley_support = np.asarray(memberships["valley_fraction"], dtype=np.float64)
+    channel_support = np.asarray(memberships["channel_fraction"], dtype=np.float64)
+    bank_capable = bool(np.any(valley_support > channel_support + 1e-12))
+    bank_carve_valid = bool(
+        (not bank_capable)
+        or config.bank_incision_fraction <= 0.0
+        or total_channel_m3 <= 0.0
+        or total_bank_m3 > 0.0
+    )
     native_catalog_residuals = {
         "native_total_eroded_catalog_residual_m3": float(metadata["total_eroded_volume_m3"])
         - total_eroded_m3,
+        "native_channel_eroded_catalog_residual_m3": float(
+            metadata.get("total_channel_eroded_volume_m3", total_channel_m3)
+        )
+        - total_channel_m3,
+        "native_bank_eroded_catalog_residual_m3": float(
+            metadata.get("total_bank_eroded_volume_m3", total_bank_m3)
+        )
+        - total_bank_m3,
         "native_floodplain_deposition_catalog_residual_m3": float(
             metadata["total_floodplain_deposition_volume_m3"]
         )
@@ -753,15 +991,20 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
             **parent_metadata,
             **profile_audit,
             **budget_audit,
+            **vector_audit,
+            **dem_low_audit,
             **native_catalog_residuals,
             "selected_basin_id": int(refinement_metadata["selected_basin_id"]),
             "fine_resolution": int(refinement_metadata["fine_resolution"]),
             "source_to_sink_ready": 1,
             "process_exclusion_valid": int(process_exclusion_valid),
             "connector_process_valid": int(connector_process_valid),
+            "bank_carve_valid": int(bank_carve_valid),
             "potential_incised_volume_km3": potential_volume_m3 / 1_000_000_000.0,
             "actual_to_potential_incision_ratio": total_eroded_m3 / max(potential_volume_m3, 1e-12),
             "total_eroded_volume_km3": total_eroded_m3 / 1_000_000_000.0,
+            "total_channel_eroded_volume_km3": total_channel_m3 / 1_000_000_000.0,
+            "total_bank_eroded_volume_km3": total_bank_m3 / 1_000_000_000.0,
             "total_floodplain_deposition_volume_km3": float(
                 budget_audit["independent_total_floodplain_deposition_volume_m3"]
             )
@@ -775,7 +1018,10 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
             )
             / 1_000_000_000.0,
             "profile_semantics": "least_incision_downstream_monotone_bedrock_envelope",
-            "incision_semantics": "subgrid_channel_volume_with_cell_mean_volume_feedback",
+            "incision_semantics": (
+                "subgrid_channel_prism_plus_valley_bank_carve_with_cell_mean_volume_feedback"
+            ),
+            "vector_semantics": "polyline_vertices_with_channel_width_and_bed_elevation",
             "sediment_semantics": "newly_eroded_solid_volume_routed_source_to_sink",
             "inherited_sediment_load_semantics": "preserved_flux_diagnostic_not_mixed_with_history_volume",
         }
@@ -793,6 +1039,14 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
         )
     if profile_audit["emitted_minimum_realized_slope"] < config.minimum_bed_slope - 1e-12:
         raise RuntimeError("fluvial bed profile violates the configured downstream grade")
+    if vector_audit["vector_uphill_segment_count"] != 0:
+        raise RuntimeError("fluvial river vectors contain uphill bed segments")
+    if vector_audit["vector_minimum_bed_slope"] < config.minimum_bed_slope - 1e-12:
+        raise RuntimeError("fluvial river vectors violate the configured downstream grade")
+    if not bank_carve_valid:
+        raise RuntimeError(
+            "fluvial bank carve produced zero valley erosion despite valley support and incision"
+        )
     if (
         metadata["sediment_conservation_valid"] != 1
         or abs(metadata["sediment_conservation_residual_m3"]) > tolerance_m3
@@ -806,7 +1060,9 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
         profile_audit["maximum_profile_volume_relation_residual_m3"],
         budget_audit["independent_sediment_conservation_residual_m3"],
         budget_audit["maximum_reach_local_erosion_residual_m3"],
-        budget_audit["maximum_cell_erosion_residual_m3"],
+        budget_audit["maximum_reach_channel_erosion_residual_m3"],
+        budget_audit["maximum_cell_channel_erosion_residual_m3"],
+        budget_audit["cell_total_erosion_catalog_residual_m3"],
         budget_audit["floodplain_deposition_catalog_residual_m3"],
         budget_audit["maximum_reach_available_residual_m3"],
         budget_audit["maximum_reach_output_balance_residual_m3"],
@@ -827,6 +1083,7 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
     return {
         "ChannelBedProfileCatalog": profiles,
         "FluvialRiverReachCatalog": eroded_reaches,
+        "FluvialRiverVectorCatalog": vectors,
         "ErodedBasinCellCatalog": eroded_cells,
         "BasinErosionParentCatalog": eroded_parents,
         "BasinErosionMetadata": metadata,
