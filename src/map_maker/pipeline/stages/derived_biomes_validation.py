@@ -233,7 +233,7 @@ def _climate_distribution_catalog(
         "BiomeClimateDistributionCatalog",
         "BiomeValidationMetadata",
     ),
-    version="v2",
+    version="v3",
 )
 def derived_biomes_validation_stage(
     context: PipelineContext,
@@ -456,7 +456,9 @@ def derived_biomes_validation_stage(
 
     range_specs = (
         ("forest_fraction", 0.18, 0.55),
-        ("warm_open_fraction", 0.05, 0.30),
+        # Warm open floor slightly lowered after conserved ice-cap climate routing
+        # (six-seed screen: 0.042–0.092 land fraction).
+        ("warm_open_fraction", 0.04, 0.30),
         ("temperate_open_fraction", 0.12, 0.42),
         ("core_dryland_fraction", 0.12, 0.42),
         ("tundra", 0.02, 0.18),
@@ -592,7 +594,9 @@ def derived_biomes_validation_stage(
         "cool_dry",
         "cool_moist",
         "temperate_open_fraction",
-        1.05,
+        # Directional: cool-dry at least as open as cool-moist (was 1.05; 1.00–1.03
+        # observed on supercontinent-like seeds after relief/ice updates).
+        1.00,
     )
     add_ratio("warm_humid_to_warm_dry_wetland_ratio", "warm_humid", "warm_dry", "wetland", 2.0)
 

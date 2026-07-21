@@ -406,12 +406,19 @@ def compose_physical_texture(
     )
 
     snow = np.clip(np.asarray(layers["snow_persistence"], dtype=np.float64), 0.0, 1.0)
-    snow_weight = np.clip((snow - 0.08) * 0.55, 0.0, 0.42)
-    snow_color = np.asarray((229.0, 233.0, 226.0))
+    snow_weight = np.clip((snow - 0.05) * 0.70, 0.0, 0.55)
+    snow_color = np.asarray((232.0, 236.0, 230.0))
     land_rgb = land_rgb * (1.0 - snow_weight[..., None]) + snow_color * snow_weight[..., None]
+    # Persistent ice: mountain glaciers + polar ice caps (GlacierIceFraction).
     glacier = np.clip(np.asarray(layers["glacier_fraction"], dtype=np.float64), 0.0, 1.0)
-    glacier_weight = np.clip(glacier * 1.6, 0.0, 1.0)
-    glacier_color = np.asarray((235.0, 244.0, 244.0))
+    perennial_raw = layers.get("perennial_snow")
+    if perennial_raw is None:
+        perennial = np.zeros_like(glacier, dtype=np.float64)
+    else:
+        perennial = np.clip(np.asarray(perennial_raw, dtype=np.float64), 0.0, 1.0)
+    ice_cover = np.maximum(glacier, 0.55 * perennial)
+    glacier_weight = np.clip(np.sqrt(np.maximum(ice_cover, 0.0)) * 1.85, 0.0, 1.0)
+    glacier_color = np.asarray((242.0, 248.0, 250.0))
     land_rgb = (
         land_rgb * (1.0 - glacier_weight[..., None]) + glacier_color * glacier_weight[..., None]
     )
@@ -732,6 +739,7 @@ def _equirectangular_layers(results: Mapping[str, StageResult]) -> dict[str, np.
         -1,
     )
     snow_persistence = np.mean(np.clip((snow - 20.0) / 180.0, 0.0, 1.0), axis=-1)
+    perennial_snow = np.clip(np.min(snow, axis=-1) / 80.0, 0.0, 1.0)
     biome_fractions = np.moveaxis(_artifact_array(biomes, "BiomeFractions"), 0, -1)
     source_layers = {
         "elevation_m": _artifact_array(sea_level, "SurfaceElevationM"),
@@ -745,6 +753,7 @@ def _equirectangular_layers(results: Mapping[str, StageResult]) -> dict[str, np.
         "wetland_fraction": _artifact_array(materials, "EffectiveWetlandFraction"),
         "lake_fraction": _artifact_array(materials, "EffectiveLakeFraction"),
         "snow_persistence": snow_persistence,
+        "perennial_snow": perennial_snow,
         "glacier_fraction": _artifact_array(cryosphere, "GlacierIceFraction"),
     }
     return {name: cubed_sphere_to_equirectangular(values) for name, values in source_layers.items()}

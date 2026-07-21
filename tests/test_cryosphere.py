@@ -15,8 +15,10 @@ def _kernel_arguments(face_resolution: int = 4) -> dict[str, object]:
     ocean = np.ascontiguousarray((grid.longitude < -2.0).astype(np.float32))
     temperature = np.empty(monthly_shape, dtype=np.float32)
     precipitation = np.full(monthly_shape, 40.0, dtype=np.float32)
+    # Winter accumulation and a real melt season (annual mean above the
+    # permanent ice-cap melt shutdown threshold).
     for month in range(12):
-        temperature[month] = -10.0 if month < 9 else 5.0
+        temperature[month] = -6.0 if month < 7 else 8.0
     outputs = {
         "snowfall_out": np.empty(monthly_shape, dtype=np.float32),
         "snowmelt_out": np.empty(monthly_shape, dtype=np.float32),

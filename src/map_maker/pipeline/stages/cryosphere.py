@@ -138,7 +138,7 @@ def _visualizer(result: StageResult, request: VisualizationRequest) -> Visualiza
     "cryosphere",
     inputs=("climate", "elevation", "sea_level"),
     outputs=(*MONTHLY_OUTPUTS, *ANNUAL_OUTPUTS, "CryosphereMetadata"),
-    version="v3",
+    version="v4",
     native_libraries=("cryosphere_native",),
     visualizer=_visualizer,
 )
@@ -203,30 +203,50 @@ def cryosphere_stage(
         )
 
     areas = np.asarray(context.topology.cell_areas, dtype=np.float64)
+    ocean = np.asarray(deps["sea_level"].artifact_records["SurfaceOceanMask"].value.array()) >= 0.5
+    land = ~ocean
     firn = np.sum(np.asarray(views["MonthlyFirnToIceMm"], dtype=np.float64), axis=0)
     melt = np.sum(np.asarray(views["MonthlyGlacierMeltMm"], dtype=np.float64), axis=0)
+    snowfall = np.sum(np.asarray(views["MonthlySnowfallMm"], dtype=np.float64), axis=0)
     mass_balance = np.asarray(views["AnnualGlacierMassBalanceMm"], dtype=np.float64)
     flow_export = np.asarray(views["AnnualGlacierFlowExportMm"], dtype=np.float64)
     flow_import = np.asarray(views["AnnualGlacierFlowImportMm"], dtype=np.float64)
     sublimation = np.asarray(views["AnnualGlacierSublimationMm"], dtype=np.float64)
+    # Ice reservoir balance: storage change equals firn/direct-ice input from snow
+    # minus melt, sublimation, and net flow (all mm water equivalent).
     residual = mass_balance - (firn - melt - sublimation - flow_export + flow_import)
     absolute_residual = float(abs(np.sum(residual * areas)))
     reference_volume = float(np.sum((firn + melt + sublimation + flow_export) * areas))
     relative_residual = absolute_residual / max(reference_volume, 1e-12)
     if relative_residual > maximum_balance_error:
         raise RuntimeError("cryosphere mass-balance audit failed")
+    # Hard conservation: ice inputs cannot exceed snowfall on land (no free ice).
+    ice_input_excess = float(np.sum(np.maximum(firn - snowfall, 0.0)[land] * areas[land]))
+    snowfall_volume = float(np.sum(snowfall[land] * areas[land]))
+    ice_input_excess_fraction = ice_input_excess / max(snowfall_volume, 1e-12)
+    if ice_input_excess_fraction > maximum_balance_error:
+        raise RuntimeError(
+            "cryosphere invented ice mass: firn/direct-ice exceeds snowfall "
+            f"({ice_input_excess_fraction:.3e} of land snowfall volume)"
+        )
     for handle in handles.values():
         handle.seal()
     metadata.update(
         {
             **asdict(config),
-            "model": "age_tracked_snow_firn_glacier_reservoir_v1",
+            "model": "age_tracked_snow_firn_glacier_icecap_reservoir_v3_conserved",
             "topology": "cubed_sphere",
             "mass_balance_relative_error": relative_residual,
+            "ice_input_excess_of_snowfall_fraction": ice_input_excess_fraction,
             "glacier_mass_balance_implemented": 1,
             "parameterized_glacier_flow_implemented": 1,
             "dynamic_ice_stress_flow_implemented": 0,
             "glacial_erosion_implemented": 0,
+            "polar_ice_cap_mode": "conserved_snowfall_cold_climate_routing",
+            "mountain_glacier_mode": "relief_peak_cooled_highland_fraction",
+            "synthetic_precipitation_floor": 0,
+            "synthetic_ice_source": 0,
+            "sea_ice_implemented": 0,
             "melt_provenance": "seasonal_snow_and_glacier_ice_are_separate",
             "runoff_semantics": "pre_soil_routing_potential_including_glacier_melt",
         }

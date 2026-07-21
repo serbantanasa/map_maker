@@ -7,19 +7,34 @@ after atmospheric climate and before hydrology.
 
 ## Scientific Boundary
 
-The V1 model targets persistent mountain ice and its water-storage effect. It
-does not solve glacier stress, full ice-sheet dynamics, or glacial landforms.
+The model targets **visible persistent ice** for maps and water storage:
+
+1. **Mountain glaciers** — cold upper slopes from `TerrainReliefM` peak cooling
+   inside warmer coarse cells.
+2. **Polar / near-permanent ice caps** — whole-cell accumulation when
+   cell-mean surface temperature is cold enough, without requiring multi-km
+   mean elevation on ~72 km tiles.
+
+It does not solve glacier stress, full ice-sheet dynamics, ice streams, or
+glacial landforms. **Seasonal sea ice is not implemented yet** (ocean cells
+clear land snow/ice reservoirs only).
 
 Each coarse land cell contains separate seasonal-snow and glacier-ice water
-equivalent. Snow age is tracked as a mass-weighted age moment. Snow that
-survives long enough converts gradually to firn/ice; warm-season melt removes
-seasonal snow first and glacier ice separately. Glacier melt then participates
-in canonical runoff potential.
+equivalent. **All ice mass comes from climate precipitation** (as snow). There
+is no synthetic precipitation floor and no free ice source. Snow age is
+tracked as a mass-weighted age moment. Snow that survives long enough converts
+to firn/ice; cold climates convert stored snow faster and may route a share of
+**real** new snowfall directly into ice (partitioned from the same snowfall,
+not added twice). Warm-season melt removes seasonal snow first and glacier ice
+separately. Glacier melt participates in canonical runoff potential.
+
+Hard audits reject (1) ice-reservoir mass-balance residuals and (2) firn/direct
+ice inputs that exceed land snowfall.
 
 `TerrainReliefM` is an unresolved relief prior, not summit elevation. A bounded
-highland fraction samples an upper-terrain climate using a configurable relief
-multiplier and the environmental lapse rate. This permits cold upper slopes in
-a warm coarse cell without painting ice solely by latitude or altitude.
+mountain fraction samples peak-cooled climate for alpine glaciers. Separately,
+an ice-cap fraction grows when cell-mean temperature is well below freezing so
+cold low-relief polar land can hold permanent ice.
 
 ## Ice Transfer
 

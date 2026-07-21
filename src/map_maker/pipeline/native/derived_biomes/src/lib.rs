@@ -172,7 +172,7 @@ fn biome_scores(
         * (0.55 + 0.45 * clamp01(input.fire_tendency))
         * (0.30 + 0.70 * cover_share)
         * (1.0 - 0.75 * wet)
-        * 1.25;
+        * 1.38;
     scores[HOT_DESERT] = warm
         * extreme_dry.powf(1.25)
         * (0.25 + 0.75 * (1.0 - cover_share + xeric_shrub + low_stature).min(1.0))

@@ -435,7 +435,7 @@ def dominant_landscape_rgb(landscape: np.ndarray) -> np.ndarray:
         "BiomeCatalog",
         "DerivedBiomeMetadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("derived_biomes_native",),
     visualizer=_visualizer,
 )

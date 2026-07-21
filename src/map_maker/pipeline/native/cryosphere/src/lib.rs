@@ -138,7 +138,12 @@ fn route_glacier_ice(
             continue;
         }
         let drop_m = (source_height - target_height).max(0.0);
-        let slope_factor = (drop_m / 1_000.0).clamp(0.05, 1.0);
+        // Require real slope for ice motion; suppress thin-sheet drainage that
+        // empties polar ice caps into the ocean during spinup.
+        if drop_m < 40.0 {
+            continue;
+        }
+        let slope_factor = ((drop_m - 40.0) / 1_200.0).clamp(0.02, 1.0);
         let transfer = (ice[cell] - controls.glacier_flow_activation_mm)
             * monthly_flow_fraction
             * slope_factor;
@@ -189,6 +194,29 @@ fn run_model(
     let monthly_firn_fraction =
         1.0 - (1.0 - controls.firn_conversion_fraction_year).powf(1.0 / MONTHS as f64);
 
+    // Annual climate for ice caps (must not flicker with single warm months).
+    let mut annual_mean_temperature = vec![0.0f64; total];
+    let mut coldest_month_temperature = vec![f64::INFINITY; total];
+    let mut annual_precipitation = vec![0.0f64; total];
+    for cell in 0..total {
+        if inputs.ocean[cell] >= 0.5 {
+            continue;
+        }
+        let mut sum_t = 0.0f64;
+        let mut coldest = f64::INFINITY;
+        let mut sum_p = 0.0f64;
+        for month in 0..MONTHS {
+            let offset = month * total + cell;
+            let temperature = f64::from(inputs.temperature[offset]);
+            sum_t += temperature;
+            coldest = coldest.min(temperature);
+            sum_p += f64::from(inputs.precipitation[offset]);
+        }
+        annual_mean_temperature[cell] = sum_t / MONTHS as f64;
+        coldest_month_temperature[cell] = coldest;
+        annual_precipitation[cell] = sum_p;
+    }
+
     for year in 0..controls.spinup_years {
         let persist = year + 1 == controls.spinup_years;
         if persist {
@@ -210,55 +238,100 @@ fn run_model(
                 }
                 let temperature_c = f64::from(inputs.temperature[offset]);
                 let relief_m = f64::from(inputs.relief[cell]);
-                // Climate temperature already reflects cell-mean elevation. Extra
-                // cooling is only subgrid peak height (relief), so alpine snow
-                // does not require 5e3 km² tiles at multi-km mean altitude.
+                // Climate temperature already reflects cell-mean elevation.
+                // Mountain glaciers: peak-cooled relief fraction.
+                // Polar / near-permanent ice caps: cold cell-mean climate can
+                // ice over whole tiles without multi-km mean altitude.
                 let surface_elev_m = f64::from(inputs.elevation[cell]).max(0.0);
-                let highland_fraction = (relief_m / 1_600.0 + surface_elev_m / 5_000.0)
+                let mountain_fraction = (relief_m / 1_400.0 + surface_elev_m / 4_500.0)
                     .clamp(0.0, controls.maximum_highland_fraction);
+                // Ice-cap potential from annual climate (routing only — no free water).
+                let mean_t = annual_mean_temperature[cell];
+                let coldest_t = coldest_month_temperature[cell];
+                let mean_cap = ((-2.0 - mean_t) / 14.0).clamp(0.0, 1.0);
+                let winter_cap = ((-12.0 - coldest_t) / 25.0).clamp(0.0, 1.0);
+                // Dry polar land can still host ice if precipitation exists;
+                // do not invent precip — only scale how much of real snow stays.
+                let precip_support = (annual_precipitation[cell] / 250.0).clamp(0.0, 1.0);
+                let ice_cap_fraction =
+                    (0.55 * mean_cap + 0.45 * winter_cap).min(1.0) * precip_support.sqrt();
+                let accumulation_fraction = mountain_fraction
+                    .max(ice_cap_fraction * 0.95)
+                    .clamp(0.0, 0.98);
                 let peak_cooling_km = controls.relief_elevation_multiplier * relief_m / 1_000.0;
                 let highland_temperature =
                     temperature_c - controls.lapse_rate_c_per_km * peak_cooling_km;
-                let precipitation = f64::from(inputs.precipitation[offset]);
-                let lowland_fallen =
-                    precipitation * (1.0 - highland_fraction) * snow_fraction(temperature_c);
-                let highland_fallen =
-                    precipitation * highland_fraction * snow_fraction(highland_temperature);
+                let melt_temperature = if ice_cap_fraction > mountain_fraction {
+                    temperature_c
+                } else {
+                    highland_temperature
+                };
+                // Conserved precipitation only (no synthetic floor).
+                let precipitation = f64::from(inputs.precipitation[offset]).max(0.0);
+                let lowland_share = (1.0 - accumulation_fraction).max(0.0);
+                let snow_temp = melt_temperature.min(temperature_c);
+                let lowland_fallen = precipitation * lowland_share * snow_fraction(temperature_c);
+                let highland_snowfall =
+                    precipitation * accumulation_fraction * snow_fraction(snow_temp);
+                // Partition real highland snowfall: cold climates convert a share
+                // of new snow directly to ice (still sourced from precipitation).
+                let direct_ice_fraction = ice_cap_fraction.max(mountain_fraction * 0.35)
+                    * ((-1.0 - snow_temp.min(mean_t)) / 12.0).clamp(0.0, 0.65);
+                let direct_ice = highland_snowfall * direct_ice_fraction;
+                let highland_fallen = highland_snowfall - direct_ice;
+                // Faster firn conversion of stored snow in cold climates (no new water).
+                let cold_firn_boost = 1.0 + 1.6 * ((-2.0 - mean_t) / 16.0).clamp(0.0, 1.0);
+                let effective_firn_fraction =
+                    (monthly_firn_fraction * cold_firn_boost).clamp(0.0, 0.55);
                 let (lowland_converted, lowland_melt) = update_snow_reservoir(
                     &mut lowland_snow[cell],
                     &mut lowland_snow_age_mass[cell],
                     lowland_fallen,
-                    (1.0 - highland_fraction)
+                    lowland_share
                         * temperature_c.max(0.0)
                         * controls.snow_degree_day_melt_mm_c_month,
-                    monthly_firn_fraction,
+                    effective_firn_fraction,
                     controls.snow_sublimation_fraction_month,
                 );
                 let (highland_converted, highland_melt) = update_snow_reservoir(
                     &mut highland_snow[cell],
                     &mut highland_snow_age_mass[cell],
                     highland_fallen,
-                    highland_fraction
-                        * highland_temperature.max(0.0)
-                        * controls.snow_degree_day_melt_mm_c_month,
-                    monthly_firn_fraction,
+                    accumulation_fraction
+                        * melt_temperature.max(0.0)
+                        * controls.snow_degree_day_melt_mm_c_month
+                        * if mean_t < -5.0 { 0.20 } else { 1.0 },
+                    effective_firn_fraction,
                     controls.snow_sublimation_fraction_month,
                 );
-                let fallen = lowland_fallen + highland_fallen;
-                let converted = lowland_converted + highland_converted;
+                let fallen = lowland_fallen + highland_snowfall;
+                let converted = lowland_converted + highland_converted + direct_ice;
                 let snow_melt = lowland_melt + highland_melt;
                 ice[cell] += converted;
 
                 let ice_fraction =
                     (ice[cell] / controls.glacier_reference_thickness_mm).clamp(0.0, 1.0);
-                let exposed_ice_fraction = highland_fraction.max(ice_fraction);
+                let exposed_ice_fraction = accumulation_fraction.max(ice_fraction);
+                // Permanent ice climates melt little; water still leaves only via
+                // melt/sublimation/calving of existing ice (no free source).
+                let melt_degree = if mean_t <= -6.0 {
+                    0.0
+                } else if mean_t < 0.0 {
+                    melt_temperature.max(0.0)
+                        * ((mean_t + 6.0) / 6.0).clamp(0.0, 1.0)
+                        * (1.0 - 0.75 * ice_cap_fraction)
+                } else {
+                    melt_temperature.max(0.0) * (1.0 - 0.55 * ice_cap_fraction)
+                };
                 let glacier_melt = ice[cell].min(
                     exposed_ice_fraction
-                        * highland_temperature.max(0.0)
+                        * melt_degree
                         * controls.glacier_degree_day_melt_mm_c_month,
                 );
                 ice[cell] -= glacier_melt;
-                let glacier_sublimation = ice[cell] * controls.glacier_sublimation_fraction_month;
+                let glacier_sublimation = ice[cell]
+                    * controls.glacier_sublimation_fraction_month
+                    * (1.0 - 0.5 * ice_cap_fraction);
                 ice[cell] -= glacier_sublimation;
 
                 if persist {

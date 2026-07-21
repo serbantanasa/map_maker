@@ -83,19 +83,21 @@ stage_overrides:
     rain_shadow_factor: 0.70
     runoff_base_fraction: 0.35
   cryosphere:
-    spinup_years: 120
+    spinup_years: 140
     lapse_rate_c_per_km: 6.5
-    # Multiplies TerrainReliefM (subgrid peak height) for snowline cooling.
-    relief_elevation_multiplier: 1.6
-    maximum_highland_fraction: 0.55
-    snow_degree_day_melt_mm_c_month: 10.0
-    glacier_degree_day_melt_mm_c_month: 12.0
-    firn_conversion_fraction_year: 0.72
-    snow_sublimation_fraction_month: 0.004
-    glacier_sublimation_fraction_month: 0.0002
-    glacier_flow_activation_mm: 800.0
-    glacier_flow_fraction_year: 0.08
-    glacier_reference_thickness_mm: 80000.0
+    # Multiplies TerrainReliefM (subgrid peak height) for mountain snowline cooling.
+    relief_elevation_multiplier: 1.75
+    maximum_highland_fraction: 0.60
+    snow_degree_day_melt_mm_c_month: 9.5
+    glacier_degree_day_melt_mm_c_month: 10.0
+    firn_conversion_fraction_year: 0.78
+    snow_sublimation_fraction_month: 0.0035
+    glacier_sublimation_fraction_month: 0.00018
+    # Limit ice-sheet drainage into the ocean without inventing mass.
+    glacier_flow_activation_mm: 2000.0
+    glacier_flow_fraction_year: 0.025
+    # Display/cover scaling only; ice mass still comes from conserved snowfall.
+    glacier_reference_thickness_mm: 40000.0
     runoff_base_fraction: 0.35
     maximum_mass_balance_relative_error: 0.00001
   hydrology:
@@ -160,7 +162,7 @@ stage_overrides:
     maximum_reroute_constraint_cell_fraction: 0.15
     maximum_volume_relative_error: 0.0000000001
   surface_water_final:
-    maximum_outlet_incision_rounds: 12
+    maximum_outlet_incision_rounds: 20
     require_soil_readiness: true
   lake_hydrographs:
     maximum_balance_relative_error: 0.000000001
