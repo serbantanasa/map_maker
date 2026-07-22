@@ -199,9 +199,22 @@ uv run map-maker l3-target
 This writes a checksummed target index and preview under
 `out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment/`.
 The selected complete catchment is approximately `102,000 km2`, has one coarse
-outlet, two context rings, and an estimated `2.54 million` cells at the planned
+outlet, two context rings, and `2.60 million` cells at the planned
 `200 m` base resolution. The L3 process contract is
 `docs/specs/13_l3_vertical_slice.md`.
+
+Generate its first physical L3 stage with:
+
+```bash
+uv run map-maker l3-terrain
+```
+
+This writes `2,601,984` deterministic cubed-sphere cells at about `198 m` in
+resumable parent-aligned Zarr chunks under
+`out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
+The artifact includes raw and softly L2-conditioned terrain, unresolved relief,
+stable 64-bit IDs, parent and chunk diagnostics, checksummed provenance, and a
+native-face preview. It does not yet downscale runoff or route L3 rivers.
 
 Run the previous procedural generator for comparison:
 

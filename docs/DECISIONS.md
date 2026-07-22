@@ -2551,3 +2551,55 @@ about `128-800 million` cells at `250-100 m` before process layers. The selected
 catchment is large enough to exercise a real hierarchy, floodplains, lakes, and
 seasonality while keeping the first implementation and validation cycle within
 the 32 GB workstation budget.
+
+## Decision 052: L3 Base Terrain Uses Soft Parent Conditioning
+
+Status: implemented
+
+Decision:
+Implement the first L3 stage as a sparse factor-22 subdivision of the selected
+face-2048 L2 cells. This produces a face-45056-equivalent cubed-sphere hierarchy
+with `2,601,984` core cells and an area-equivalent mean cell width of about
+`198 m`. L3 global IDs are `uint64`; no dense face-45056 planet is allocated.
+
+Generate deterministic terrain in parent-aligned chunks from global spherical
+coordinates. Condition the realization on L2 terrain and context, unresolved
+relief, L0 rock strength, and L0 orogenic amplitude and tangent orientation.
+Keep the active residual wavelengths at or below roughly one L2-cell width so
+the L3 realization does not overwrite regional L2 morphology.
+
+L2 means are probabilistic regional constraints at L3, not exact categorical
+pixels. Do not force exact restriction with a repeated parent-local correction
+shape. The rejected sine-bubble correction conserved every parent mean but
+created a plainly visible 4.3 km embossing pattern. Instead, solve a bounded
+correction value at each L2 center and interpolate it over a shared D8 bilinear
+lattice. Stop once every parent is inside both the configured absolute error
+and the configured relief-relative error, currently `15 m` and `5%`. Context
+outside the target core remains a fixed zero correction boundary.
+
+The V0 D8 correction lattice is approved only for a core contained inside one
+cube face. Cross-face L3 targets require explicit reciprocal diagonal transport
+before this gate may be relaxed.
+
+Persist pre-conditioning terrain alongside final terrain so the second pass is
+idempotent and resumable. A chunk completion marker is written only after all
+arrays for that phase are durable. Publication requires:
+
+- exact alternate-partition replay of representative native chunks;
+- unique stable IDs, complete context, finite fields, bounded storage, and the
+  three-million-cell budget;
+- spherical child-area conservation and bounded L2 mean error;
+- separate L2-boundary and chunk-boundary residual diagnostics;
+- an explicit repeated parent-bubble correlation gate; and
+- human rejection of any remaining tile motif even when numerical gates pass.
+
+`unresolved_relief_m` remains a sub-200 m morphology prior. It is not added
+wholesale to cell elevation and does not authorize raster river excavation.
+Canonical river identity remains graph/vector data under Decisions 048-049.
+
+Reason:
+Exact restriction is not useful if its correction basis becomes the most
+visible landform. A shared continuous correction lattice preserves the causal
+regional signal within its declared uncertainty while avoiding parent and
+chunk seams. Parent-major sparse storage makes the 2.6-million-cell slice cheap
+to resume and leaves room for the hydrology arrays that follow.

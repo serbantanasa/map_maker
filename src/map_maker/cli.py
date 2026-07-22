@@ -170,6 +170,21 @@ def _l3_target_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _l3_terrain_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-terrain",
+        help="Generate resumable, seamless 200 m terrain for the selected L3 target.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 vertical-slice YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override terrain output directory.")
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -298,6 +313,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _basin_atlas_parser(subparsers)
     _regional_handoff_parser(subparsers)
     _l3_target_parser(subparsers)
+    _l3_terrain_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -524,6 +540,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{target.core_area_km2:.0f} km2, {target.core_parent_count} core parents, "
             f"{target.context_parent_count} context parents, and approximately "
             f"{target.estimated_base_cell_count} base-grid cells."
+        )
+        return 0
+
+    if args.command == "l3-terrain":
+        try:
+            from .pipeline.l3_terrain import L3TerrainConfig, generate_l3_terrain
+
+            terrain_config = L3TerrainConfig.from_file(args.config, output_dir=args.output_dir)
+            terrain = generate_l3_terrain(terrain_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 terrain: {terrain.output_dir}")
+        print(f"Manifest: {terrain.manifest_path}")
+        print(f"Validation: {terrain.validation_path}")
+        print(f"Preview: {terrain.preview_path}")
+        print(
+            f"Generated {terrain.cell_count} cells at approximately "
+            f"{terrain.actual_cell_size_m:.1f} m in {terrain.chunk_count} parent-aligned chunks "
+            f"for {terrain.target_id}."
         )
         return 0
 

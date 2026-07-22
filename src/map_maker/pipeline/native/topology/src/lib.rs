@@ -197,7 +197,9 @@ pub fn cubed_sphere_global_index(
 }
 
 pub fn cubed_sphere_decode_index(index: usize, resolution: usize) -> Option<(usize, usize, usize)> {
-    let cells = checked_cell_count(resolution)?;
+    let cells = resolution
+        .checked_mul(resolution)
+        .and_then(|face_cells| face_cells.checked_mul(FACE_COUNT))?;
     if index >= cells {
         return None;
     }

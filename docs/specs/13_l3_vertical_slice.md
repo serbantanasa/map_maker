@@ -1,6 +1,6 @@
 # L3 Regional Vertical Slice
 
-Status: approved contract; target selected; process implementation pending
+Status: approved contract; target selected; base terrain implemented
 
 ## Purpose
 
@@ -16,6 +16,17 @@ seed-42 basin-395 handoff at outlet parent cell `80324`. It covers approximately
 ```bash
 uv run map-maker l3-target
 ```
+
+The first physical L3 stage is reproduced with:
+
+```bash
+uv run map-maker l3-terrain
+```
+
+It writes `2,601,984` sparse cubed-sphere cells at about `198 m` under
+`out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
+The white boundary in its native-face diagnostic is the unrefined exterior of
+the selected L0-core footprint, not ocean and not a final watershed boundary.
 
 ## Resolution And Budget
 
@@ -43,8 +54,8 @@ checksums, expected raster cost, and the distinction between core and context.
 
 ## V0 Process Order
 
-1. Generate seamless deterministic base terrain conditioned on L2 means,
-   relief, lithology, orogenic direction, and fixed boundary values.
+1. **Implemented:** generate seamless deterministic base terrain conditioned on
+   L2 means, relief, lithology, orogenic direction, and fixed boundary values.
 2. Downscale monthly precipitation, snowmelt, and runoff as conservative
    forcing fields; do not run a new atmospheric model in V0.
 3. Perform depression-aware routing with explicit lake storage, spill controls,
@@ -60,6 +71,30 @@ checksums, expected raster cost, and the distinction between core and context.
 
 Every stage writes resumable intermediate data and exposes supervised input and
 output pairs suitable for later surrogate training.
+
+## Implemented Base Terrain
+
+The base hierarchy subdivides every selected L2 cell by `22 x 22`; the implied
+global face resolution is `45056`, but only target cells exist in storage.
+Cell IDs are `uint64`. Arrays are parent-major Zarr chunks containing 64 L2
+parents apiece, with separate raw-generation and conditioning completion
+markers. The V0 bilinear conditioner requires the bounded core to remain inside
+one cubed-sphere face; a future cross-face target must add reciprocal D8 corner
+transport rather than treating face-edge neighbors as absent.
+
+The native residual field is deterministic in global spherical coordinates and
+uses wavelengths no broader than approximately one L2 cell. L2 context,
+unresolved relief, rock strength, and orogenic orientation control its shape.
+A second pass interpolates bounded L2-center corrections over a shared D8
+bilinear lattice. This is deliberately a soft constraint: each final L2 mean
+must fall within `15 m` and `5%` of inherited relief, rather than receiving an
+exact repeated correction stamp. Decision 052 records the rejected exact
+approach and the governing semantics.
+
+The artifact retains raw terrain for idempotent resume and surrogate examples,
+plus final elevation, offset from L2, unresolved relief, spherical geometry,
+parent conditioning, chunk records, checksums, a validation report, and a
+native-face terrain diagnostic. It does not route water or create river cells.
 
 ## Required Outputs
 
@@ -77,6 +112,9 @@ output pairs suitable for later surrogate training.
 
 - deterministic cold run and checksum-identical replay;
 - no tile, L2-parent, or cubed-sphere seam signal above the declared threshold;
+- no repeated parent correction motif above the declared correlation threshold;
+- every L2 terrain mean remains inside its absolute and relief-relative
+  conditioning tolerance;
 - exact target extent, unique stable IDs, and bounded peak memory/storage;
 - all non-lake flow reaches the registered outlet or another explicit terminal;
 - no accidental sinks and no receiver cycles;
@@ -97,4 +135,3 @@ output pairs suitable for later surrogate training.
 - resolving every narrow channel at the `200 m` base scale;
 - refining the entire basin-395 L2 package to L3;
 - training or deploying the neural surrogate.
-

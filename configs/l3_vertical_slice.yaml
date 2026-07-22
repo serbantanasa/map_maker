@@ -1,6 +1,7 @@
 format_version: 1
 handoff_dir: ../out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2
 output_dir: ../out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment
+terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain
 target:
   id: temperate-highland-catchment
   # Chosen from seed 42 by catchment completeness, runoff, relief, water,
@@ -11,8 +12,38 @@ target:
   maximum_area_km2: 115000
 grid:
   base_cell_size_m: 200
+  # 2048 x 22 gives an area-equivalent cell width of approximately 198 m
+  # over the selected catchment. L3 IDs therefore require uint64.
+  l3_refinement_factor: 22
   adaptive_minimum_cell_size_m: 25
   adaptive_maximum_cell_size_m: 50
+terrain:
+  seed: 4203001
+  chunk_parent_count: 64
+  relief_realization_fraction: 0.42
+  base_wavelength_m: 16000
+  octave_count: 5
+  persistence: 0.52
+  domain_warp_fraction: 0.22
+  orogenic_ridge_fraction: 0.32
+  orogenic_reference_m: 1500
+  # L2 means are probabilistic regional constraints. Exact per-parent
+  # correction creates a visible 4.3 km tile embossing at L3.
+  maximum_parent_mean_error_m: 15
+  maximum_parent_mean_error_relief_fraction: 0.05
+  maximum_parent_area_relative_error: 1.0e-9
+  maximum_parent_boundary_residual_p95_ratio: 1.35
+  # This is a smaller statistical subset of L2 boundaries. Exact alternate-
+  # partition replay remains the hard chunk-seam gate.
+  maximum_chunk_boundary_residual_p95_ratio: 1.50
+  maximum_cell_size_relative_error: 0.12
+  minimum_terrain_offset_std_m: 2.0
+  maximum_tile_bubble_correlation_p50: 0.35
+  maximum_tile_bubble_correlation_p95: 0.80
+  conditioning_maximum_iterations: 24
+  conditioning_damping: 0.72
+  maximum_center_correction_relief_fraction: 0.75
 limits:
   maximum_base_cell_count: 3000000
   maximum_peak_memory_gb: 24
+  maximum_terrain_storage_gb: 2

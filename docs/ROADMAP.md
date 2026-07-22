@@ -1,6 +1,6 @@
 # Current Roadmap
 
-Status: current sequencing as of 2026-07-21. Numbered decisions remain the
+Status: current sequencing as of 2026-07-22. Numbered decisions remain the
 authority when this summary and the decision log differ.
 
 ## Controlling Milestone
@@ -13,11 +13,10 @@ another global-stage expansion.
 
 ## Current Work
 
-1. Implement seamless `200 m` conditioned terrain for the selected
-   `temperate-highland-catchment`, using chunked storage and the `24 GB` memory
-   ceiling in the L3 contract.
-2. Add conservative regional runoff forcing and depression-aware routing over
+1. Add conservative regional runoff forcing and depression-aware routing over
    that terrain, preserving the sole target outlet and inherited trunk identity.
+2. Discover the first L3 tributary graph while preserving inherited trunk and
+   connector identity; do not apply incision in the routing stage.
 3. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
@@ -28,6 +27,10 @@ physical map receives explicit user acceptance. The selected-basin L2 handoff
 now passes a quantitative terrain-seam gate. The first L3 catchment, resolution,
 budget, and acceptance contract are selected in Decision 051. Detailed earlier evidence is retained in the
 [archived validation baseline](archive/validation/2026-07-canonical-validation-baseline.md).
+
+The first L3 terrain stage is complete under Decision 052. Its canonical
+factor-22 artifact contains `2,601,984` cells at about `198 m`, passes the L2 and
+chunk continuity gates, and reproduces byte-identically on a cold replay.
 
 ## Thaw Gate
 

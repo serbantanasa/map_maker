@@ -11,6 +11,7 @@ members = [
     "src/map_maker/pipeline/native/geology",
     "src/map_maker/pipeline/native/hydrology",
     "src/map_maker/pipeline/native/hydrology_pass2",
+    "src/map_maker/pipeline/native/l3_terrain",
     "src/map_maker/pipeline/native/planet",
     "src/map_maker/pipeline/native/potential_biosphere",
     "src/map_maker/pipeline/native/refinement",

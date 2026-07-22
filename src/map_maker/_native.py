@@ -18,6 +18,7 @@ NATIVE_ABI_OVERRIDES = {
     "fluvial_native": 4,
     "functional_vegetation_native": 1,
     "hydrology_pass2_native": 1,
+    "l3_terrain_native": 1,
     "potential_biosphere_native": 3,
     "refinement_native": 3,
     "surface_water_native": 2,
