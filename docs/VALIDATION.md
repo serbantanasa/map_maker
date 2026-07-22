@@ -57,9 +57,10 @@ The first L3 target selection is validated with:
 uv run map-maker l3-target
 ```
 
-The target must be a complete upstream closure with one outlet, available
-context rings, unique referenced L2 children, a passing source handoff, and a
-base-grid estimate inside the configured workstation budget.
+The target must be a complete upstream closure with one outlet, a continuous
+terrain rectangle, a complete source-context ring, mutually exclusive domain
+roles, unique referenced L2 children, a passing source handoff, and a base-grid
+estimate inside the configured workstation budget.
 
 The first physical L3 terrain artifact is generated and self-validated with:
 
@@ -69,10 +70,13 @@ uv run map-maker l3-terrain
 
 It gates stable `uint64` identity, cell count and physical scale, complete L2
 context, spherical area conservation, absolute and relief-relative L2 mean
-conditioning, alternate chunk-partition replay, L2/chunk boundary residuals,
-the rejected parent-bubble motif, finite terrain, storage, and workstation
-budgets. The terrain diagnostic still requires human review; a numerical seam
-pass cannot waive a visible repeated tile pattern.
+conditioning and explicit solver convergence, alternate chunk-partition replay,
+L2/chunk boundary residuals, the rejected parent-bubble motif, continuous
+coverage and domain masks, finite terrain, storage, and observed-or-estimated
+workstation memory. Resume markers follow durable writes, and a cache hit
+rechecks the published Zarr checksum. The terrain diagnostic still requires
+human review; a numerical seam pass cannot waive a visible repeated tile
+pattern or an unclear map without legend and scale.
 
 ## Gate Classes
 
@@ -99,8 +103,8 @@ pass cannot waive a visible repeated tile pattern.
 | Materials and ecology | Finite nonnegative state, bounded fractions, exact mixture/partition closure within declared tolerance, and no terrestrial state over unsupported ocean area. |
 | Atlas | Rendering consumes immutable truth artifacts, records provenance, and never feeds cartographic width, projection, or style into simulation state. |
 | L2 handoff | Sparse child terrain and surface occupancy conserve L0 parents; inherited parent priors are not presented as L2 physics; every vector path references packaged children; package publication follows validation. |
-| L3 target | The selected coarse catchment has one outlet, complete upstream ownership and context, a seam-valid L2 source, stable indexes, and bounded estimated base-grid cost. |
-| L3 base terrain | Sparse 200 m-class terrain has stable 64-bit identity, complete context, bounded L2 conditioning error, no parent/chunk seam or repeated correction motif, deterministic replay, and bounded storage. |
+| L3 target | The selected coarse catchment has one outlet, complete upstream ownership, a continuous terrain window and source ring, explicit domain roles, a seam-valid L2 source, stable indexes, and bounded estimated base-grid cost. |
+| L3 base terrain | Continuous regional 200 m-class terrain has stable 64-bit identity, complete context, explicit core/halo/outside masks, bounded L2 conditioning error, no parent/chunk seam or repeated correction motif, checksum-verified replay, and bounded memory/storage. Hydrology gates apply only to the core. |
 
 For coarse and sparse fluvial products, applied trunk erosion, deposition, and
 cell-mean terrain change remain zero. The separately bounded outlet-spill

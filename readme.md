@@ -181,7 +181,7 @@ uv run map-maker regional-handoff
 ```
 
 The checked-in `configs/l2_regional_handoff.yaml` selects a complete drainage
-basin, adds two L0 context rings, and writes deterministic factor-16 terrain,
+basin, adds five L0 context rings, and writes deterministic factor-16 terrain,
 conservative ocean/lake/wetland occupancy, inherited parent priors, and river
 graph/vector tables under
 `out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2/`. Arrays use
@@ -199,8 +199,9 @@ uv run map-maker l3-target
 This writes a checksummed target index and preview under
 `out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment/`.
 The selected complete catchment is approximately `102,000 km2`, has one coarse
-outlet, two context rings, and `2.60 million` cells at the planned
-`200 m` base resolution. The L3 process contract is
+outlet, a `2.60 million`-cell process core, and a continuous working window of
+approximately `6.04 million` cells at the planned `200 m` base resolution. The
+L3 process contract is
 `docs/specs/13_l3_vertical_slice.md`.
 
 Generate its first physical L3 stage with:
@@ -209,12 +210,15 @@ Generate its first physical L3 stage with:
 uv run map-maker l3-terrain
 ```
 
-This writes `2,601,984` deterministic cubed-sphere cells at about `198 m` in
+This writes approximately `6.04 million` deterministic cubed-sphere cells at
+about `198 m` in
 resumable parent-aligned Zarr chunks under
 `out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
 The artifact includes raw and softly L2-conditioned terrain, unresolved relief,
-stable 64-bit IDs, parent and chunk diagnostics, checksummed provenance, and a
-native-face preview. It does not yet downscale runoff or route L3 rivers.
+stable 64-bit IDs, explicit core/process-halo/outside masks, parent and chunk
+diagnostics, checksummed provenance, a clean native-face terrain preview, and a
+separate domain-role preview. Both maps include a legend and kilometre scale
+bar. It does not yet downscale runoff or route L3 rivers.
 
 Run the previous procedural generator for comparison:
 

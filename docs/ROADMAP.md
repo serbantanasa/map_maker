@@ -13,11 +13,13 @@ another global-stage expansion.
 
 ## Current Work
 
-1. Add conservative regional runoff forcing and depression-aware routing over
+1. Regenerate and visually accept the continuous L3 terrain window with its
+   explicit core, process halo, outside mask, legend, and scale bar.
+2. Add conservative regional runoff forcing and depression-aware routing over
    that terrain, preserving the sole target outlet and inherited trunk identity.
-2. Discover the first L3 tributary graph while preserving inherited trunk and
+3. Discover the first L3 tributary graph while preserving inherited trunk and
    connector identity; do not apply incision in the routing stage.
-3. In parallel, record explicit acceptance or a bounded blocker list for the
+4. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
@@ -28,9 +30,12 @@ now passes a quantitative terrain-seam gate. The first L3 catchment, resolution,
 budget, and acceptance contract are selected in Decision 051. Detailed earlier evidence is retained in the
 [archived validation baseline](archive/validation/2026-07-canonical-validation-baseline.md).
 
-The first L3 terrain stage is complete under Decision 052. Its canonical
-factor-22 artifact contains `2,601,984` cells at about `198 m`, passes the L2 and
-chunk continuity gates, and reproduces byte-identically on a cold replay.
+The original sparse-core L3 terrain artifact passed its numerical gates but
+failed visual/domain review because its catchment-shaped storage left large
+internal no-data regions in the rectangular diagnostic and provided an unsafe
+hydrology boundary. Decision 053 replaces that extent with an approximately
+`6.04 million`-cell continuous working window. Canonical regeneration is
+complete; explicit human visual acceptance is the active gate.
 
 ## Thaw Gate
 

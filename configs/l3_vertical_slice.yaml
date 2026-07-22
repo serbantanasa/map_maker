@@ -1,4 +1,4 @@
-format_version: 1
+format_version: 2
 handoff_dir: ../out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2
 output_dir: ../out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment
 terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain
@@ -17,6 +17,10 @@ grid:
   l3_refinement_factor: 22
   adaptive_minimum_cell_size_m: 25
   adaptive_maximum_cell_size_m: 50
+  # Store a continuous rectangle around the irregular catchment. Four L2
+  # cells are about 18 km; one additional L2 ring supplies interpolation data.
+  terrain_window_halo_l2_cells: 4
+  terrain_source_context_l2_cells: 1
 terrain:
   seed: 4203001
   chunk_parent_count: 64
@@ -44,6 +48,6 @@ terrain:
   conditioning_damping: 0.72
   maximum_center_correction_relief_fraction: 0.75
 limits:
-  maximum_base_cell_count: 3000000
+  maximum_base_cell_count: 7000000
   maximum_peak_memory_gb: 24
   maximum_terrain_storage_gb: 2

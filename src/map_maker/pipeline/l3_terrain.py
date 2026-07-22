@@ -6,15 +6,18 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
+import resource
 import shutil
+import sys
 import time
 from typing import Any, Mapping
 
 import numpy as np
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import yaml  # type: ignore[import-untyped]
 import zarr  # type: ignore[import-untyped]
 
@@ -22,9 +25,30 @@ from .._native import native_library_info
 from ._l3_terrain_native import run_l3_terrain_chunk
 from .regional_handoff import _file_checksum, _replace_directory, _tree_checksum
 
-TERRAIN_FORMAT_VERSION = 1
-TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v4"
+TERRAIN_FORMAT_VERSION = 2
+TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v5"
 EARTH_OROGENIC_REFERENCE_M = 1_500.0
+RAW_CHUNK_ARRAY_PATHS = (
+    "geometry/cell_id",
+    "geometry/parent_l2_cell_id",
+    "geometry/face",
+    "geometry/row",
+    "geometry/column",
+    "geometry/xyz",
+    "geometry/area_km2",
+    "geometry/inside_catchment_core",
+    "geometry/inside_process_halo",
+    "geometry/outside_process_domain",
+    "terrain/elevation_m",
+    "terrain/offset_from_l2_m",
+    "terrain/unresolved_relief_m",
+    "terrain/raw_elevation_m",
+    "terrain/raw_offset_from_l2_m",
+)
+CONDITIONED_CHUNK_ARRAY_PATHS = (
+    "terrain/elevation_m",
+    "terrain/offset_from_l2_m",
+)
 
 
 @dataclass(frozen=True)
@@ -240,11 +264,14 @@ class _TerrainSources:
     context_rock_strength: np.ndarray
     context_orogenic_strength: np.ndarray
     context_ridge_direction_xyz: np.ndarray
-    core_ids: np.ndarray
-    core_handoff_rows: np.ndarray
-    core_lake_fraction: np.ndarray
-    core_wetland_fraction: np.ndarray
-    core_ocean_fraction: np.ndarray
+    domain_ids: np.ndarray
+    domain_handoff_rows: np.ndarray
+    domain_inside_core: np.ndarray
+    domain_inside_process_halo: np.ndarray
+    domain_outside_process: np.ndarray
+    domain_lake_fraction: np.ndarray
+    domain_wetland_fraction: np.ndarray
+    domain_ocean_fraction: np.ndarray
 
 
 def _column_numpy(table: pa.Table, name: str, dtype: np.dtype[Any]) -> np.ndarray:
@@ -309,6 +336,8 @@ def _load_sources(config: L3TerrainConfig) -> _TerrainSources:
     target_validation = json.loads(target_validation_path.read_text(encoding="utf8"))
     if not target_manifest.get("validation_passed") or not target_validation.get("passed"):
         raise RuntimeError("L3 terrain source target has not passed validation")
+    if int(target_manifest.get("format_version", 0)) < 2:
+        raise RuntimeError("L3 terrain requires a continuous-window target package (format 2)")
     handoff_dir = Path(target_manifest["source"]["handoff_dir"]).expanduser().resolve()
     handoff_manifest_path = handoff_dir / "manifest.json"
     handoff_zarr_path = handoff_dir / "region.zarr"
@@ -320,10 +349,16 @@ def _load_sources(config: L3TerrainConfig) -> _TerrainSources:
     target_ids = _column_numpy(target, "fine_cell_id", np.dtype(np.int32))
     handoff_rows = _column_numpy(target, "handoff_child_row", np.dtype(np.int32))
     inside_core = _column_numpy(target, "inside_target_core", np.dtype(bool))
+    inside_window = _column_numpy(target, "inside_terrain_window", np.dtype(bool))
+    inside_process_halo = _column_numpy(target, "inside_process_halo", np.dtype(bool))
+    outside_process = _column_numpy(target, "outside_process_domain", np.dtype(bool))
     order = np.argsort(target_ids, kind="stable")
     target_ids = target_ids[order]
     handoff_rows = handoff_rows[order]
     inside_core = inside_core[order]
+    inside_window = inside_window[order]
+    inside_process_halo = inside_process_halo[order]
+    outside_process = outside_process[order]
     if len(np.unique(target_ids)) != len(target_ids):
         raise RuntimeError("L3 target contains duplicate L2 cell IDs")
 
@@ -363,25 +398,47 @@ def _load_sources(config: L3TerrainConfig) -> _TerrainSources:
     radius_m = (
         math.sqrt(float(np.sum(parent_area_km2)) / float(np.sum(parent_area_steradians))) * 1_000.0
     )
-    core_ids = target_ids[inside_core]
-    core_handoff_rows = handoff_rows[inside_core]
-    if len(core_ids) == 0:
-        raise RuntimeError("L3 target contains no core L2 cells")
+    domain_ids = target_ids[inside_window]
+    domain_handoff_rows = handoff_rows[inside_window]
+    domain_inside_core = inside_core[inside_window]
+    domain_inside_process_halo = inside_process_halo[inside_window]
+    domain_outside_process = outside_process[inside_window]
+    role_count = (
+        domain_inside_core.astype(np.int8)
+        + domain_inside_process_halo.astype(np.int8)
+        + domain_outside_process.astype(np.int8)
+    )
+    if len(domain_ids) == 0 or not np.any(domain_inside_core):
+        raise RuntimeError("L3 target contains no terrain window or catchment core")
+    if np.any(role_count != 1):
+        raise RuntimeError("L3 target domain masks must be mutually exclusive and exhaustive")
     parent_resolution = int(root.attrs["child_face_resolution"])
     face_size = parent_resolution * parent_resolution
-    core_face = core_ids.astype(np.int64) // face_size
-    core_within_face = core_ids.astype(np.int64) % face_size
-    core_row = core_within_face // parent_resolution
-    core_column = core_within_face % parent_resolution
+    domain_face = domain_ids.astype(np.int64) // face_size
+    domain_within_face = domain_ids.astype(np.int64) % face_size
+    domain_row = domain_within_face // parent_resolution
+    domain_column = domain_within_face % parent_resolution
     if (
-        len(np.unique(core_face)) != 1
-        or np.any((core_row == 0) | (core_row + 1 == parent_resolution))
-        or np.any((core_column == 0) | (core_column + 1 == parent_resolution))
+        len(np.unique(domain_face)) != 1
+        or np.any((domain_row == 0) | (domain_row + 1 == parent_resolution))
+        or np.any((domain_column == 0) | (domain_column + 1 == parent_resolution))
     ):
         raise NotImplementedError(
             "L3 V0 bilinear terrain conditioning requires a core contained inside one "
             "cubed-sphere face"
         )
+    expected_domain_count = int(
+        (np.max(domain_row) - np.min(domain_row) + 1)
+        * (np.max(domain_column) - np.min(domain_column) + 1)
+    )
+    if len(domain_ids) != expected_domain_count:
+        raise RuntimeError("L3 terrain window is not a complete rectangle")
+    context_neighbors = _neighbor_rows(domain_ids, target_ids, parent_resolution)
+    if np.any(context_neighbors < 0):
+        raise RuntimeError("L3 terrain window lacks its complete L2 source-context ring")
+    lake_fraction = _column_numpy(target, "lake_fraction", np.dtype(np.float32))[order]
+    wetland_fraction = _column_numpy(target, "wetland_fraction", np.dtype(np.float32))[order]
+    ocean_fraction = _column_numpy(target, "ocean_fraction", np.dtype(np.float32))[order]
     return _TerrainSources(
         target_id=str(target_manifest["target_id"]),
         target_manifest_path=target_manifest_path,
@@ -396,17 +453,14 @@ def _load_sources(config: L3TerrainConfig) -> _TerrainSources:
         context_rock_strength=np.ascontiguousarray(rock_strength),
         context_orogenic_strength=np.ascontiguousarray(orogenic_strength),
         context_ridge_direction_xyz=np.ascontiguousarray(ridge_direction),
-        core_ids=np.ascontiguousarray(core_ids),
-        core_handoff_rows=np.ascontiguousarray(core_handoff_rows),
-        core_lake_fraction=_column_numpy(target, "lake_fraction", np.dtype(np.float32))[order][
-            inside_core
-        ],
-        core_wetland_fraction=_column_numpy(target, "wetland_fraction", np.dtype(np.float32))[
-            order
-        ][inside_core],
-        core_ocean_fraction=_column_numpy(target, "ocean_fraction", np.dtype(np.float32))[order][
-            inside_core
-        ],
+        domain_ids=np.ascontiguousarray(domain_ids),
+        domain_handoff_rows=np.ascontiguousarray(domain_handoff_rows),
+        domain_inside_core=np.ascontiguousarray(domain_inside_core),
+        domain_inside_process_halo=np.ascontiguousarray(domain_inside_process_halo),
+        domain_outside_process=np.ascontiguousarray(domain_outside_process),
+        domain_lake_fraction=np.ascontiguousarray(lake_fraction[inside_window]),
+        domain_wetland_fraction=np.ascontiguousarray(wetland_fraction[inside_window]),
+        domain_ocean_fraction=np.ascontiguousarray(ocean_fraction[inside_window]),
     )
 
 
@@ -462,6 +516,64 @@ def _zarr_dataset(
     return dataset
 
 
+def _fsync_paths(paths: list[Path]) -> None:
+    files = [path for path in paths if path.is_file()]
+    for path in files:
+        with path.open("rb") as source:
+            os.fsync(source.fileno())
+    if os.name != "posix":
+        return
+    directories = sorted(
+        {path.parent for path in files}, key=lambda path: len(path.parts), reverse=True
+    )
+    for directory in directories:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+
+
+def _write_json_durable(path: Path, value: object) -> None:
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    encoded = (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf8")
+    with temporary.open("wb") as destination:
+        destination.write(encoded)
+        destination.flush()
+        os.fsync(destination.fileno())
+    os.replace(temporary, path)
+    _fsync_paths([path])
+
+
+def _zarr_chunk_path(zarr_path: Path, root: Any, array_path: str, chunk_index: int) -> Path:
+    array = root[array_path]
+    chunk_key = ".".join((str(chunk_index), *("0" for _ in range(array.ndim - 1))))
+    return zarr_path / array_path / chunk_key
+
+
+def _sync_zarr_chunk(
+    zarr_path: Path,
+    root: Any,
+    array_paths: tuple[str, ...],
+    chunk_index: int,
+) -> None:
+    paths = [_zarr_chunk_path(zarr_path, root, name, chunk_index) for name in array_paths]
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"Zarr chunk write did not materialize: {', '.join(missing)}")
+    _fsync_paths(paths)
+
+
+def _sync_zarr_array(zarr_path: Path, array_path: str) -> None:
+    directory = zarr_path / array_path
+    paths = [
+        path for path in directory.iterdir() if path.is_file() and not path.name.startswith(".")
+    ]
+    if not paths:
+        raise RuntimeError(f"Zarr array {array_path} has no materialized chunks")
+    _fsync_paths(paths)
+
+
 def _initialize_partial(
     partial: Path,
     config: L3TerrainConfig,
@@ -471,9 +583,9 @@ def _initialize_partial(
     partial.mkdir(parents=True)
     factor = config.refinement_factor
     children_per_parent = factor * factor
-    cell_count = len(sources.core_ids) * children_per_parent
+    cell_count = len(sources.domain_ids) * children_per_parent
     chunk_rows = config.chunk_parent_count * children_per_parent
-    chunk_count = math.ceil(len(sources.core_ids) / config.chunk_parent_count)
+    chunk_count = math.ceil(len(sources.domain_ids) / config.chunk_parent_count)
     root = zarr.open_group(str(partial / "terrain.zarr"), mode="w")
     root.attrs.update(
         {
@@ -488,7 +600,10 @@ def _initialize_partial(
             "child_face_resolution": sources.parent_resolution * factor,
             "refinement_factor": factor,
             "children_per_parent": children_per_parent,
-            "parent_count": len(sources.core_ids),
+            "parent_count": len(sources.domain_ids),
+            "catchment_core_parent_count": int(np.count_nonzero(sources.domain_inside_core)),
+            "process_halo_parent_count": int(np.count_nonzero(sources.domain_inside_process_halo)),
+            "outside_process_parent_count": int(np.count_nonzero(sources.domain_outside_process)),
             "cell_count": cell_count,
             "parent_major_storage": True,
             "chunk_parent_count": config.chunk_parent_count,
@@ -523,6 +638,19 @@ def _initialize_partial(
         chunks=(chunk_rows,),
         units="km2",
     )
+    for name, semantics in (
+        ("inside_catchment_core", "hydrological acceptance and reported basin interior"),
+        ("inside_process_halo", "context cells available to regional process solves"),
+        ("outside_process_domain", "continuous terrain context excluded from process gates"),
+    ):
+        _zarr_dataset(
+            geometry,
+            name,
+            shape=(cell_count,),
+            dtype=bool,
+            chunks=(chunk_rows,),
+            semantics=semantics,
+        )
     terrain = root.require_group("terrain")
     _zarr_dataset(
         terrain,
@@ -584,14 +712,14 @@ def _initialize_partial(
         dtype=np.float64,
         chunks=context_chunks,
         units="m",
-        semantics="continuous center field; context outside the target core is fixed to zero",
+        semantics="continuous center field; source context outside the terrain window is fixed to zero",
     )
     _zarr_dataset(
         conditioning,
         "raw_parent_mean_error_m",
-        shape=(len(sources.core_ids),),
+        shape=(len(sources.domain_ids),),
         dtype=np.float64,
-        chunks=(min(len(sources.core_ids), config.chunk_parent_count),),
+        chunks=(min(len(sources.domain_ids), config.chunk_parent_count),),
         units="m",
     )
     progress = root.require_group("progress")
@@ -614,13 +742,11 @@ def _initialize_partial(
         "format_version": TERRAIN_FORMAT_VERSION,
         "model_version": TERRAIN_MODEL_VERSION,
         "run_fingerprint": run_fingerprint,
-        "parent_count": len(sources.core_ids),
+        "parent_count": len(sources.domain_ids),
         "cell_count": cell_count,
         "chunk_count": chunk_count,
     }
-    (partial / "run_state.json").write_text(
-        json.dumps(state, indent=2, sort_keys=True), encoding="utf8"
-    )
+    _write_json_durable(partial / "run_state.json", state)
     (partial / "chunk_stats").mkdir()
     return root
 
@@ -637,10 +763,10 @@ def _open_partial(
             state = json.loads(state_path.read_text(encoding="utf8"))
         except (FileNotFoundError, json.JSONDecodeError):
             state = {}
-        expected_cells = len(sources.core_ids) * config.refinement_factor**2
+        expected_cells = len(sources.domain_ids) * config.refinement_factor**2
         valid = (
             state.get("run_fingerprint") == run_fingerprint
-            and state.get("parent_count") == len(sources.core_ids)
+            and state.get("parent_count") == len(sources.domain_ids)
             and state.get("cell_count") == expected_cells
         )
         if valid:
@@ -649,7 +775,16 @@ def _open_partial(
     return _initialize_partial(partial, config, sources, run_fingerprint), False
 
 
-def _write_chunk(root: Any, start: int, end: int, outputs: Mapping[str, np.ndarray]) -> None:
+def _write_chunk(
+    root: Any,
+    start: int,
+    end: int,
+    outputs: Mapping[str, np.ndarray],
+    *,
+    inside_core: np.ndarray,
+    inside_process_halo: np.ndarray,
+    outside_process: np.ndarray,
+) -> None:
     root["geometry/cell_id"][start:end] = outputs["cell_id"]
     root["geometry/parent_l2_cell_id"][start:end] = outputs["parent_l2_cell_id"]
     root["geometry/face"][start:end] = outputs["face"]
@@ -657,6 +792,9 @@ def _write_chunk(root: Any, start: int, end: int, outputs: Mapping[str, np.ndarr
     root["geometry/column"][start:end] = outputs["column"]
     root["geometry/xyz"][start:end] = outputs["xyz"]
     root["geometry/area_km2"][start:end] = outputs["area_km2"]
+    root["geometry/inside_catchment_core"][start:end] = inside_core
+    root["geometry/inside_process_halo"][start:end] = inside_process_halo
+    root["geometry/outside_process_domain"][start:end] = outside_process
     root["terrain/elevation_m"][start:end] = outputs["elevation_m"]
     root["terrain/offset_from_l2_m"][start:end] = outputs["offset_from_l2_m"]
     root["terrain/unresolved_relief_m"][start:end] = outputs["unresolved_relief_m"]
@@ -752,20 +890,21 @@ def _solve_center_corrections(
 ) -> tuple[np.ndarray, dict[str, int | float]]:
     factor = config.refinement_factor
     children_per_parent = factor * factor
-    parent_count = len(sources.core_ids)
+    parent_count = len(sources.domain_ids)
     area = np.asarray(root["geometry/area_km2"][:], dtype=np.float64)
     raw_elevation = np.asarray(root["terrain/raw_elevation_m"][:], dtype=np.float64)
     grouped_area = area.reshape(parent_count, children_per_parent)
     _, raw_parent_mean = _restriction(area, raw_elevation, parent_count, children_per_parent)
-    core_context_rows = np.searchsorted(sources.context_ids, sources.core_ids)
-    source_elevation = sources.context_elevation_m[core_context_rows].astype(np.float64)
-    source_relief = sources.context_relief_m[core_context_rows].astype(np.float64)
+    domain_context_rows = np.searchsorted(sources.context_ids, sources.domain_ids)
+    source_elevation = sources.context_elevation_m[domain_context_rows].astype(np.float64)
+    source_relief = sources.context_relief_m[domain_context_rows].astype(np.float64)
     raw_error = raw_parent_mean - source_elevation
     center_weight, neighbor_weight = _conditioning_weights(grouped_area, factor)
-    neighbors = _neighbor_rows(sources.core_ids, sources.core_ids, sources.parent_resolution)
+    neighbors = _neighbor_rows(sources.domain_ids, sources.domain_ids, sources.parent_resolution)
     correction = np.zeros(parent_count, dtype=np.float64)
     final_error = raw_error.copy()
     iterations = 0
+    converged = False
     for iteration in range(config.conditioning_maximum_iterations):
         for parent in range(parent_count):
             adjacent = 0.0
@@ -788,12 +927,15 @@ def _solve_center_corrections(
             and float(np.max(np.abs(final_error) / np.maximum(source_relief, 50.0)))
             <= config.maximum_parent_mean_error_relief_fraction
         ):
+            converged = True
             break
     context_correction = np.zeros(len(sources.context_ids), dtype=np.float64)
-    context_correction[core_context_rows] = correction
+    context_correction[domain_context_rows] = correction
     correction_relief_fraction = np.abs(correction) / np.maximum(source_relief, 50.0)
     metadata: dict[str, int | float] = {
         "conditioning_iteration_count": iterations,
+        "conditioning_converged": int(converged),
+        "conditioning_maximum_iterations": config.conditioning_maximum_iterations,
         "raw_parent_mean_error_max_m": float(np.max(np.abs(raw_error))),
         "conditioned_predicted_parent_mean_error_max_m": float(np.max(np.abs(final_error))),
         "conditioned_predicted_parent_mean_error_relief_fraction_max": float(
@@ -847,7 +989,7 @@ def _condition_chunk(
     row_end = parent_end * children_per_parent
     context_correction = np.asarray(root["conditioning/center_correction_m"][:], dtype=np.float64)
     correction = _interpolated_center_correction(
-        sources.core_ids[parent_start:parent_end],
+        sources.domain_ids[parent_start:parent_end],
         sources.context_ids,
         context_correction,
         sources.parent_resolution,
@@ -865,6 +1007,11 @@ def _condition_chunk(
 
 def _percentile(values: np.ndarray, quantile: float) -> float:
     return float(np.percentile(values, quantile)) if values.size else 0.0
+
+
+def _observed_peak_rss_bytes() -> int:
+    maximum_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    return maximum_rss if sys.platform == "darwin" else maximum_rss * 1_024
 
 
 def _seam_metrics(
@@ -965,13 +1112,13 @@ def _chunk_replay_valid(
     sources: _TerrainSources,
     config: L3TerrainConfig,
 ) -> bool:
-    if len(sources.core_ids) < 2:
-        replay_ids = sources.core_ids
+    if len(sources.domain_ids) < 2:
+        replay_ids = sources.domain_ids
         parent_start = 0
     else:
-        boundary = min(config.chunk_parent_count, len(sources.core_ids) - 1)
+        boundary = min(config.chunk_parent_count, len(sources.domain_ids) - 1)
         parent_start = max(0, boundary - 1)
-        replay_ids = sources.core_ids[parent_start : parent_start + 2]
+        replay_ids = sources.domain_ids[parent_start : parent_start + 2]
     replay, _ = run_l3_terrain_chunk(
         controls=_controls(config, sources),
         context_parent_ids=sources.context_ids,
@@ -1017,7 +1164,7 @@ def _validate_terrain(
 ) -> tuple[dict[str, Any], dict[str, np.ndarray]]:
     factor = config.refinement_factor
     children_per_parent = factor * factor
-    parent_count = len(sources.core_ids)
+    parent_count = len(sources.domain_ids)
     cell_count = parent_count * children_per_parent
     cell_ids = np.asarray(root["geometry/cell_id"][:], dtype=np.uint64)
     child_parent_ids = np.asarray(root["geometry/parent_l2_cell_id"][:], dtype=np.int32)
@@ -1025,14 +1172,17 @@ def _validate_terrain(
     elevation = np.asarray(root["terrain/elevation_m"][:], dtype=np.float32)
     offsets = np.asarray(root["terrain/offset_from_l2_m"][:], dtype=np.float32)
     unresolved = np.asarray(root["terrain/unresolved_relief_m"][:], dtype=np.float32)
+    inside_core = np.asarray(root["geometry/inside_catchment_core"][:], dtype=bool)
+    inside_process_halo = np.asarray(root["geometry/inside_process_halo"][:], dtype=bool)
+    outside_process = np.asarray(root["geometry/outside_process_domain"][:], dtype=bool)
     if any(
         len(array) != cell_count for array in (cell_ids, child_parent_ids, child_area, elevation)
     ):
         raise RuntimeError("L3 terrain arrays do not match the declared cell count")
-    core_context_rows = np.searchsorted(sources.context_ids, sources.core_ids)
-    source_area = sources.context_area_km2[core_context_rows]
-    source_elevation = sources.context_elevation_m[core_context_rows]
-    source_relief = sources.context_relief_m[core_context_rows]
+    domain_context_rows = np.searchsorted(sources.context_ids, sources.domain_ids)
+    source_area = sources.context_area_km2[domain_context_rows]
+    source_elevation = sources.context_elevation_m[domain_context_rows]
+    source_relief = sources.context_relief_m[domain_context_rows]
     grouped_parent = child_parent_ids.reshape(parent_count, children_per_parent)
     grouped_area = child_area.reshape(parent_count, children_per_parent)
     grouped_elevation = elevation.reshape(parent_count, children_per_parent)
@@ -1041,7 +1191,34 @@ def _validate_terrain(
     area_error = np.abs(restricted_area - source_area) / source_area
     elevation_error = restricted_elevation - source_elevation
     elevation_error_relief_fraction = np.abs(elevation_error) / np.maximum(source_relief, 50.0)
-    parent_grouping_valid = bool(np.all(grouped_parent == sources.core_ids[:, None]))
+    parent_grouping_valid = bool(np.all(grouped_parent == sources.domain_ids[:, None]))
+    role_count = (
+        inside_core.astype(np.int8)
+        + inside_process_halo.astype(np.int8)
+        + outside_process.astype(np.int8)
+    )
+    domain_roles_valid = bool(
+        np.all(role_count == 1)
+        and np.all(
+            inside_core.reshape(parent_count, children_per_parent)
+            == sources.domain_inside_core[:, None]
+        )
+        and np.all(
+            inside_process_halo.reshape(parent_count, children_per_parent)
+            == sources.domain_inside_process_halo[:, None]
+        )
+        and np.all(
+            outside_process.reshape(parent_count, children_per_parent)
+            == sources.domain_outside_process[:, None]
+        )
+    )
+    fine_rows = np.asarray(root["geometry/row"][:], dtype=np.int32)
+    fine_columns = np.asarray(root["geometry/column"][:], dtype=np.int32)
+    dense_window_cells = int(
+        (np.max(fine_rows) - np.min(fine_rows) + 1)
+        * (np.max(fine_columns) - np.min(fine_columns) + 1)
+    )
+    continuous_window_valid = dense_window_cells == cell_count
     actual_cell_size_m = math.sqrt(float(np.sum(child_area)) / cell_count) * 1_000.0
     cell_size_relative_error = abs(actual_cell_size_m - config.requested_cell_size_m) / float(
         config.requested_cell_size_m
@@ -1060,7 +1237,17 @@ def _validate_terrain(
     )
     validation_array_bytes = sum(
         array.nbytes
-        for array in (cell_ids, child_parent_ids, child_area, elevation, offsets, unresolved)
+        for array in (
+            cell_ids,
+            child_parent_ids,
+            child_area,
+            elevation,
+            offsets,
+            unresolved,
+            inside_core,
+            inside_process_halo,
+            outside_process,
+        )
     )
     estimated_peak_memory_bytes = int(
         validation_array_bytes
@@ -1068,6 +1255,8 @@ def _validate_terrain(
         + config.chunk_parent_count * children_per_parent * 96
     )
     maximum_peak_memory_bytes = int(config.maximum_peak_memory_gb * 1024**3)
+    observed_peak_rss_bytes = _observed_peak_rss_bytes()
+    measured_or_estimated_peak_bytes = max(estimated_peak_memory_bytes, observed_peak_rss_bytes)
     validation: dict[str, Any] = {
         "format_version": TERRAIN_FORMAT_VERSION,
         "model_version": TERRAIN_MODEL_VERSION,
@@ -1085,12 +1274,23 @@ def _validate_terrain(
         "cell_size_relative_error": cell_size_relative_error,
         "cell_size_valid": int(cell_size_relative_error <= config.maximum_cell_size_relative_error),
         "parent_grouping_valid": int(parent_grouping_valid),
+        "terrain_window_continuous_valid": int(continuous_window_valid),
+        "terrain_domain_roles_valid": int(domain_roles_valid),
+        "hydrological_acceptance_scope": "catchment_core_only",
+        "catchment_core_parent_count": int(np.count_nonzero(sources.domain_inside_core)),
+        "catchment_core_cell_count": int(np.count_nonzero(inside_core)),
+        "process_halo_parent_count": int(np.count_nonzero(sources.domain_inside_process_halo)),
+        "process_halo_cell_count": int(np.count_nonzero(inside_process_halo)),
+        "outside_process_parent_count": int(np.count_nonzero(sources.domain_outside_process)),
+        "outside_process_cell_count": int(np.count_nonzero(outside_process)),
         "unique_stable_ids_valid": int(unique_ids),
         "uint64_ids_required": int(int(np.max(cell_ids)) > np.iinfo(np.uint32).max),
         "all_finite_valid": int(all_finite),
         "estimated_peak_memory_bytes": estimated_peak_memory_bytes,
+        "observed_process_peak_rss_bytes": observed_peak_rss_bytes,
+        "memory_gate_peak_bytes": measured_or_estimated_peak_bytes,
         "maximum_peak_memory_bytes": maximum_peak_memory_bytes,
-        "memory_budget_valid": int(estimated_peak_memory_bytes <= maximum_peak_memory_bytes),
+        "memory_budget_valid": int(measured_or_estimated_peak_bytes <= maximum_peak_memory_bytes),
         "missing_context_neighbor_count": missing_context,
         "context_boundary_valid": int(missing_context == 0),
         "maximum_parent_area_relative_error": float(np.max(area_error)),
@@ -1156,6 +1356,8 @@ def _validate_terrain(
         "cell_count_valid",
         "cell_size_valid",
         "parent_grouping_valid",
+        "terrain_window_continuous_valid",
+        "terrain_domain_roles_valid",
         "unique_stable_ids_valid",
         "uint64_ids_required",
         "all_finite_valid",
@@ -1169,6 +1371,7 @@ def _validate_terrain(
         "chunk_boundary_continuity_valid",
         "parent_tile_motif_valid",
         "center_correction_bounded_valid",
+        "conditioning_converged",
     )
     validation["passed"] = bool(all(validation[name] == 1 for name in required))
     parent_arrays = {
@@ -1202,15 +1405,60 @@ def _terrain_colors(elevation: np.ndarray) -> np.ndarray:
     return output
 
 
-def _render_terrain(root: Any, path: Path, actual_cell_size_m: float) -> None:
+def _diagnostic_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    for candidate in (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _inner_boundary(mask: np.ndarray) -> np.ndarray:
+    padded = np.pad(np.asarray(mask, dtype=bool), 1, mode="constant", constant_values=False)
+    interior = padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:]
+    return mask & ~interior
+
+
+def _nice_scale_km(map_width_pixels: int, cell_size_m: float) -> float:
+    maximum_km = max(map_width_pixels * 0.28 * cell_size_m / 1_000.0, 0.001)
+    exponent = math.floor(math.log10(maximum_km))
+    for multiplier in (5.0, 2.0, 1.0):
+        candidate = multiplier * 10.0**exponent
+        if candidate <= maximum_km:
+            return candidate
+    return 10.0 ** (exponent - 1)
+
+
+def _render_terrain(
+    root: Any,
+    path: Path,
+    actual_cell_size_m: float,
+    *,
+    show_domain: bool = False,
+) -> None:
     rows = np.asarray(root["geometry/row"][:], dtype=np.int32)
     columns = np.asarray(root["geometry/column"][:], dtype=np.int32)
     elevation = np.asarray(root["terrain/elevation_m"][:], dtype=np.float32)
+    inside_core = np.asarray(root["geometry/inside_catchment_core"][:], dtype=bool)
+    inside_halo = np.asarray(root["geometry/inside_process_halo"][:], dtype=bool)
+    outside_process = np.asarray(root["geometry/outside_process_domain"][:], dtype=bool)
     min_row, max_row = int(np.min(rows)), int(np.max(rows))
     min_col, max_col = int(np.min(columns)), int(np.max(columns))
     dense = np.full((max_row - min_row + 1, max_col - min_col + 1), np.nan, dtype=np.float32)
     dense[rows - min_row, columns - min_col] = elevation
     valid = np.isfinite(dense)
+    if not np.all(valid):
+        raise RuntimeError("L3 terrain diagnostic refuses a window with internal no-data holes")
+    dense_core = np.zeros_like(valid)
+    dense_halo = np.zeros_like(valid)
+    dense_outside = np.zeros_like(valid)
+    dense_core[rows - min_row, columns - min_col] = inside_core
+    dense_halo[rows - min_row, columns - min_col] = inside_halo
+    dense_outside[rows - min_row, columns - min_col] = outside_process
     padded = np.pad(dense, 1, mode="constant", constant_values=np.nan)
     center = padded[1:-1, 1:-1]
     north = padded[:-2, 1:-1]
@@ -1229,10 +1477,106 @@ def _render_terrain(root: Any, path: Path, actual_cell_size_m: float) -> None:
     norm = np.sqrt(normal_x * normal_x + normal_y * normal_y + normal_z * normal_z)
     illumination = (normal_x * -0.45 + normal_y * -0.55 + normal_z * 0.70) / norm
     shade = np.clip(0.58 + 0.48 * illumination, 0.42, 1.08)
-    colors = _terrain_colors(np.nan_to_num(dense, nan=0.0)) * shade[..., None]
-    colors[~valid] = np.asarray([239.0, 240.0, 236.0])
-    image = Image.fromarray(np.clip(colors, 0, 255).astype(np.uint8), mode="RGB")
-    image.save(path, optimize=True)
+    colors = _terrain_colors(dense) * shade[..., None]
+    if show_domain:
+        colors[dense_outside] = (
+            colors[dense_outside] * 0.76 + np.asarray([214.0, 216.0, 210.0]) * 0.24
+        )
+        process_boundary = _inner_boundary(dense_core | dense_halo)
+        core_boundary = _inner_boundary(dense_core)
+        colors[process_boundary] = np.asarray([180.0, 177.0, 162.0])
+        colors[core_boundary] = np.asarray([32.0, 35.0, 31.0])
+    map_image = Image.fromarray(np.clip(colors, 0, 255).astype(np.uint8), mode="RGB")
+
+    title_height = 50
+    footer_height = 74
+    legend_width = 270
+    canvas = Image.new(
+        "RGB",
+        (map_image.width + legend_width, map_image.height + title_height + footer_height),
+        (240, 241, 237),
+    )
+    canvas.paste(map_image, (0, title_height))
+    draw = ImageDraw.Draw(canvas)
+    title_font = _diagnostic_font(22)
+    label_font = _diagnostic_font(17)
+    small_font = _diagnostic_font(15)
+    title = "L3 conditioned terrain and process domain" if show_domain else "L3 conditioned terrain"
+    draw.text((18, 13), title, fill=(25, 30, 27), font=title_font)
+    draw.line((map_image.width, 0, map_image.width, canvas.height), fill=(178, 181, 174), width=1)
+
+    legend_x = map_image.width + 24
+    draw.text((legend_x, 20), "Elevation", fill=(25, 30, 27), font=title_font)
+    gradient_top = 68
+    gradient_height = min(320, max(160, map_image.height // 4))
+    gradient_values = np.linspace(2_000.0, -600.0, gradient_height, dtype=np.float32)[:, None]
+    gradient_rgb = _terrain_colors(gradient_values)
+    gradient = Image.fromarray(np.clip(gradient_rgb, 0, 255).astype(np.uint8), mode="RGB")
+    gradient = gradient.resize((34, gradient_height))
+    canvas.paste(gradient, (legend_x, gradient_top))
+    draw.rectangle(
+        (legend_x, gradient_top, legend_x + 34, gradient_top + gradient_height),
+        outline=(70, 74, 70),
+        width=1,
+    )
+    for value in (2_000, 1_000, 500, 0, -600):
+        y = gradient_top + round((2_000 - value) / 2_600 * gradient_height)
+        draw.line((legend_x + 34, y, legend_x + 42, y), fill=(50, 54, 51), width=1)
+        draw.text((legend_x + 48, y - 8), f"{value:,} m", fill=(35, 39, 36), font=small_font)
+
+    if show_domain:
+        role_y = gradient_top + gradient_height + 38
+        draw.text((legend_x, role_y), "Domain", fill=(25, 30, 27), font=label_font)
+        role_y += 34
+        draw.line((legend_x, role_y, legend_x + 36, role_y), fill=(32, 35, 31), width=4)
+        draw.text(
+            (legend_x + 48, role_y - 9),
+            "Inherited core (L0)",
+            fill=(35, 39, 36),
+            font=small_font,
+        )
+        role_y += 34
+        draw.line((legend_x, role_y, legend_x + 36, role_y), fill=(180, 177, 162), width=4)
+        draw.text(
+            (legend_x + 48, role_y - 9),
+            "Process halo limit",
+            fill=(35, 39, 36),
+            font=small_font,
+        )
+        role_y += 34
+        draw.rectangle((legend_x, role_y - 9, legend_x + 36, role_y + 9), fill=(196, 198, 193))
+        draw.text(
+            (legend_x + 48, role_y - 9),
+            "Outside process",
+            fill=(35, 39, 36),
+            font=small_font,
+        )
+
+    scale_km = _nice_scale_km(map_image.width, actual_cell_size_m)
+    scale_pixels = max(1, round(scale_km * 1_000.0 / actual_cell_size_m))
+    scale_x = 24
+    scale_y = title_height + map_image.height + 30
+    segment_count = 4
+    for segment in range(segment_count):
+        left = scale_x + round(scale_pixels * segment / segment_count)
+        right = scale_x + round(scale_pixels * (segment + 1) / segment_count)
+        fill = (32, 35, 31) if segment % 2 == 0 else (240, 241, 237)
+        draw.rectangle((left, scale_y, right, scale_y + 12), fill=fill, outline=(32, 35, 31))
+    draw.text((scale_x, scale_y + 18), "0", fill=(25, 30, 27), font=small_font)
+    draw.text(
+        (scale_x + scale_pixels, scale_y + 18),
+        f"{scale_km:g} km",
+        fill=(25, 30, 27),
+        font=small_font,
+        anchor="ra",
+    )
+    draw.text(
+        (scale_x + scale_pixels + 20, scale_y - 2),
+        "approximate scale",
+        fill=(70, 74, 70),
+        font=small_font,
+    )
+    canvas.save(path, optimize=True)
 
 
 def _write_parent_table(
@@ -1241,19 +1585,22 @@ def _write_parent_table(
     config: L3TerrainConfig,
     parent_arrays: Mapping[str, np.ndarray],
 ) -> None:
-    context_rows = np.searchsorted(sources.context_ids, sources.core_ids)
+    context_rows = np.searchsorted(sources.context_ids, sources.domain_ids)
     child_count = config.refinement_factor**2
     table = pa.table(
         {
-            "l2_cell_id": pa.array(sources.core_ids, type=pa.int32()),
-            "handoff_child_row": pa.array(sources.core_handoff_rows, type=pa.int32()),
+            "l2_cell_id": pa.array(sources.domain_ids, type=pa.int32()),
+            "handoff_child_row": pa.array(sources.domain_handoff_rows, type=pa.int32()),
             "l3_row_offset": pa.array(
-                np.arange(len(sources.core_ids), dtype=np.int64) * child_count,
+                np.arange(len(sources.domain_ids), dtype=np.int64) * child_count,
                 type=pa.int64(),
             ),
             "l3_child_count": pa.array(
-                np.full(len(sources.core_ids), child_count, dtype=np.int32), type=pa.int32()
+                np.full(len(sources.domain_ids), child_count, dtype=np.int32), type=pa.int32()
             ),
+            "inside_catchment_core": pa.array(sources.domain_inside_core, type=pa.bool_()),
+            "inside_process_halo": pa.array(sources.domain_inside_process_halo, type=pa.bool_()),
+            "outside_process_domain": pa.array(sources.domain_outside_process, type=pa.bool_()),
             "source_area_km2": pa.array(sources.context_area_km2[context_rows], type=pa.float64()),
             "restricted_area_km2": pa.array(
                 parent_arrays["restricted_area_km2"], type=pa.float64()
@@ -1283,12 +1630,30 @@ def _write_parent_table(
             "orogenic_strength": pa.array(
                 sources.context_orogenic_strength[context_rows], type=pa.float32()
             ),
-            "lake_fraction_prior": pa.array(sources.core_lake_fraction, type=pa.float32()),
-            "wetland_fraction_prior": pa.array(sources.core_wetland_fraction, type=pa.float32()),
-            "ocean_fraction_prior": pa.array(sources.core_ocean_fraction, type=pa.float32()),
+            "lake_fraction_prior": pa.array(sources.domain_lake_fraction, type=pa.float32()),
+            "wetland_fraction_prior": pa.array(sources.domain_wetland_fraction, type=pa.float32()),
+            "ocean_fraction_prior": pa.array(sources.domain_ocean_fraction, type=pa.float32()),
         }
     )
     pq.write_table(table, path, compression="zstd")
+
+
+def _verify_published_outputs(output_dir: Path, manifest: Mapping[str, Any]) -> None:
+    outputs = manifest.get("outputs")
+    if not isinstance(outputs, Mapping):
+        raise RuntimeError("published L3 terrain manifest has no output checksums")
+    for name, raw_record in outputs.items():
+        if not isinstance(raw_record, Mapping) or not isinstance(raw_record.get("path"), str):
+            raise RuntimeError(f"published L3 terrain manifest has an invalid {name} record")
+        path = output_dir / str(raw_record["path"])
+        if "sha256_tree" in raw_record:
+            if not path.is_dir() or _tree_checksum(path) != raw_record["sha256_tree"]:
+                raise RuntimeError(f"published L3 terrain integrity check failed for {name}")
+        elif "sha256" in raw_record:
+            if not path.is_file() or _file_checksum(path) != raw_record["sha256"]:
+                raise RuntimeError(f"published L3 terrain integrity check failed for {name}")
+        else:
+            raise RuntimeError(f"published L3 terrain output {name} has no checksum")
 
 
 def _existing_result(
@@ -1307,6 +1672,7 @@ def _existing_result(
         return None
     if manifest.get("run_fingerprint") != run_fingerprint or not validation.get("passed"):
         return None
+    _verify_published_outputs(config.output_dir, manifest)
     return L3TerrainResult(
         output_dir=config.output_dir,
         manifest_path=manifest_path,
@@ -1331,7 +1697,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
     existing = _existing_result(config, sources, run_fingerprint)
     if existing is not None:
         return existing
-    expected_cells = len(sources.core_ids) * config.refinement_factor**2
+    expected_cells = len(sources.domain_ids) * config.refinement_factor**2
     if expected_cells > config.maximum_base_cell_count:
         raise RuntimeError(
             f"L3 terrain requires {expected_cells} cells; maximum is "
@@ -1340,6 +1706,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
     config.output_dir.parent.mkdir(parents=True, exist_ok=True)
     partial = config.output_dir.with_name(f".{config.output_dir.name}.partial")
     root, resumed = _open_partial(partial, config, sources, run_fingerprint)
+    zarr_path = partial / "terrain.zarr"
     complete = root["progress/chunk_complete"]
     resumed_chunk_count = (
         int(np.count_nonzero(np.asarray(complete[:], dtype=bool))) if resumed else 0
@@ -1352,8 +1719,8 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         if bool(complete[chunk_index]):
             continue
         parent_start = chunk_index * config.chunk_parent_count
-        parent_end = min(parent_start + config.chunk_parent_count, len(sources.core_ids))
-        chunk_parent_ids = np.ascontiguousarray(sources.core_ids[parent_start:parent_end])
+        parent_end = min(parent_start + config.chunk_parent_count, len(sources.domain_ids))
+        chunk_parent_ids = np.ascontiguousarray(sources.domain_ids[parent_start:parent_end])
         outputs, stats = run_l3_terrain_chunk(
             controls=controls,
             context_parent_ids=sources.context_ids,
@@ -1371,7 +1738,22 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
             )
         row_start = parent_start * children_per_parent
         row_end = parent_end * children_per_parent
-        _write_chunk(root, row_start, row_end, outputs)
+        _write_chunk(
+            root,
+            row_start,
+            row_end,
+            outputs,
+            inside_core=np.repeat(
+                sources.domain_inside_core[parent_start:parent_end], children_per_parent
+            ),
+            inside_process_halo=np.repeat(
+                sources.domain_inside_process_halo[parent_start:parent_end], children_per_parent
+            ),
+            outside_process=np.repeat(
+                sources.domain_outside_process[parent_start:parent_end], children_per_parent
+            ),
+        )
+        _sync_zarr_chunk(zarr_path, root, RAW_CHUNK_ARRAY_PATHS, chunk_index)
         stats.update(
             {
                 "chunk_index": chunk_index,
@@ -1381,20 +1763,25 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
                 "row_end": row_end,
             }
         )
-        (partial / "chunk_stats" / f"{chunk_index:05d}.json").write_text(
-            json.dumps(stats, indent=2, sort_keys=True), encoding="utf8"
-        )
+        _write_json_durable(partial / "chunk_stats" / f"{chunk_index:05d}.json", stats)
         complete[chunk_index] = True
+        _sync_zarr_chunk(
+            zarr_path,
+            root,
+            ("progress/chunk_complete",),
+            chunk_index // int(complete.chunks[0]),
+        )
     if not bool(np.all(np.asarray(complete[:], dtype=bool))):
         raise RuntimeError("L3 terrain generation ended with incomplete chunks")
     conditioning_path = partial / "conditioning.json"
     if not bool(root.attrs.get("center_corrections_solved", False)):
         context_correction, conditioning_metrics = _solve_center_corrections(root, sources, config)
         root["conditioning/center_correction_m"][:] = context_correction
-        conditioning_path.write_text(
-            json.dumps(conditioning_metrics, indent=2, sort_keys=True), encoding="utf8"
-        )
+        _sync_zarr_array(zarr_path, "conditioning/raw_parent_mean_error_m")
+        _sync_zarr_array(zarr_path, "conditioning/center_correction_m")
+        _write_json_durable(conditioning_path, conditioning_metrics)
         root.attrs["center_corrections_solved"] = True
+        _fsync_paths([zarr_path / ".zattrs"])
     else:
         conditioning_metrics = json.loads(conditioning_path.read_text(encoding="utf8"))
     conditioned = root["progress/chunk_conditioned"]
@@ -1402,9 +1789,16 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         if bool(conditioned[chunk_index]):
             continue
         parent_start = chunk_index * config.chunk_parent_count
-        parent_end = min(parent_start + config.chunk_parent_count, len(sources.core_ids))
+        parent_end = min(parent_start + config.chunk_parent_count, len(sources.domain_ids))
         _condition_chunk(root, sources, config, parent_start, parent_end)
+        _sync_zarr_chunk(zarr_path, root, CONDITIONED_CHUNK_ARRAY_PATHS, chunk_index)
         conditioned[chunk_index] = True
+        _sync_zarr_chunk(
+            zarr_path,
+            root,
+            ("progress/chunk_conditioned",),
+            chunk_index // int(conditioned.chunks[0]),
+        )
     if not bool(np.all(np.asarray(conditioned[:], dtype=bool))):
         raise RuntimeError("L3 terrain conditioning ended with incomplete chunks")
     chunk_stats = [
@@ -1414,13 +1808,13 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
     validation, parent_arrays = _validate_terrain(
         root, sources, config, chunk_stats, conditioning_metrics
     )
-    core_context_rows = np.searchsorted(sources.context_ids, sources.core_ids)
+    domain_context_rows = np.searchsorted(sources.context_ids, sources.domain_ids)
     parent_arrays["raw_parent_mean_error_m"] = np.asarray(
         root["conditioning/raw_parent_mean_error_m"][:], dtype=np.float64
     )
     parent_arrays["center_correction_m"] = np.asarray(
         root["conditioning/center_correction_m"][:], dtype=np.float64
-    )[core_context_rows]
+    )[domain_context_rows]
     tables_dir = partial / "tables"
     tables_dir.mkdir(exist_ok=True)
     parent_table_path = tables_dir / "l2_parent_conditioning.parquet"
@@ -1432,6 +1826,13 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         root,
         preview_path,
         float(validation["actual_area_equivalent_cell_size_m"]),
+    )
+    domain_preview_path = partial / "terrain_domain.png"
+    _render_terrain(
+        root,
+        domain_preview_path,
+        float(validation["actual_area_equivalent_cell_size_m"]),
+        show_domain=True,
     )
     root.attrs["status"] = "complete"
     root.attrs["actual_area_equivalent_cell_size_m"] = validation[
@@ -1457,18 +1858,27 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         "target_id": sources.target_id,
         "run_fingerprint": run_fingerprint,
         "hierarchy": {
-            "topology": "sparse parent-major cubed sphere",
+            "topology": "continuous rectangular parent-major window on one cubed-sphere face",
             "parent_level": "L2",
             "child_level": "L3",
             "parent_face_resolution": sources.parent_resolution,
             "child_face_resolution": sources.parent_resolution * config.refinement_factor,
             "refinement_factor": config.refinement_factor,
             "children_per_parent": children_per_parent,
-            "parent_count": len(sources.core_ids),
+            "parent_count": len(sources.domain_ids),
+            "catchment_core_parent_count": int(np.count_nonzero(sources.domain_inside_core)),
+            "process_halo_parent_count": int(np.count_nonzero(sources.domain_inside_process_halo)),
+            "outside_process_parent_count": int(np.count_nonzero(sources.domain_outside_process)),
             "cell_count": expected_cells,
             "requested_cell_size_m": config.requested_cell_size_m,
             "actual_area_equivalent_cell_size_m": validation["actual_area_equivalent_cell_size_m"],
             "cell_id_dtype": "uint64",
+            "domain_masks": [
+                "geometry/inside_catchment_core",
+                "geometry/inside_process_halo",
+                "geometry/outside_process_domain",
+            ],
+            "hydrological_acceptance_scope": "catchment_core_only",
         },
         "chunking": {
             "parent_aligned": True,
@@ -1500,6 +1910,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
                 "absolute and relief-relative L2 tolerances"
             ),
             "conditioning_iteration_count": conditioning_metrics["conditioning_iteration_count"],
+            "conditioning_converged": bool(conditioning_metrics["conditioning_converged"]),
             "remaining_relief_semantics": "sub-200m prior, not added wholesale to elevation",
         },
         "source": {
@@ -1521,7 +1932,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
             },
             "parent_conditioning": {
                 "path": "tables/l2_parent_conditioning.parquet",
-                "rows": len(sources.core_ids),
+                "rows": len(sources.domain_ids),
                 "sha256": _file_checksum(parent_table_path),
             },
             "chunks": {
@@ -1537,6 +1948,15 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
                 "path": "terrain.png",
                 "sha256": _file_checksum(preview_path),
                 "projection": "native cubed-sphere face raster diagnostic",
+                "legend": "elevation metres",
+                "scale": "approximate kilometre scale from area-equivalent cell width",
+            },
+            "terrain_domain_preview": {
+                "path": "terrain_domain.png",
+                "sha256": _file_checksum(domain_preview_path),
+                "projection": "native cubed-sphere face raster diagnostic",
+                "legend": "elevation metres and domain-role boundaries",
+                "scale": "approximate kilometre scale from area-equivalent cell width",
             },
             "validation": {
                 "path": "validation.json",
@@ -1555,7 +1975,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         zarr_path=config.output_dir / "terrain.zarr",
         preview_path=config.output_dir / "terrain.png",
         target_id=sources.target_id,
-        parent_count=len(sources.core_ids),
+        parent_count=len(sources.domain_ids),
         cell_count=expected_cells,
         actual_cell_size_m=float(validation["actual_area_equivalent_cell_size_m"]),
         chunk_count=chunk_count,

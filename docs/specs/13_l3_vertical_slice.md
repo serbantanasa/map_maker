@@ -1,6 +1,6 @@
 # L3 Regional Vertical Slice
 
-Status: approved contract; target selected; base terrain implemented
+Status: approved contract; continuous base terrain implemented; human review pending
 
 ## Purpose
 
@@ -23,10 +23,11 @@ The first physical L3 stage is reproduced with:
 uv run map-maker l3-terrain
 ```
 
-It writes `2,601,984` sparse cubed-sphere cells at about `198 m` under
+It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
 `out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
-The white boundary in its native-face diagnostic is the unrefined exterior of
-the selected L0-core footprint, not ocean and not a final watershed boundary.
+The stored terrain is a continuous rectangular window. The irregular catchment,
+its process halo, and terrain outside the process domain are explicit masks;
+there are no internal no-data holes.
 
 ## Resolution And Budget
 
@@ -35,7 +36,8 @@ the selected L0-core footprint, not ocean and not a final watershed boundary.
   morphology must be resolved.
 - Channels narrower than the active cell remain vectors with fractional raster
   support. A finer raster never replaces canonical river identity.
-- The first target is capped at three million base cells and a `24 GB` process
+- The catchment core remains approximately `2.60 million` cells. Its complete
+  working window is capped at seven million base cells and a `24 GB` process
   memory budget, leaving capacity for the operating system on a 32 GB machine.
 - Arrays are chunked Zarr datasets. Variable-length graphs, vectors, and event
   records are Parquet. No stage may require a dense global L3 allocation.
@@ -48,9 +50,12 @@ geology, materials, soils, biosphere, and biome fields remain parent priors.
 They may constrain an L3 process but cannot be relabeled as recomputed L3
 physics.
 
-The target package contains a complete coarse upstream catchment plus two
-parent context rings. It records the sole outlet, L2 child indexes, source
-checksums, expected raster cost, and the distinction between core and context.
+The target package contains a complete coarse upstream catchment, a continuous
+L2 terrain window extending four L2 cells (about `18 km`) beyond its bounding
+box, and one further L2 source-context ring. It records the sole outlet, L2
+child indexes, source checksums, expected raster cost, and mutually exclusive
+core, process-halo, and outside roles. Hydrological acceptance is measured only
+on the catchment core; the halo supplies process boundary state.
 
 ## V0 Process Order
 
@@ -74,11 +79,14 @@ output pairs suitable for later surrogate training.
 
 ## Implemented Base Terrain
 
-The base hierarchy subdivides every selected L2 cell by `22 x 22`; the implied
-global face resolution is `45056`, but only target cells exist in storage.
+The base hierarchy subdivides every terrain-window L2 cell by `22 x 22`; the
+implied global face resolution is `45056`, but only the regional rectangle
+exists in storage.
 Cell IDs are `uint64`. Arrays are parent-major Zarr chunks containing 64 L2
 parents apiece, with separate raw-generation and conditioning completion
-markers. The V0 bilinear conditioner requires the bounded core to remain inside
+markers. Completion markers follow durable array and statistics writes, and a
+cache hit rechecks the published Zarr tree checksum. The V0 bilinear conditioner
+requires the bounded window to remain inside
 one cubed-sphere face; a future cross-face target must add reciprocal D8 corner
 transport rather than treating face-edge neighbors as absent.
 
@@ -94,7 +102,10 @@ approach and the governing semantics.
 The artifact retains raw terrain for idempotent resume and surrogate examples,
 plus final elevation, offset from L2, unresolved relief, spherical geometry,
 parent conditioning, chunk records, checksums, a validation report, and a
-native-face terrain diagnostic. It does not route water or create river cells.
+native-face terrain diagnostics: clean physical relief in `terrain.png` and
+explicit domain boundaries in `terrain_domain.png`. Both include legends and
+an approximate kilometre scale bar. It does not route water or create river
+cells.
 
 ## Required Outputs
 
@@ -116,6 +127,9 @@ native-face terrain diagnostic. It does not route water or create river cells.
 - every L2 terrain mean remains inside its absolute and relief-relative
   conditioning tolerance;
 - exact target extent, unique stable IDs, and bounded peak memory/storage;
+- a continuous terrain rectangle with exhaustive, mutually exclusive core,
+  process-halo, and outside masks;
+- hydrological validity and conservation acceptance measured on the core only;
 - all non-lake flow reaches the registered outlet or another explicit terminal;
 - no accidental sinks and no receiver cycles;
 - inherited major trunks remain connected and discharge-conservative;
@@ -127,6 +141,8 @@ native-face terrain diagnostic. It does not route water or create river cells.
   narrow river as whole-cell excavation;
 - human review rejects repeated parent/tile motifs, implausible tributary
   density, rectilinear drainage, broken river hierarchy, and incoherent lakes.
+- every new diagnostic map includes a legend and labelled physical scale where
+  that projection has a meaningful local scale.
 
 ## Non-Goals
 

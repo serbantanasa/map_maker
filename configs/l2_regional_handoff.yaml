@@ -5,7 +5,9 @@ region:
   # Auto selects the largest basin with a represented physical channel network.
   basin_id: auto
   # L0 context needed by downstream regional climate and hydrology recomputation.
-  halo_parent_rings: 2
+  # Five rings cover the complete rectangular L3 terrain/source window for
+  # the selected catchment, including neighboring drainage domains.
+  halo_parent_rings: 5
   # Face-128 x 16 is face-2048-equivalent: about 4.5 km cell width on Earth.
   refinement_factor: 16
   chunk_rows: 65536

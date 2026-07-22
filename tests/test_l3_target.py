@@ -10,6 +10,7 @@ from map_maker.pipeline.l3_target import (
     L3TargetConfig,
     L3TargetResult,
     _context_selection,
+    _rectangular_l2_window,
     _upstream_closure,
 )
 
@@ -18,7 +19,7 @@ def test_l3_target_config_resolves_paths_and_validates_grid(tmp_path: Path):
     path = tmp_path / "target.yaml"
     path.write_text(
         """\
-format_version: 1
+format_version: 2
 handoff_dir: handoff
 output_dir: target
 target:
@@ -44,6 +45,8 @@ limits:
     assert config.target_id == "first-catchment"
     assert config.outlet_parent_cell_id == 17
     assert config.base_cell_size_m == 200
+    assert config.terrain_window_halo_l2_cells == 4
+    assert config.terrain_source_context_l2_cells == 1
     assert config.maximum_peak_memory_gb == 24
     with pytest.raises(ValueError, match="base_cell_size_m"):
         L3TargetConfig(
@@ -83,10 +86,61 @@ def test_upstream_closure_and_context_rings_are_exact():
     assert not missing
 
 
+def test_rectangular_l2_window_is_complete_and_roles_are_exclusive():
+    resolution = 10
+    face = 1
+    cell_ids = np.asarray(
+        [
+            face * resolution * resolution + row * resolution + column
+            for row in range(resolution)
+            for column in range(resolution)
+        ],
+        dtype=np.int32,
+    )
+    core_ids = {
+        face * resolution * resolution + 4 * resolution + 4,
+        face * resolution * resolution + 5 * resolution + 5,
+    }
+    core = np.isin(cell_ids, list(core_ids))
+
+    selected, roles, metadata = _rectangular_l2_window(
+        cell_ids,
+        core,
+        resolution,
+        halo_cells=1,
+        source_context_cells=1,
+    )
+
+    assert np.count_nonzero(selected) == 36
+    assert metadata["terrain_l2_cell_count"] == 16
+    inside_window = roles["inside_terrain_window"]
+    role_count = sum(
+        roles[name].astype(np.int8)
+        for name in (
+            "inside_target_core",
+            "inside_process_halo",
+            "outside_process_domain",
+        )
+    )
+    assert np.all(role_count[inside_window] == 1)
+    assert np.all(role_count[~inside_window] == 0)
+    assert np.count_nonzero(roles["inside_target_core"]) == 2
+    assert np.count_nonzero(roles["outside_process_domain"]) == 2
+
+    with pytest.raises(RuntimeError, match="continuous L3 window"):
+        _rectangular_l2_window(
+            np.delete(cell_ids, np.flatnonzero(cell_ids == min(core_ids))[0] - 11),
+            np.delete(core, np.flatnonzero(cell_ids == min(core_ids))[0] - 11),
+            resolution,
+            halo_cells=1,
+            source_context_cells=1,
+        )
+
+
 def test_l3_target_cli(tmp_path: Path, monkeypatch, capsys):
     config_path = tmp_path / "target.yaml"
     config_path.write_text(
-        "handoff_dir: handoff\noutput_dir: target\n"
+        "format_version: 2\nhandoff_dir: handoff\noutput_dir: target\n"
         "target:\n  id: selected\n  outlet_parent_cell_id: 9\n",
         encoding="utf8",
     )

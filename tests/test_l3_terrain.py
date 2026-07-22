@@ -3,15 +3,19 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 import pytest
 
 from map_maker.cli import main
+import map_maker.pipeline.l3_terrain as l3_terrain_module
 from map_maker.pipeline._l3_terrain_native import run_l3_terrain_chunk
 from map_maker.pipeline.l3_terrain import (
     L3TerrainConfig,
     L3TerrainResult,
+    _TerrainSources,
     _conditioning_basis,
     _interpolated_center_correction,
+    _nice_scale_km,
     _tile_motif_metrics,
 )
 
@@ -157,6 +161,146 @@ def test_native_l3_chunk_is_partition_invariant_and_uses_uint64_ids():
         combined["elevation_m"],
         np.concatenate((first["elevation_m"], second["elevation_m"])),
     )
+
+
+def test_l3_generate_resumes_validates_and_rejects_corrupt_cache(tmp_path: Path, monkeypatch):
+    resolution = 2_048
+    factor = 22
+    face = 4
+    context_ids = np.asarray(
+        sorted(
+            face * resolution * resolution + row * resolution + column
+            for row in range(999, 1_003)
+            for column in range(999, 1_003)
+        ),
+        dtype=np.int32,
+    )
+    domain_ids = np.asarray(
+        sorted(
+            face * resolution * resolution + row * resolution + column
+            for row in range(1_000, 1_002)
+            for column in range(1_000, 1_002)
+        ),
+        dtype=np.int32,
+    )
+    context_count = len(context_ids)
+    context_elevation = np.asarray(
+        [
+            4.0 * ((int(cell_id) % (resolution * resolution)) // resolution)
+            + 3.0 * (int(cell_id) % resolution)
+            - 6_500.0
+            for cell_id in context_ids
+        ],
+        dtype=np.float32,
+    )
+    controls = {
+        "parent_resolution": resolution,
+        "factor": factor,
+        "planet_radius_m": 6_371_000.0,
+        "terrain_seed": 42,
+        "relief_realization_fraction": 0.42,
+        "base_wavelength_m": 16_000.0,
+        "octave_count": 5,
+        "persistence": 0.52,
+        "domain_warp_fraction": 0.22,
+        "orogenic_ridge_fraction": 0.32,
+    }
+    common = {
+        "controls": controls,
+        "context_parent_ids": context_ids,
+        "context_elevation_m": context_elevation,
+        "context_relief_m": np.full(context_count, 300.0, dtype=np.float32),
+        "context_rock_strength": np.full(context_count, 0.7, dtype=np.float32),
+        "context_orogenic_strength": np.full(context_count, 0.4, dtype=np.float32),
+        "context_ridge_direction_xyz": np.tile(
+            np.asarray([0.0, 1.0, 0.0], dtype=np.float32), (context_count, 1)
+        ),
+    }
+    context_geometry, _ = run_l3_terrain_chunk(
+        **common,
+        chunk_parent_ids=context_ids,
+    )
+    context_area = context_geometry["area_km2"].reshape(context_count, factor * factor).sum(axis=1)
+    target_manifest = tmp_path / "target-manifest.json"
+    handoff_manifest = tmp_path / "handoff-manifest.json"
+    target_manifest.write_text("{}", encoding="utf8")
+    handoff_manifest.write_text("{}", encoding="utf8")
+    sources = _TerrainSources(
+        target_id="tiny-continuous-window",
+        target_manifest_path=target_manifest,
+        handoff_dir=tmp_path,
+        handoff_manifest_path=handoff_manifest,
+        parent_resolution=resolution,
+        planet_radius_m=6_371_000.0,
+        context_ids=context_ids,
+        context_elevation_m=context_elevation,
+        context_relief_m=common["context_relief_m"],
+        context_area_km2=context_area,
+        context_rock_strength=common["context_rock_strength"],
+        context_orogenic_strength=common["context_orogenic_strength"],
+        context_ridge_direction_xyz=common["context_ridge_direction_xyz"],
+        domain_ids=domain_ids,
+        domain_handoff_rows=np.arange(len(domain_ids), dtype=np.int32),
+        domain_inside_core=np.asarray([True, False, False, False]),
+        domain_inside_process_halo=np.asarray([False, True, True, False]),
+        domain_outside_process=np.asarray([False, False, False, True]),
+        domain_lake_fraction=np.zeros(len(domain_ids), dtype=np.float32),
+        domain_wetland_fraction=np.zeros(len(domain_ids), dtype=np.float32),
+        domain_ocean_fraction=np.zeros(len(domain_ids), dtype=np.float32),
+    )
+    config = L3TerrainConfig(
+        target_dir=tmp_path,
+        output_dir=tmp_path / "terrain",
+        refinement_factor=factor,
+        chunk_parent_count=2,
+        maximum_parent_mean_error_m=100.0,
+        maximum_parent_mean_error_relief_fraction=0.5,
+        maximum_parent_area_relative_error=1e-8,
+        maximum_parent_boundary_residual_p95_ratio=100.0,
+        maximum_chunk_boundary_residual_p95_ratio=100.0,
+        maximum_cell_size_relative_error=0.5,
+        minimum_terrain_offset_std_m=0.01,
+        maximum_tile_bubble_correlation_p50=1.0,
+        maximum_tile_bubble_correlation_p95=1.0,
+        maximum_center_correction_relief_fraction=10.0,
+        maximum_base_cell_count=5_000,
+        maximum_peak_memory_gb=1.0,
+        maximum_storage_gb=0.1,
+    )
+    monkeypatch.setattr(l3_terrain_module, "_load_sources", lambda _: sources)
+    native = l3_terrain_module.run_l3_terrain_chunk
+    calls = 0
+
+    def interrupt_second_chunk(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError("simulated interruption")
+        return native(**kwargs)
+
+    monkeypatch.setattr(l3_terrain_module, "run_l3_terrain_chunk", interrupt_second_chunk)
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        l3_terrain_module.generate_l3_terrain(config)
+
+    monkeypatch.setattr(l3_terrain_module, "run_l3_terrain_chunk", native)
+    result = l3_terrain_module.generate_l3_terrain(config)
+    assert result.resumed_chunk_count == 1
+    assert result.cell_count == len(domain_ids) * factor * factor
+    preview = Image.open(result.preview_path)
+    assert preview.width > factor * 2
+    assert preview.height > factor * 2
+    assert (result.output_dir / "terrain_domain.png").is_file()
+
+    cached = l3_terrain_module.generate_l3_terrain(config)
+    assert cached.zarr_path == result.zarr_path
+    chunk_path = result.zarr_path / "terrain/elevation_m/0"
+    chunk_path.write_bytes(chunk_path.read_bytes() + b"corrupt")
+    with pytest.raises(RuntimeError, match="integrity check failed for terrain_zarr"):
+        l3_terrain_module.generate_l3_terrain(config)
+
+
+def test_scale_bar_uses_readable_metric_steps():
+    assert _nice_scale_km(1_000, 200.0) == 50.0
 
 
 def test_l3_terrain_cli(tmp_path: Path, monkeypatch, capsys):

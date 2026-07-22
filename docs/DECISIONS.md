@@ -2554,7 +2554,7 @@ the 32 GB workstation budget.
 
 ## Decision 052: L3 Base Terrain Uses Soft Parent Conditioning
 
-Status: implemented
+Status: implemented; storage extent superseded by Decision 053
 
 Decision:
 Implement the first L3 stage as a sparse factor-22 subdivision of the selected
@@ -2603,3 +2603,55 @@ visible landform. A shared continuous correction lattice preserves the causal
 regional signal within its declared uncertainty while avoiding parent and
 chunk seams. Parent-major sparse storage makes the 2.6-million-cell slice cheap
 to resume and leaves room for the hydrology arrays that follow.
+
+## Decision 053: L3 Storage Extent Is Not The Catchment Mask
+
+Status: implemented; canonical artifact regenerated; human visual acceptance pending
+
+Decision:
+Do not store only the irregular catchment footprint. The first L3 working
+artifact is a continuous rectangular window containing the complete catchment
+bounding box plus four L2 cells (about `18 km`) on every side. One additional
+complete L2 ring supplies native and conditioning context. The factor-22 window
+contains `12,480` L2 parents and `6,040,320` approximately `198 m` L3 cells;
+the workstation guard is seven million cells and `24 GB` process memory.
+
+Every stored cell belongs to exactly one explicit role:
+
+- `inside_catchment_core`: the inherited complete upstream closure and the
+  only area on which hydrological acceptance and basin budgets are measured;
+- `inside_process_halo`: a four-L2-cell D8 dilation used for routing and other
+  boundary-sensitive regional process solves; or
+- `outside_process_domain`: real continuous terrain retained for conditioning,
+  inspection, and future boundary expansion but excluded from process gates.
+
+The target package separately identifies source-context-only L2 cells that are
+not refined into stored L3 terrain. Internal no-data holes are a hard failure;
+missing source cells require widening and regenerating the L2 handoff rather
+than interpolating invented geology. The canonical handoff therefore uses five
+L0 halo rings for this target.
+
+Chunk phase markers are authoritative only after their Zarr chunk files and
+statistics records have crossed an `fsync` durability barrier. Conditioning
+reports explicit convergence and iteration count. A published cache hit
+recomputes output checksums, including the complete Zarr tree, before returning
+the artifact.
+
+Every new regional diagnostic map must include a legend, a labelled physical
+scale bar where local scale is meaningful, and visible domain-boundary
+semantics. Keep clean physical terrain and domain overlays as separate maps
+when the overlay would obscure landforms. Missing cells may not be rendered as
+unexplained white geography.
+
+This decision supersedes the storage-extent and three-million-cell statements
+in Decisions 051-052. It does not alter Decision 052's terrain realization,
+soft L2 conditioning, wavelength, or river-vector semantics.
+
+Reason:
+The sparse-core artifact was numerically valid but visually misleading and
+unsuitable as a hydrology working domain. Its bounding image was roughly half
+no-data because catchment ownership had been confused with terrain storage.
+Routing against that boundary would truncate neighboring slopes, depressions,
+and tributaries. A modest continuous window is still cheap on the 32 GB target
+machine and gives later processes honest boundary state without changing which
+catchment they are required to conserve.

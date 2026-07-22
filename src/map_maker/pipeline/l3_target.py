@@ -25,8 +25,8 @@ from .regional_handoff import (
     _replace_directory,
 )
 
-TARGET_FORMAT_VERSION = 1
-TARGET_MODEL_VERSION = "l3_vertical_slice_target_v1"
+TARGET_FORMAT_VERSION = 2
+TARGET_MODEL_VERSION = "l3_vertical_slice_target_v2"
 
 
 @dataclass(frozen=True)
@@ -41,6 +41,8 @@ class L3TargetConfig:
     base_cell_size_m: float = 200.0
     adaptive_minimum_cell_size_m: float = 25.0
     adaptive_maximum_cell_size_m: float = 50.0
+    terrain_window_halo_l2_cells: int = 4
+    terrain_source_context_l2_cells: int = 1
     maximum_base_cell_count: int = 3_000_000
     maximum_peak_memory_gb: float = 24.0
     source_config: Path | None = None
@@ -84,6 +86,8 @@ class L3TargetConfig:
             base_cell_size_m=float(grid.get("base_cell_size_m", 200.0)),
             adaptive_minimum_cell_size_m=float(grid.get("adaptive_minimum_cell_size_m", 25.0)),
             adaptive_maximum_cell_size_m=float(grid.get("adaptive_maximum_cell_size_m", 50.0)),
+            terrain_window_halo_l2_cells=int(grid.get("terrain_window_halo_l2_cells", 4)),
+            terrain_source_context_l2_cells=int(grid.get("terrain_source_context_l2_cells", 1)),
             maximum_base_cell_count=int(limits.get("maximum_base_cell_count", 3_000_000)),
             maximum_peak_memory_gb=float(limits.get("maximum_peak_memory_gb", 24.0)),
             source_config=source,
@@ -109,6 +113,10 @@ class L3TargetConfig:
             < self.base_cell_size_m
         ):
             raise ValueError("adaptive grid sizes must be ordered below the base cell size")
+        if not 1 <= self.terrain_window_halo_l2_cells <= 16:
+            raise ValueError("grid.terrain_window_halo_l2_cells must be in [1, 16]")
+        if not 1 <= self.terrain_source_context_l2_cells <= 4:
+            raise ValueError("grid.terrain_source_context_l2_cells must be in [1, 4]")
         if self.maximum_base_cell_count <= 0:
             raise ValueError("limits.maximum_base_cell_count must be positive")
         if not 1.0 <= self.maximum_peak_memory_gb <= 28.0:
@@ -180,6 +188,144 @@ def _context_selection(
     selected = np.asarray(sorted(distance), dtype=np.int32)
     ring_by_id = np.asarray([distance[int(value)] for value in selected], dtype=np.int16)
     return selected, ring_by_id, missing
+
+
+def _d8_context_rings(core: np.ndarray, maximum_ring: int) -> np.ndarray:
+    """Label an eight-neighbor dilation without wrapping across array edges."""
+
+    core = np.asarray(core, dtype=bool)
+    rings = np.full(core.shape, -1, dtype=np.int16)
+    rings[core] = 0
+    reached = core.copy()
+    for ring in range(1, maximum_ring + 1):
+        padded = np.pad(reached, 1, mode="constant", constant_values=False)
+        expanded = np.zeros_like(reached)
+        for row_offset in range(3):
+            for column_offset in range(3):
+                expanded |= padded[
+                    row_offset : row_offset + reached.shape[0],
+                    column_offset : column_offset + reached.shape[1],
+                ]
+        newly_reached = expanded & ~reached
+        rings[newly_reached] = ring
+        reached |= newly_reached
+    return rings
+
+
+def _rectangular_l2_window(
+    cell_ids: np.ndarray,
+    core_mask: np.ndarray,
+    resolution: int,
+    halo_cells: int,
+    source_context_cells: int,
+) -> tuple[np.ndarray, dict[str, np.ndarray], dict[str, int]]:
+    """Select a complete terrain rectangle and classify its process roles."""
+
+    ids = np.asarray(cell_ids, dtype=np.int64)
+    core = np.asarray(core_mask, dtype=bool)
+    if ids.ndim != 1 or core.shape != ids.shape or not np.any(core):
+        raise ValueError("L3 terrain window requires a nonempty one-dimensional core")
+    face_size = resolution * resolution
+    face = ids // face_size
+    within_face = ids % face_size
+    row = within_face // resolution
+    column = within_face % resolution
+    core_faces = np.unique(face[core])
+    if len(core_faces) != 1:
+        raise NotImplementedError("L3 V0 terrain window must fit within one cubed-sphere face")
+    core_face = int(core_faces[0])
+    terrain_min_row = int(np.min(row[core])) - halo_cells
+    terrain_max_row = int(np.max(row[core])) + halo_cells
+    terrain_min_column = int(np.min(column[core])) - halo_cells
+    terrain_max_column = int(np.max(column[core])) + halo_cells
+    source_min_row = terrain_min_row - source_context_cells
+    source_max_row = terrain_max_row + source_context_cells
+    source_min_column = terrain_min_column - source_context_cells
+    source_max_column = terrain_max_column + source_context_cells
+    if (
+        min(source_min_row, source_min_column) < 0
+        or max(source_max_row, source_max_column) >= resolution
+    ):
+        raise NotImplementedError("L3 V0 terrain window may not cross a cube-face edge")
+
+    selected = (
+        (face == core_face)
+        & (row >= source_min_row)
+        & (row <= source_max_row)
+        & (column >= source_min_column)
+        & (column <= source_max_column)
+    )
+    selected_ids = np.sort(ids[selected])
+    expected_ids = (
+        core_face * face_size
+        + np.arange(source_min_row, source_max_row + 1, dtype=np.int64)[:, None] * resolution
+        + np.arange(source_min_column, source_max_column + 1, dtype=np.int64)[None, :]
+    ).reshape(-1)
+    missing = np.setdiff1d(expected_ids, selected_ids, assume_unique=False)
+    if len(missing):
+        raise RuntimeError(
+            "source handoff omits "
+            f"{len(missing)} L2 cells required by the continuous L3 window; "
+            "regenerate it with a wider L0 halo"
+        )
+    if len(selected_ids) != len(expected_ids) or len(np.unique(selected_ids)) != len(selected_ids):
+        raise RuntimeError("source handoff does not provide unique rectangular L2 coverage")
+
+    selected_row = row[selected]
+    selected_column = column[selected]
+    selected_core = core[selected]
+    height = source_max_row - source_min_row + 1
+    width = source_max_column - source_min_column + 1
+    dense_core = np.zeros((height, width), dtype=bool)
+    dense_core[
+        selected_row[selected_core] - source_min_row,
+        selected_column[selected_core] - source_min_column,
+    ] = True
+    dense_rings = _d8_context_rings(dense_core, halo_cells)
+    selected_rings = dense_rings[
+        selected_row - source_min_row,
+        selected_column - source_min_column,
+    ]
+    inside_window = (
+        (selected_row >= terrain_min_row)
+        & (selected_row <= terrain_max_row)
+        & (selected_column >= terrain_min_column)
+        & (selected_column <= terrain_max_column)
+    )
+    inside_core = selected_core & inside_window
+    inside_process_halo = inside_window & (selected_rings > 0)
+    outside_process_domain = inside_window & ~inside_core & ~inside_process_halo
+    source_context_only = ~inside_window
+    role_count = (
+        inside_core.astype(np.int8)
+        + inside_process_halo.astype(np.int8)
+        + outside_process_domain.astype(np.int8)
+    )
+    if np.any(role_count[inside_window] != 1) or np.any(role_count[source_context_only] != 0):
+        raise RuntimeError("L3 terrain window roles are not mutually exclusive")
+
+    masks = {
+        "inside_terrain_window": inside_window,
+        "inside_target_core": inside_core,
+        "inside_process_halo": inside_process_halo,
+        "outside_process_domain": outside_process_domain,
+        "source_context_only": source_context_only,
+        "process_halo_l2_ring": selected_rings,
+    }
+    metadata = {
+        "face": core_face,
+        "terrain_min_row": terrain_min_row,
+        "terrain_max_row": terrain_max_row,
+        "terrain_min_column": terrain_min_column,
+        "terrain_max_column": terrain_max_column,
+        "source_min_row": source_min_row,
+        "source_max_row": source_max_row,
+        "source_min_column": source_min_column,
+        "source_max_column": source_max_column,
+        "terrain_l2_cell_count": int(np.count_nonzero(inside_window)),
+        "source_l2_cell_count": len(selected_ids),
+    }
+    return selected, masks, metadata
 
 
 def _fixed_list(values: np.ndarray, size: int) -> pa.FixedSizeListArray:
@@ -309,15 +455,13 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
     missing_core = sorted(set(map(int, core_ids)) - set(parent_row))
     if missing_core:
         raise RuntimeError(f"source handoff omits {len(missing_core)} target core parents")
-    selected_ids, selected_rings, missing_context = _context_selection(
+    context_ids, context_rings, missing_context = _context_selection(
         core_ids,
         parent_ids,
         parent_neighbors,
         config.context_parent_rings,
     )
-    selected_parent_rows = np.asarray([parent_row[int(value)] for value in selected_ids])
     core_set = set(map(int, core_ids))
-    inside_core_parent = np.asarray([int(value) in core_set for value in selected_ids], dtype=bool)
     core_parent_rows = np.asarray([parent_row[int(value)] for value in core_ids])
     core_area_km2 = float(np.sum(parent_area[core_parent_rows]))
 
@@ -329,19 +473,54 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
 
     child_ids = np.asarray(root["l2/geometry/cell_id"][:], dtype=np.int32)
     child_parent_ids = np.asarray(root["l2/geometry/parent_cell_id"][:], dtype=np.int32)
-    child_selection = np.isin(child_parent_ids, selected_ids)
+    child_core = np.isin(child_parent_ids, core_ids)
+    child_resolution = int(root.attrs["child_face_resolution"])
+    child_selection, child_roles, window = _rectangular_l2_window(
+        child_ids,
+        child_core,
+        child_resolution,
+        config.terrain_window_halo_l2_cells,
+        config.terrain_source_context_l2_cells,
+    )
     selected_child_rows = np.flatnonzero(child_selection).astype(np.int32)
     selected_child_ids = child_ids[child_selection]
     selected_child_parent = child_parent_ids[child_selection]
-    child_inside_core = np.isin(selected_child_parent, core_ids)
-    ring_lookup = dict(zip(map(int, selected_ids), map(int, selected_rings), strict=True))
+    child_inside_core = child_roles["inside_target_core"]
+    source_parent_ids = np.unique(selected_child_parent)
+    selected_ids = np.union1d(context_ids, source_parent_ids).astype(np.int32, copy=False)
+    selected_parent_rows = np.asarray([parent_row[int(value)] for value in selected_ids])
+    inside_core_parent = np.asarray([int(value) in core_set for value in selected_ids], dtype=bool)
+    ring_lookup = dict(zip(map(int, context_ids), map(int, context_rings), strict=True))
+    selected_parent_rings = np.asarray(
+        [ring_lookup.get(int(value), -1) for value in selected_ids], dtype=np.int16
+    )
     child_ring = np.asarray(
-        [ring_lookup[int(value)] for value in selected_child_parent], dtype=np.int16
+        [ring_lookup.get(int(value), -1) for value in selected_child_parent], dtype=np.int16
     )
 
     base_cell_area_km2 = (config.base_cell_size_m / 1_000.0) ** 2
-    estimated_base_cells = int(math.ceil(core_area_km2 / base_cell_area_km2))
+    selected_child_area = np.asarray(root["l2/geometry/area_km2"][:], dtype=np.float64)[
+        child_selection
+    ]
+    terrain_window_area_km2 = float(
+        np.sum(selected_child_area[child_roles["inside_terrain_window"]])
+    )
+    estimated_core_base_cells = int(math.ceil(core_area_km2 / base_cell_area_km2))
+    estimated_base_cells = int(math.ceil(terrain_window_area_km2 / base_cell_area_km2))
     area_valid = config.minimum_area_km2 <= core_area_km2 <= config.maximum_area_km2
+    terrain_role_count = sum(
+        np.asarray(child_roles[name], dtype=np.int8)
+        for name in (
+            "inside_target_core",
+            "inside_process_halo",
+            "outside_process_domain",
+        )
+    )
+    terrain_window_mask = child_roles["inside_terrain_window"]
+    terrain_roles_valid = bool(
+        np.all(terrain_role_count[terrain_window_mask] == 1)
+        and np.all(terrain_role_count[~terrain_window_mask] == 0)
+    )
     validation = {
         "format_version": TARGET_FORMAT_VERSION,
         "model_version": TARGET_MODEL_VERSION,
@@ -362,6 +541,24 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
         "area_valid": int(area_valid),
         "selected_l2_child_count": len(selected_child_rows),
         "core_l2_child_count": int(np.count_nonzero(child_inside_core)),
+        "terrain_window_l2_cell_count": window["terrain_l2_cell_count"],
+        "terrain_source_l2_cell_count": window["source_l2_cell_count"],
+        "process_halo_l2_cell_count": int(np.count_nonzero(child_roles["inside_process_halo"])),
+        "outside_process_domain_l2_cell_count": int(
+            np.count_nonzero(child_roles["outside_process_domain"])
+        ),
+        "source_context_only_l2_cell_count": int(
+            np.count_nonzero(child_roles["source_context_only"])
+        ),
+        "terrain_window_area_km2": terrain_window_area_km2,
+        "terrain_window_halo_l2_cells": config.terrain_window_halo_l2_cells,
+        "terrain_source_context_l2_cells": config.terrain_source_context_l2_cells,
+        "terrain_window_continuous_valid": 1,
+        "terrain_domain_roles_valid": int(terrain_roles_valid),
+        "minimum_process_halo_ring_valid": int(
+            config.terrain_window_halo_l2_cells >= 1 and np.any(child_roles["inside_process_halo"])
+        ),
+        "estimated_core_base_cell_count": estimated_core_base_cells,
         "estimated_base_cell_count": estimated_base_cells,
         "maximum_base_cell_count": config.maximum_base_cell_count,
         "base_cell_budget_valid": int(estimated_base_cells <= config.maximum_base_cell_count),
@@ -376,6 +573,9 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
         and validation["missing_core_parent_count"] == 0
         and validation["missing_context_parent_count"] == 0
         and validation["area_valid"] == 1
+        and validation["terrain_window_continuous_valid"] == 1
+        and validation["terrain_domain_roles_valid"] == 1
+        and validation["minimum_process_halo_ring_valid"] == 1
         and validation["base_cell_budget_valid"] == 1
         and validation["unique_selected_l2_child_ids"] == 1
     )
@@ -392,13 +592,36 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
         tables_dir.mkdir()
         parents = pq.read_table(config.handoff_dir / "tables/parent_cells.parquet")
         parent_table = parents.take(pa.array(selected_parent_rows, type=pa.int64()))
-        parent_table = parent_table.append_column(
-            "inside_target_core", pa.array(inside_core_parent, type=pa.bool_())
-        ).append_column("target_context_ring", pa.array(selected_rings, type=pa.int16()))
+        parent_table = (
+            parent_table.append_column(
+                "inside_target_core", pa.array(inside_core_parent, type=pa.bool_())
+            )
+            .append_column("target_context_ring", pa.array(selected_parent_rings, type=pa.int16()))
+            .append_column(
+                "intersects_terrain_window",
+                pa.array(
+                    np.isin(
+                        selected_ids,
+                        np.unique(selected_child_parent[child_roles["inside_terrain_window"]]),
+                    ),
+                    type=pa.bool_(),
+                ),
+            )
+            .append_column(
+                "intersects_process_halo",
+                pa.array(
+                    np.isin(
+                        selected_ids,
+                        np.unique(selected_child_parent[child_roles["inside_process_halo"]]),
+                    ),
+                    type=pa.bool_(),
+                ),
+            )
+        )
         pq.write_table(parent_table, tables_dir / "target_parent_cells.parquet", compression="zstd")
 
         child_xyz = np.asarray(root["l2/geometry/xyz"][:], dtype=np.float32)[child_selection]
-        child_area = np.asarray(root["l2/geometry/area_km2"][:], dtype=np.float64)[child_selection]
+        child_area = selected_child_area
         child_terrain = np.asarray(root["l2/geometry/terrain_elevation_m"][:], dtype=np.float32)[
             child_selection
         ]
@@ -416,6 +639,21 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
                 "fine_cell_id": pa.array(selected_child_ids, type=pa.int32()),
                 "parent_cell_id": pa.array(selected_child_parent, type=pa.int32()),
                 "inside_target_core": pa.array(child_inside_core, type=pa.bool_()),
+                "inside_terrain_window": pa.array(
+                    child_roles["inside_terrain_window"], type=pa.bool_()
+                ),
+                "inside_process_halo": pa.array(
+                    child_roles["inside_process_halo"], type=pa.bool_()
+                ),
+                "outside_process_domain": pa.array(
+                    child_roles["outside_process_domain"], type=pa.bool_()
+                ),
+                "source_context_only": pa.array(
+                    child_roles["source_context_only"], type=pa.bool_()
+                ),
+                "process_halo_l2_ring": pa.array(
+                    child_roles["process_halo_l2_ring"], type=pa.int16()
+                ),
                 "target_context_ring": pa.array(child_ring, type=pa.int16()),
                 "xyz": _fixed_list(child_xyz, 3),
                 "area_km2": pa.array(child_area, type=pa.float64()),
@@ -510,13 +748,24 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
             "status": "complete",
             "target_id": config.target_id,
             "selection": {
-                "kind": "complete_L0_upstream_catchment_with_L2_context",
+                "kind": "complete_L0_upstream_catchment_in_continuous_L2_window",
                 "outlet_parent_cell_id": config.outlet_parent_cell_id,
                 "basin_id": outlet_basin_id,
                 "core_parent_ids": core_ids.tolist(),
                 "core_parent_count": len(core_ids),
                 "context_parent_count": int(len(selected_ids) - len(core_ids)),
                 "context_parent_rings": config.context_parent_rings,
+                "terrain_window": {
+                    **window,
+                    "halo_l2_cells": config.terrain_window_halo_l2_cells,
+                    "source_context_l2_cells": config.terrain_source_context_l2_cells,
+                    "process_connectivity": "D8",
+                    "roles": [
+                        "catchment_core",
+                        "process_halo",
+                        "outside",
+                    ],
+                },
                 "core_area_km2": core_area_km2,
                 "outlet_contributing_area_km2": outlet_contributing_area,
                 "outlet_mean_discharge_m3s": outlet_discharge,
@@ -537,6 +786,15 @@ def export_l3_target(config: L3TargetConfig) -> L3TargetResult:
             "l3_grid_contract": {
                 "base_cell_size_m": config.base_cell_size_m,
                 "estimated_base_cell_count": estimated_base_cells,
+                "estimated_core_base_cell_count": estimated_core_base_cells,
+                "terrain_window_area_km2": terrain_window_area_km2,
+                "hydrological_acceptance_scope": "catchment_core_only",
+                "terrain_domain": "continuous rectangular window without internal holes",
+                "domain_masks": [
+                    "inside_target_core",
+                    "inside_process_halo",
+                    "outside_process_domain",
+                ],
                 "adaptive_river_corridor_cell_size_m": [
                     config.adaptive_minimum_cell_size_m,
                     config.adaptive_maximum_cell_size_m,

@@ -9,7 +9,10 @@ import pytest
 import zarr
 
 from map_maker.cli import main
-from map_maker.pipeline.l3_target import L3TargetConfig, export_l3_target
+from map_maker.pipeline.l3_target import (
+    L3TargetConfig,
+    export_l3_target,
+)
 from map_maker.pipeline.regional_handoff import (
     RegionalHandoffConfig,
     RegionalHandoffResult,
@@ -215,9 +218,25 @@ region:
     repeated_manifest = json.loads(repeated.manifest_path.read_text(encoding="utf8"))
     assert repeated_manifest == manifest
 
-    basin_table = pq.read_table(result.output_dir / "tables/basins.parquet")
-    basin_rows = np.asarray(basin_table["basin_id"], dtype=np.int32) == result.basin_id
-    outlet = int(np.asarray(basin_table["outlet_cell"], dtype=np.int32)[basin_rows][0])
+    drainage = pq.read_table(result.output_dir / "tables/drainage_graph.parquet").combine_chunks()
+    drainage_ids = np.asarray(drainage["cell_id"], dtype=np.int32)
+    receiver_ids = np.asarray(drainage["receiver_id"], dtype=np.int32)
+    packaged_parent_ids = np.asarray(region["parent/cell_id"][:], dtype=np.int32)
+    core_parent_ids = packaged_parent_ids[np.asarray(region["parent/inside_core"][:], dtype=bool)]
+    face_size = 20 * 20
+    within_face = drainage_ids % face_size
+    parent_row = within_face // 20
+    parent_column = within_face % 20
+    headwater = (
+        np.isin(drainage_ids, core_parent_ids)
+        & ~np.isin(drainage_ids, receiver_ids)
+        & (parent_row > 0)
+        & (parent_row < 19)
+        & (parent_column > 0)
+        & (parent_column < 19)
+    )
+    assert np.any(headwater)
+    outlet = int(drainage_ids[np.flatnonzero(headwater)[0]])
     target_config = L3TargetConfig(
         handoff_dir=result.output_dir,
         output_dir=tmp_path / "l3-target",
@@ -227,12 +246,9 @@ region:
         minimum_area_km2=1.0,
         maximum_area_km2=1_000_000_000.0,
         base_cell_size_m=250.0,
+        terrain_window_halo_l2_cells=1,
+        terrain_source_context_l2_cells=1,
         maximum_base_cell_count=1_000_000_000,
     )
-    target = export_l3_target(target_config)
-    assert target.validation_path.is_file()
-    assert (target.output_dir / "coarse_drainage.png").is_file()
-    assert target.core_parent_count == result.core_parent_count
-    target_manifest = target.manifest_path.read_text(encoding="utf8")
-    repeated_target = export_l3_target(target_config)
-    assert repeated_target.manifest_path.read_text(encoding="utf8") == target_manifest
+    with pytest.raises(RuntimeError, match="regenerate it with a wider L0 halo"):
+        export_l3_target(target_config)
