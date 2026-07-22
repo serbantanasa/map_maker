@@ -43,12 +43,16 @@ The selected-basin L2 handoff is generated and self-validated with:
 uv run map-maker regional-handoff
 ```
 
-Its validation report gates parent area and terrain-mean conservation,
-sea-level-relative surface-mean conservation, exact parent surface-fraction
-reconstruction, bounded child occupancy, stable child/parent identity, and
-complete refined river-path references. It also rejects a p95 parent-boundary
-terrain residual larger than the configured ratio to ordinary interior edge
-jumps. Its manifest records source, config, software, and native-library
+Its validation report gates parent area conservation, bounded absolute and
+relief-relative terrain-mean conditioning, bounded correction amplitude,
+sea-level-relative surface-mean conditioning, exact parent ocean/wetland and
+stable-`LakeID` basin-area reconstruction, bounded child occupancy, stable
+child/parent identity, and complete refined river-path references. It also
+gates unresolved hydraulic depth and each parent's absolute and relief-relative
+child-elevation span, rejects a p95 parent-boundary terrain residual larger than
+the configured ratio to ordinary interior edge jumps, and independently rejects
+a repeated L0-parent terrain motif. Its
+manifest records source, config, software, and native-library
 fingerprints plus checksums for every output.
 
 The first L3 target selection is validated with:
@@ -77,6 +81,21 @@ workstation memory. Resume markers follow durable writes, and a cache hit
 rechecks the published Zarr checksum. The terrain diagnostic still requires
 human review; a numerical seam pass cannot waive a visible repeated tile
 pattern or an unclear map without legend and scale.
+
+The first L3 hydrology artifact is generated and self-validated with:
+
+```bash
+uv run map-maker l3-hydrology
+```
+
+It gates exact represented-parent monthly forcing conservation, native runoff
+conservation and acyclic receiver topology, registered-outlet connectivity and
+hydrograph agreement, inherited/fine catchment overlap in both directions,
+routed-to-inherited area ratio, process-boundary contact, bounded open-water
+area, cumulative prospective breach incision, river-network presence, inherited
+trunk support, and zero material downstream discharge losses not explained by
+lake or wetland losses. The published fine routed core is replayed from the
+receiver graph during validation. Cache hits recheck the complete output tree.
 
 ## Gate Classes
 

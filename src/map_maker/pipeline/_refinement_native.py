@@ -15,6 +15,17 @@ REFINEMENT_CONTROL_NAMES = {
     "planet_radius_m",
     "terrain_seed",
     "terrain_noise_fraction",
+    "terrain_base_wavelength_m",
+    "terrain_octave_count",
+    "terrain_persistence",
+    "terrain_domain_warp_fraction",
+    "terrain_ridge_fraction",
+    "conditioning_maximum_iterations",
+    "conditioning_damping",
+    "conditioning_sigma_parent_cells",
+    "maximum_parent_mean_error_m",
+    "maximum_parent_mean_error_relief_fraction",
+    "maximum_center_correction_scale_fraction",
 }
 
 REFINED_CELL_DTYPE = np.dtype(
@@ -67,6 +78,17 @@ typedef struct {
     double planet_radius_m;
     uint64_t terrain_seed;
     float terrain_noise_fraction;
+    float terrain_base_wavelength_m;
+    int32_t terrain_octave_count;
+    float terrain_persistence;
+    float terrain_domain_warp_fraction;
+    float terrain_ridge_fraction;
+    int32_t conditioning_maximum_iterations;
+    float conditioning_damping;
+    float conditioning_sigma_parent_cells;
+    float maximum_parent_mean_error_m;
+    float maximum_parent_mean_error_relief_fraction;
+    float maximum_center_correction_scale_fraction;
 } RefinementConfig;
 
 typedef struct {
@@ -118,6 +140,13 @@ typedef struct {
     double selected_area_km2;
     double maximum_parent_area_relative_error;
     double maximum_parent_elevation_error_m;
+    double maximum_parent_elevation_error_relief_fraction;
+    double raw_parent_elevation_error_max_m;
+    double conditioning_center_correction_max_abs_m;
+    double conditioning_center_correction_relief_fraction_max;
+    double conditioning_center_correction_scale_fraction_max;
+    int32_t conditioning_iteration_count;
+    int32_t conditioning_converged;
     double total_reach_length_km;
     double represented_channel_area_km2;
     double represented_valley_area_km2;
@@ -166,8 +195,8 @@ try:
     _abi_version = int(_lib.refinement_native_abi_version())
 except AttributeError as exc:
     raise NativeLibraryAbiError("refinement_native lacks its required API") from exc
-if _abi_version != 3:
-    raise NativeLibraryAbiError(f"refinement_native uses ABI {_abi_version}; expected ABI 3")
+if _abi_version != 4:
+    raise NativeLibraryAbiError(f"refinement_native uses ABI {_abi_version}; expected ABI 4")
 
 for c_name, dtype in (
     ("RefinedCellRecord", REFINED_CELL_DTYPE),
@@ -358,6 +387,7 @@ def run_basin_refinement(
             4: "invalid inherited reach path or physical attributes",
             5: "fine routing could not satisfy the inherited topology",
             6: "fine corridor support could not be allocated conservatively",
+            7: "terrain soft-conditioning system is singular or non-finite",
             50: "fine routing could not choose a parent-cell anchor",
             51: "fine routing exhausted an inherited parent boundary",
             52: "fine routing received no downstream target",
@@ -395,6 +425,8 @@ def run_basin_refinement(
             "reach_cell_count",
             "fine_resolution",
             "path_topology_valid",
+            "conditioning_iteration_count",
+            "conditioning_converged",
         )
     }
     metadata.update(
@@ -404,6 +436,11 @@ def run_basin_refinement(
                 "selected_area_km2",
                 "maximum_parent_area_relative_error",
                 "maximum_parent_elevation_error_m",
+                "maximum_parent_elevation_error_relief_fraction",
+                "raw_parent_elevation_error_max_m",
+                "conditioning_center_correction_max_abs_m",
+                "conditioning_center_correction_relief_fraction_max",
+                "conditioning_center_correction_scale_fraction_max",
                 "total_reach_length_km",
                 "represented_channel_area_km2",
                 "represented_valley_area_km2",

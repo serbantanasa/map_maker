@@ -185,6 +185,21 @@ def _l3_terrain_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _l3_hydrology_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-hydrology",
+        help="Route monthly water, lakes, and vector rivers across the selected L3 terrain.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 vertical-slice YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override hydrology output directory.")
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -314,6 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _regional_handoff_parser(subparsers)
     _l3_target_parser(subparsers)
     _l3_terrain_parser(subparsers)
+    _l3_hydrology_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -569,6 +585,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Generated {terrain.cell_count} cells at approximately "
             f"{terrain.actual_cell_size_m:.1f} m in {terrain.chunk_count} parent-aligned chunks "
             f"for {terrain.target_id}."
+        )
+        return 0
+
+    if args.command == "l3-hydrology":
+        try:
+            from .pipeline.l3_hydrology import L3HydrologyConfig, generate_l3_hydrology
+
+            hydrology_config = L3HydrologyConfig.from_file(args.config, output_dir=args.output_dir)
+            hydrology = generate_l3_hydrology(hydrology_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 hydrology: {hydrology.output_dir}")
+        print(f"Manifest: {hydrology.manifest_path}")
+        print(f"Validation: {hydrology.validation_path}")
+        print(f"Preview: {hydrology.preview_path}")
+        print(
+            f"Routed {hydrology.cell_count} cells into {hydrology.river_reach_count} "
+            f"reported reaches and {hydrology.lake_count} core lakes for "
+            f"{hydrology.target_id}."
         )
         return 0
 

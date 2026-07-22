@@ -25,7 +25,24 @@ EARTH_RADIUS_M = 6_371_000.0
 class BasinRefinementConfig:
     refinement_factor: int = 16
     basin_id: int | None = None
-    terrain_noise_fraction: float = 0.45
+    terrain_noise_fraction: float = 0.85
+    terrain_base_wavelength_m: float = 72_000.0
+    terrain_octave_count: int = 5
+    terrain_persistence: float = 0.58
+    terrain_domain_warp_fraction: float = 0.32
+    terrain_ridge_fraction: float = 0.20
+    conditioning_maximum_iterations: int = 48
+    conditioning_damping: float = 0.72
+    conditioning_sigma_parent_cells: float = 0.50
+    maximum_parent_mean_error_m: float = 15.0
+    maximum_parent_mean_error_relief_fraction: float = 0.05
+    maximum_center_correction_scale_fraction: float = 5.00
+    maximum_unresolved_basin_depth_m: float = 1_200.0
+    unresolved_basin_relief_depth_multiplier: float = 4.0
+    maximum_parent_offset_span_m: float = 10_000.0
+    maximum_parent_offset_span_relief_fraction: float = 20.0
+    maximum_tile_bubble_correlation_p50: float = 0.35
+    maximum_tile_bubble_correlation_p95: float = 0.80
     halo_parent_rings: int = 0
     maximum_parent_boundary_residual_p95_ratio: float = 2.0
 
@@ -41,6 +58,75 @@ class BasinRefinementConfig:
         terrain_noise_fraction = float(
             mapping.get("terrain_noise_fraction", cls.terrain_noise_fraction)
         )
+        terrain_base_wavelength_m = float(
+            mapping.get("terrain_base_wavelength_m", cls.terrain_base_wavelength_m)
+        )
+        terrain_octave_count = int(mapping.get("terrain_octave_count", cls.terrain_octave_count))
+        terrain_persistence = float(mapping.get("terrain_persistence", cls.terrain_persistence))
+        terrain_domain_warp_fraction = float(
+            mapping.get("terrain_domain_warp_fraction", cls.terrain_domain_warp_fraction)
+        )
+        terrain_ridge_fraction = float(
+            mapping.get("terrain_ridge_fraction", cls.terrain_ridge_fraction)
+        )
+        conditioning_maximum_iterations = int(
+            mapping.get("conditioning_maximum_iterations", cls.conditioning_maximum_iterations)
+        )
+        conditioning_damping = float(mapping.get("conditioning_damping", cls.conditioning_damping))
+        conditioning_sigma_parent_cells = float(
+            mapping.get("conditioning_sigma_parent_cells", cls.conditioning_sigma_parent_cells)
+        )
+        maximum_parent_mean_error_m = float(
+            mapping.get("maximum_parent_mean_error_m", cls.maximum_parent_mean_error_m)
+        )
+        maximum_parent_mean_error_relief_fraction = float(
+            mapping.get(
+                "maximum_parent_mean_error_relief_fraction",
+                cls.maximum_parent_mean_error_relief_fraction,
+            )
+        )
+        maximum_center_correction_scale_fraction = float(
+            mapping.get(
+                "maximum_center_correction_scale_fraction",
+                cls.maximum_center_correction_scale_fraction,
+            )
+        )
+        maximum_unresolved_basin_depth_m = float(
+            mapping.get(
+                "maximum_unresolved_basin_depth_m",
+                cls.maximum_unresolved_basin_depth_m,
+            )
+        )
+        unresolved_basin_relief_depth_multiplier = float(
+            mapping.get(
+                "unresolved_basin_relief_depth_multiplier",
+                cls.unresolved_basin_relief_depth_multiplier,
+            )
+        )
+        maximum_parent_offset_span_m = float(
+            mapping.get(
+                "maximum_parent_offset_span_m",
+                cls.maximum_parent_offset_span_m,
+            )
+        )
+        maximum_parent_offset_span_relief_fraction = float(
+            mapping.get(
+                "maximum_parent_offset_span_relief_fraction",
+                cls.maximum_parent_offset_span_relief_fraction,
+            )
+        )
+        maximum_tile_bubble_correlation_p50 = float(
+            mapping.get(
+                "maximum_tile_bubble_correlation_p50",
+                cls.maximum_tile_bubble_correlation_p50,
+            )
+        )
+        maximum_tile_bubble_correlation_p95 = float(
+            mapping.get(
+                "maximum_tile_bubble_correlation_p95",
+                cls.maximum_tile_bubble_correlation_p95,
+            )
+        )
         halo_parent_rings = int(mapping.get("halo_parent_rings", cls.halo_parent_rings))
         maximum_boundary_ratio = float(
             mapping.get(
@@ -54,6 +140,55 @@ class BasinRefinementConfig:
             raise ValueError("basin_id must be non-negative when provided")
         if not np.isfinite(terrain_noise_fraction) or not 0.0 <= terrain_noise_fraction <= 1.0:
             raise ValueError("terrain_noise_fraction must be finite and in [0, 1]")
+        if not np.isfinite(terrain_base_wavelength_m) or terrain_base_wavelength_m <= 0.0:
+            raise ValueError("terrain_base_wavelength_m must be finite and positive")
+        if not 2 <= terrain_octave_count <= 8:
+            raise ValueError("terrain_octave_count must be in [2, 8]")
+        if not np.isfinite(terrain_persistence) or not 0.0 < terrain_persistence < 1.0:
+            raise ValueError("terrain_persistence must be finite and in (0, 1)")
+        if not np.isfinite(terrain_domain_warp_fraction) or not (
+            0.0 <= terrain_domain_warp_fraction <= 1.0
+        ):
+            raise ValueError("terrain_domain_warp_fraction must be finite and in [0, 1]")
+        if not np.isfinite(terrain_ridge_fraction) or not 0.0 <= terrain_ridge_fraction <= 0.8:
+            raise ValueError("terrain_ridge_fraction must be finite and in [0, 0.8]")
+        if not 1 <= conditioning_maximum_iterations <= 200:
+            raise ValueError("conditioning_maximum_iterations must be in [1, 200]")
+        if not np.isfinite(conditioning_damping) or not 0.0 < conditioning_damping <= 1.0:
+            raise ValueError("conditioning_damping must be finite and in (0, 1]")
+        if not np.isfinite(conditioning_sigma_parent_cells) or not (
+            0.25 <= conditioning_sigma_parent_cells <= 2.0
+        ):
+            raise ValueError("conditioning_sigma_parent_cells must be finite and in [0.25, 2]")
+        for name, value in (
+            ("maximum_parent_mean_error_m", maximum_parent_mean_error_m),
+            (
+                "maximum_parent_mean_error_relief_fraction",
+                maximum_parent_mean_error_relief_fraction,
+            ),
+            (
+                "maximum_center_correction_scale_fraction",
+                maximum_center_correction_scale_fraction,
+            ),
+            ("maximum_unresolved_basin_depth_m", maximum_unresolved_basin_depth_m),
+            (
+                "unresolved_basin_relief_depth_multiplier",
+                unresolved_basin_relief_depth_multiplier,
+            ),
+            ("maximum_parent_offset_span_m", maximum_parent_offset_span_m),
+            (
+                "maximum_parent_offset_span_relief_fraction",
+                maximum_parent_offset_span_relief_fraction,
+            ),
+            ("maximum_tile_bubble_correlation_p50", maximum_tile_bubble_correlation_p50),
+            ("maximum_tile_bubble_correlation_p95", maximum_tile_bubble_correlation_p95),
+        ):
+            if not np.isfinite(value) or value <= 0.0:
+                raise ValueError(f"{name} must be finite and positive")
+        if maximum_tile_bubble_correlation_p50 > maximum_tile_bubble_correlation_p95:
+            raise ValueError(
+                "maximum_tile_bubble_correlation_p50 must not exceed its p95 threshold"
+            )
         if not 0 <= halo_parent_rings <= 8:
             raise ValueError("halo_parent_rings must be in [0, 8]")
         if not np.isfinite(maximum_boundary_ratio) or maximum_boundary_ratio <= 0.0:
@@ -64,6 +199,23 @@ class BasinRefinementConfig:
             refinement_factor=factor,
             basin_id=basin_id,
             terrain_noise_fraction=terrain_noise_fraction,
+            terrain_base_wavelength_m=terrain_base_wavelength_m,
+            terrain_octave_count=terrain_octave_count,
+            terrain_persistence=terrain_persistence,
+            terrain_domain_warp_fraction=terrain_domain_warp_fraction,
+            terrain_ridge_fraction=terrain_ridge_fraction,
+            conditioning_maximum_iterations=conditioning_maximum_iterations,
+            conditioning_damping=conditioning_damping,
+            conditioning_sigma_parent_cells=conditioning_sigma_parent_cells,
+            maximum_parent_mean_error_m=maximum_parent_mean_error_m,
+            maximum_parent_mean_error_relief_fraction=(maximum_parent_mean_error_relief_fraction),
+            maximum_center_correction_scale_fraction=(maximum_center_correction_scale_fraction),
+            maximum_unresolved_basin_depth_m=maximum_unresolved_basin_depth_m,
+            unresolved_basin_relief_depth_multiplier=(unresolved_basin_relief_depth_multiplier),
+            maximum_parent_offset_span_m=maximum_parent_offset_span_m,
+            maximum_parent_offset_span_relief_fraction=(maximum_parent_offset_span_relief_fraction),
+            maximum_tile_bubble_correlation_p50=maximum_tile_bubble_correlation_p50,
+            maximum_tile_bubble_correlation_p95=maximum_tile_bubble_correlation_p95,
             halo_parent_rings=halo_parent_rings,
             maximum_parent_boundary_residual_p95_ratio=maximum_boundary_ratio,
         )
@@ -262,6 +414,52 @@ def _terrain_seam_metadata(
     }
 
 
+def _terrain_morphology_metadata(records: np.ndarray, factor: int) -> dict[str, int | float]:
+    offsets = np.asarray(records["terrain_offset_m"], dtype=np.float64).reshape(-1, factor * factor)
+    parent_relief = np.asarray(records["parent_relief_m"], dtype=np.float64).reshape(
+        -1, factor * factor
+    )[:, 0]
+    stride = max(1, int(np.ceil(len(offsets) / 2_048)))
+    sample = offsets[::stride]
+    local_y, local_x = np.mgrid[:factor, :factor]
+    design = np.stack(
+        (
+            np.ones(factor * factor),
+            local_x.reshape(-1),
+            local_y.reshape(-1),
+        ),
+        axis=1,
+    )
+    coefficients = sample @ np.linalg.pinv(design).T
+    residual = sample - coefficients @ design.T
+    unit = (np.arange(factor, dtype=np.float64) + 0.5) / factor
+    bubble = np.outer(np.sin(np.pi * unit), np.sin(np.pi * unit)).reshape(-1)
+    bubble -= np.mean(bubble)
+    bubble /= max(float(np.linalg.norm(bubble)), 1e-12)
+    correlations = np.abs(residual @ bubble) / np.maximum(np.linalg.norm(residual, axis=1), 1e-12)
+    parent_std = np.std(offsets, axis=1)
+    parent_span = np.ptp(offsets, axis=1)
+    parent_span_relief_fraction = parent_span / np.maximum(parent_relief, 50.0)
+
+    def percentile(values: np.ndarray, quantile: float) -> float:
+        return float(np.percentile(values, quantile)) if values.size else 0.0
+
+    return {
+        "terrain_motif_sample_parent_count": len(sample),
+        "terrain_tile_bubble_absolute_correlation_p50": percentile(correlations, 50.0),
+        "terrain_tile_bubble_absolute_correlation_p95": percentile(correlations, 95.0),
+        "terrain_tile_bubble_absolute_correlation_max": float(np.max(correlations, initial=0.0)),
+        "terrain_parent_offset_std_p50_m": percentile(parent_std, 50.0),
+        "terrain_parent_offset_std_p95_m": percentile(parent_std, 95.0),
+        "terrain_parent_offset_span_p50_m": percentile(parent_span, 50.0),
+        "terrain_parent_offset_span_p95_m": percentile(parent_span, 95.0),
+        "terrain_parent_offset_span_max_m": float(np.max(parent_span, initial=0.0)),
+        "terrain_parent_offset_span_relief_fraction_max": float(
+            np.max(parent_span_relief_fraction, initial=0.0)
+        ),
+    }
+
+
 def _parent_channel_surface_prior(
     hydrology,
     parent_ids: np.ndarray,
@@ -300,6 +498,33 @@ def _parent_channel_surface_prior(
     if np.any(~np.isfinite(prior)):
         raise RuntimeError("channel surface prior contains a non-finite elevation")
     return prior, filled | registered_control
+
+
+def _bounded_unresolved_basin_targets(
+    source_elevation_m: np.ndarray,
+    relief_m: np.ndarray,
+    hydraulic_surface_m: np.ndarray,
+    hydraulic_surface_controlled: np.ndarray,
+    *,
+    maximum_depth_m: float,
+    relief_depth_multiplier: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Bound coarse hydraulic pits whose L0 means are not usable bathymetry."""
+
+    source = np.asarray(source_elevation_m, dtype=np.float32)
+    relief = np.asarray(relief_m, dtype=np.float32)
+    hydraulic_surface = np.asarray(hydraulic_surface_m, dtype=np.float32)
+    controlled = np.asarray(hydraulic_surface_controlled, dtype=bool)
+    depth_limit = np.maximum(maximum_depth_m, relief_depth_multiplier * relief).astype(np.float32)
+    hydraulic_depth = hydraulic_surface - source
+    adjusted = controlled & (hydraulic_depth > depth_limit)
+    target = source.copy()
+    target[adjusted] = hydraulic_surface[adjusted] - depth_limit[adjusted]
+    return (
+        np.ascontiguousarray(target),
+        np.ascontiguousarray(adjusted),
+        np.ascontiguousarray(depth_limit),
+    )
 
 
 def _extend_hydraulic_surface_over_submerged_approaches(
@@ -363,6 +588,8 @@ def _parent_table(
     parent_ids: np.ndarray,
     inside_selected_basin: np.ndarray,
     parent_elevation_m: np.ndarray,
+    source_parent_elevation_m: np.ndarray,
+    unresolved_basin_adjusted: np.ndarray,
     parent_relief_m: np.ndarray,
     parent_areas_km2: np.ndarray,
     parent_process_excluded: np.ndarray,
@@ -399,6 +626,12 @@ def _parent_table(
                 type=pa.float64(),
             ),
             "parent_elevation_m": pa.array(parent_elevation_m, type=pa.float32()),
+            "source_parent_elevation_m": pa.array(source_parent_elevation_m, type=pa.float32()),
+            "unresolved_basin_depth_adjusted": pa.array(unresolved_basin_adjusted, type=pa.bool_()),
+            "unresolved_basin_elevation_adjustment_m": pa.array(
+                (parent_elevation_m - source_parent_elevation_m).astype(np.float32),
+                type=pa.float32(),
+            ),
             "restricted_child_elevation_m": pa.array(
                 restricted_elevation.astype(np.float32), type=pa.float32()
             ),
@@ -883,7 +1116,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "RefinedReachCellCatalog",
         "BasinRefinementMetadata",
     ),
-    version="v14",
+    version="v16",
     native_libraries=("refinement_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -939,7 +1172,7 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     bedrock = _artifact_array(deps["elevation"], "BedrockElevationM").reshape(-1)
     breach = _artifact_array(hydrology, "BreachIncisionM").reshape(-1)
     relief = _artifact_array(deps["elevation"], "TerrainReliefM").reshape(-1)
-    parent_elevation = np.ascontiguousarray(
+    source_parent_elevation = np.ascontiguousarray(
         bedrock[parent_ids] - breach[parent_ids], dtype=np.float32
     )
     parent_relief = np.ascontiguousarray(relief[parent_ids], dtype=np.float32)
@@ -960,7 +1193,17 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         _parent_channel_surface_prior(
             hydrology,
             parent_ids,
-            parent_elevation,
+            source_parent_elevation,
+        )
+    )
+    parent_elevation, unresolved_basin_adjusted, unresolved_basin_depth_limit = (
+        _bounded_unresolved_basin_targets(
+            source_parent_elevation,
+            parent_relief,
+            parent_channel_surface_prior,
+            parent_hydraulic_surface_controlled,
+            maximum_depth_m=config.maximum_unresolved_basin_depth_m,
+            relief_depth_multiplier=config.unresolved_basin_relief_depth_multiplier,
         )
     )
 
@@ -979,6 +1222,21 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         "planet_radius_m": radius_m,
         "terrain_seed": terrain_seed,
         "terrain_noise_fraction": config.terrain_noise_fraction,
+        "terrain_base_wavelength_m": config.terrain_base_wavelength_m,
+        "terrain_octave_count": config.terrain_octave_count,
+        "terrain_persistence": config.terrain_persistence,
+        "terrain_domain_warp_fraction": config.terrain_domain_warp_fraction,
+        "terrain_ridge_fraction": config.terrain_ridge_fraction,
+        "conditioning_maximum_iterations": config.conditioning_maximum_iterations,
+        "conditioning_damping": config.conditioning_damping,
+        "conditioning_sigma_parent_cells": config.conditioning_sigma_parent_cells,
+        "maximum_parent_mean_error_m": config.maximum_parent_mean_error_m,
+        "maximum_parent_mean_error_relief_fraction": (
+            config.maximum_parent_mean_error_relief_fraction
+        ),
+        "maximum_center_correction_scale_fraction": (
+            config.maximum_center_correction_scale_fraction
+        ),
     }
     with context.timed("sparse_basin_refinement_kernel"):
         cell_records, reach_records, path_cells, memberships, metadata = run_basin_refinement(
@@ -1011,6 +1269,7 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         fine_resolution,
         config.refinement_factor,
     )
+    morphology_metadata = _terrain_morphology_metadata(cell_records, config.refinement_factor)
 
     radius_km = radius_m / 1_000.0
     parent_areas_km2 = parent_area_steradians * radius_km * radius_km
@@ -1065,6 +1324,8 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         parent_ids,
         inside_selected_basin,
         parent_elevation,
+        source_parent_elevation,
+        unresolved_basin_adjusted,
         parent_relief,
         parent_areas_km2,
         parent_process_excluded,
@@ -1092,6 +1353,7 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         {
             **asdict(config),
             **seam_metadata,
+            **morphology_metadata,
             **terminal_metadata,
             **path_graph_metadata,
             **corridor_area_metadata,
@@ -1106,6 +1368,21 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             ),
             "hydraulic_surface_prior_parent_count": int(
                 np.count_nonzero(parent_hydraulic_surface_controlled)
+            ),
+            "unresolved_basin_depth_adjusted_parent_count": int(
+                np.count_nonzero(unresolved_basin_adjusted)
+            ),
+            "unresolved_basin_elevation_adjustment_max_m": float(
+                np.max(parent_elevation - source_parent_elevation, initial=0.0)
+            ),
+            "unresolved_basin_depth_limit_max_m": float(
+                np.max(unresolved_basin_depth_limit[unresolved_basin_adjusted], initial=0.0)
+            ),
+            "unresolved_basin_post_adjustment_depth_max_m": float(
+                np.max(
+                    (parent_channel_surface_prior - parent_elevation)[unresolved_basin_adjusted],
+                    initial=0.0,
+                )
             ),
             "hydraulic_backwater_approach_child_count": hydraulic_approach_child_count,
             "process_exclusion_valid": int(process_exclusion_valid),
@@ -1124,7 +1401,8 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "inherited_discharge_relative_error": 0.0,
             "topology": "sparse_selected_basin_on_cubed_sphere",
             "terrain_semantics": (
-                "region_continuous_parent_mean_conserving_unresolved_relief_realization"
+                "global_spherical_multiscale_mesoscale_realization_with_shared_soft_"
+                "L0_conditioning_and_bounded_unresolved_hydraulic_basin_depth"
             ),
             "channel_surface_prior_semantics": (
                 "priority_flood_control_surface_over_unresolved_fill_with_registered_"
@@ -1141,18 +1419,74 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         seam_metadata["terrain_parent_boundary_residual_p95_ratio"]
         <= config.maximum_parent_boundary_residual_p95_ratio
     )
+    metadata["terrain_parent_mean_conditioning_valid"] = int(
+        metadata["conditioning_converged"] == 1
+        and metadata["maximum_parent_elevation_error_m"] <= config.maximum_parent_mean_error_m
+        and metadata["maximum_parent_elevation_error_relief_fraction"]
+        <= config.maximum_parent_mean_error_relief_fraction
+        and metadata["conditioning_center_correction_scale_fraction_max"]
+        <= config.maximum_center_correction_scale_fraction
+    )
+    metadata["terrain_tile_motif_valid"] = int(
+        metadata["terrain_tile_bubble_absolute_correlation_p50"]
+        <= config.maximum_tile_bubble_correlation_p50
+        and metadata["terrain_tile_bubble_absolute_correlation_p95"]
+        <= config.maximum_tile_bubble_correlation_p95
+    )
+    metadata["terrain_local_relief_envelope_valid"] = int(
+        metadata["terrain_parent_offset_span_max_m"] <= config.maximum_parent_offset_span_m
+        and metadata["terrain_parent_offset_span_relief_fraction_max"]
+        <= config.maximum_parent_offset_span_relief_fraction
+    )
+    controlled_depth_excess = np.maximum(
+        parent_channel_surface_prior - parent_elevation - unresolved_basin_depth_limit,
+        0.0,
+    )
+    metadata["unresolved_basin_depth_bound_excess_max_m"] = float(
+        np.max(controlled_depth_excess[parent_hydraulic_surface_controlled], initial=0.0)
+    )
+    metadata["unresolved_basin_depth_bound_valid"] = int(
+        metadata["unresolved_basin_depth_bound_excess_max_m"] <= 1e-3
+    )
     if metadata["path_topology_valid"] != 1:
         raise RuntimeError("native refinement published an invalid fine reach path")
     if metadata["maximum_parent_area_relative_error"] > 1e-9:
         raise RuntimeError("refined child areas do not conserve their parent areas")
-    if metadata["maximum_parent_elevation_error_m"] > 1e-3:
-        raise RuntimeError("refined terrain does not conserve parent mean elevation")
+    if metadata["terrain_parent_mean_conditioning_valid"] != 1:
+        raise RuntimeError(
+            "refined terrain did not satisfy bounded soft parent conditioning: "
+            f"maximum error={metadata['maximum_parent_elevation_error_m']:.3f} m, "
+            f"raw maximum={metadata['raw_parent_elevation_error_max_m']:.3f} m, "
+            "center correction scale fraction="
+            f"{metadata['conditioning_center_correction_scale_fraction_max']:.3f}, "
+            f"converged={metadata['conditioning_converged']}"
+        )
     if metadata["terrain_parent_boundary_continuity_valid"] != 1:
         raise RuntimeError(
             "refined terrain retains a parent-boundary seam signal: "
             f"p95 residual ratio="
             f"{metadata['terrain_parent_boundary_residual_p95_ratio']:.3f}, "
             f"maximum={config.maximum_parent_boundary_residual_p95_ratio:.3f}"
+        )
+    if metadata["terrain_tile_motif_valid"] != 1:
+        raise RuntimeError(
+            "refined terrain retains a repeated L0 parent motif: "
+            f"p50={metadata['terrain_tile_bubble_absolute_correlation_p50']:.3f}, "
+            f"p95={metadata['terrain_tile_bubble_absolute_correlation_p95']:.3f}"
+        )
+    if metadata["terrain_local_relief_envelope_valid"] != 1:
+        raise RuntimeError(
+            "refined terrain exceeds its local parent relief envelope: "
+            f"maximum span={metadata['terrain_parent_offset_span_max_m']:.3f} m "
+            f"(limit {config.maximum_parent_offset_span_m:.3f} m), "
+            "maximum relief fraction="
+            f"{metadata['terrain_parent_offset_span_relief_fraction_max']:.3f} "
+            f"(limit {config.maximum_parent_offset_span_relief_fraction:.3f})"
+        )
+    if metadata["unresolved_basin_depth_bound_valid"] != 1:
+        raise RuntimeError(
+            "refined terrain exceeds its unresolved hydraulic-basin depth bound: "
+            f"excess={metadata['unresolved_basin_depth_bound_excess_max_m']:.3f} m"
         )
     if maximum_length_error > 1e-4:
         raise RuntimeError("refined path length does not match its spherical geometry")

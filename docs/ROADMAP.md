@@ -13,13 +13,20 @@ another global-stage expansion.
 
 ## Current Work
 
-1. Regenerate and visually accept the continuous L3 terrain window with its
-   explicit core, process halo, outside mask, legend, and scale bar.
-2. Add conservative regional runoff forcing and depression-aware routing over
-   that terrain, preserving the sole target outlet and inherited trunk identity.
-3. Discover the first L3 tributary graph while preserving inherited trunk and
-   connector identity; do not apply incision in the routing stage.
-4. In parallel, record explicit acceptance or a bounded blocker list for the
+1. **Complete:** regenerate the continuous L3 terrain window with explicit
+   core, process halo, outside mask, legend, and scale bar.
+2. **Complete:** add conservative regional forcing, depression-aware routing,
+   and a fine routed-core refinement around the regional outlet handoff.
+3. **Complete:** discover the first L3 tributary graph, preserve inherited
+   trunk identity, publish explicit lake connectors, and leave terrain intact.
+4. **Complete:** repair the L0-to-L3 morphology gap by making L2 own coherent
+   `5-72 km` hills, uplands, valleys, and drainage divides under bounded soft
+   L0 conditioning; bound unresolved hydraulic pits and realize lake area over
+   stable basin identities; then regenerate terrain and hydrology.
+5. **Next:** turn selected raw D8 reach paths into smooth physical centerline
+   geometry and adaptively refine representative `25-50 m` channel corridors
+   before applying any fluvial incision or resolving banks.
+6. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
@@ -34,8 +41,14 @@ The original sparse-core L3 terrain artifact passed its numerical gates but
 failed visual/domain review because its catchment-shaped storage left large
 internal no-data regions in the rectangular diagnostic and provided an unsafe
 hydrology boundary. Decision 053 replaces that extent with an approximately
-`6.04 million`-cell continuous working window. Canonical regeneration is
-complete; explicit human visual acceptance is the active gate.
+`6.04 million`-cell continuous working window. Decision 054 now records the
+passing L3 hydrology V0: a fine routed core, continuous vector network, explicit
+lake connectors, and no unexplained downstream discharge losses. Decision 055
+now assigns coherent regional morphology to L2 rather than stretching L3 noise
+or stamping one correction shape into every L0 parent. Decision 056 separates
+raw coarse hydraulic pits from literal L2 terrain and replaces parent-stamped
+lake quotas with basin-coherent area conservation. Raw D8
+centerline geometry remains unsuitable as final bank or meander geometry.
 
 ## Thaw Gate
 

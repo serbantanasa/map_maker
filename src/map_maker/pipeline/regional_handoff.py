@@ -17,7 +17,7 @@ import numpy as np
 import pyarrow as pa  # type: ignore[import-untyped]
 import pyarrow.compute as pc  # type: ignore[import-untyped]
 import pyarrow.parquet as pq  # type: ignore[import-untyped]
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 import yaml  # type: ignore[import-untyped]
 import zarr  # type: ignore[import-untyped]
 
@@ -27,7 +27,7 @@ from .execution import ExecutionEngine
 from .models import StageResult
 
 HANDOFF_FORMAT_VERSION = 1
-HANDOFF_MODEL_VERSION = "l2_regional_handoff_v1"
+HANDOFF_MODEL_VERSION = "l2_regional_handoff_v3"
 PARENT_PRIOR_STAGES = (
     "geometry",
     "planet",
@@ -255,6 +255,9 @@ def _realize_surface_fractions(
     child_terrain_m: np.ndarray,
     fine_cell_ids: np.ndarray,
     parent_count: int,
+    *,
+    parent_groups: Mapping[str, np.ndarray] | None = None,
+    child_rank_scores: Mapping[str, np.ndarray] | None = None,
 ) -> dict[str, np.ndarray]:
     fields = tuple(parent_targets)
     targets = {name: np.asarray(value, dtype=np.float64) for name, value in parent_targets.items()}
@@ -267,28 +270,57 @@ def _realize_surface_fractions(
     if np.any(total_target > 1.0 + 1e-6):
         raise RuntimeError("parent ocean/lake/wetland targets exceed unit surface area")
 
+    parent_groups = parent_groups or {}
+    child_rank_scores = child_rank_scores or {}
+    parent_area = np.bincount(
+        child_parent_row, weights=child_area_km2, minlength=parent_count
+    ).astype(np.float64)
     outputs = {name: np.zeros(len(child_parent_row), dtype=np.float32) for name in fields}
-    order = np.argsort(child_parent_row, kind="stable")
-    counts = np.bincount(child_parent_row, minlength=parent_count)
-    offsets = np.concatenate(([0], np.cumsum(counts)))
-    for parent_row in range(parent_count):
-        rows = order[offsets[parent_row] : offsets[parent_row + 1]]
-        ranked = rows[np.lexsort((fine_cell_ids[rows], child_terrain_m[rows]))]
-        remaining_capacity = np.ones(len(ranked), dtype=np.float64)
-        parent_area = float(np.sum(child_area_km2[ranked]))
-        for name in fields:
-            remaining_area = float(targets[name][parent_row]) * parent_area
-            for position, child_row in enumerate(ranked):
-                if remaining_area <= 1e-10:
-                    break
-                capacity_area = remaining_capacity[position] * child_area_km2[child_row]
-                take_area = min(remaining_area, float(capacity_area))
-                fraction = take_area / child_area_km2[child_row]
-                outputs[name][child_row] = np.float32(fraction)
-                remaining_capacity[position] -= fraction
-                remaining_area -= take_area
-            if remaining_area > max(1e-8, parent_area * 1e-8):
-                raise RuntimeError(f"insufficient child capacity for parent surface {name}")
+    remaining_capacity = np.ones(len(child_parent_row), dtype=np.float64)
+    default_groups = np.arange(parent_count, dtype=np.int64)
+    for name in fields:
+        groups = np.asarray(parent_groups.get(name, default_groups), dtype=np.int64)
+        if groups.shape != (parent_count,):
+            raise RuntimeError(f"invalid parent surface groups for {name}")
+        score = np.asarray(child_rank_scores.get(name, child_terrain_m), dtype=np.float64)
+        if score.shape != child_terrain_m.shape or np.any(~np.isfinite(score)):
+            raise RuntimeError(f"invalid child surface ranking score for {name}")
+        child_groups = groups[child_parent_row]
+        group_order = np.argsort(child_groups, kind="stable")
+        sorted_groups = child_groups[group_order]
+        unique_groups, starts, counts = np.unique(
+            sorted_groups, return_index=True, return_counts=True
+        )
+        target_by_group: dict[int, float] = {}
+        for parent_row, group in enumerate(groups):
+            target_by_group[int(group)] = target_by_group.get(int(group), 0.0) + float(
+                targets[name][parent_row] * parent_area[parent_row]
+            )
+        for group, start, count in zip(unique_groups, starts, counts, strict=True):
+            rows = group_order[start : start + count]
+            ranked = rows[np.lexsort((fine_cell_ids[rows], score[rows]))]
+            capacity_area = remaining_capacity[ranked] * child_area_km2[ranked]
+            available_area = float(np.sum(capacity_area))
+            target_area = target_by_group[int(group)]
+            tolerance = max(1e-8, target_area * 1e-8)
+            if target_area > available_area + tolerance:
+                raise RuntimeError(f"insufficient child capacity for grouped surface {name}")
+            if target_area <= tolerance:
+                continue
+            cumulative = np.cumsum(capacity_area)
+            boundary = int(np.searchsorted(cumulative, target_area, side="left"))
+            full = ranked[:boundary]
+            outputs[name][full] = remaining_capacity[full].astype(np.float32)
+            remaining_capacity[full] = 0.0
+            consumed = float(cumulative[boundary - 1]) if boundary else 0.0
+            if boundary < len(ranked) and target_area - consumed > tolerance:
+                child = int(ranked[boundary])
+                fraction = min(
+                    remaining_capacity[child],
+                    (target_area - consumed) / child_area_km2[child],
+                )
+                outputs[name][child] = np.float32(fraction)
+                remaining_capacity[child] -= fraction
     return outputs
 
 
@@ -304,6 +336,26 @@ def _parent_weighted_fraction(
         minlength=len(parent_area_km2),
     )
     return represented / parent_area_km2
+
+
+def _maximum_group_fraction_error(
+    represented_parent_fraction: np.ndarray,
+    target_parent_fraction: np.ndarray,
+    parent_area_km2: np.ndarray,
+    parent_group: np.ndarray,
+) -> float:
+    maximum = 0.0
+    for group in np.unique(parent_group):
+        members = parent_group == group
+        group_area = float(np.sum(parent_area_km2[members]))
+        difference_area = float(
+            np.sum(
+                (represented_parent_fraction[members] - target_parent_fraction[members])
+                * parent_area_km2[members]
+            )
+        )
+        maximum = max(maximum, abs(difference_area) / max(group_area, 1e-12))
+    return maximum
 
 
 def _parent_weighted_mean(
@@ -352,6 +404,28 @@ def _tree_checksum(path: Path) -> str:
 
 def _relative_longitude(longitude: np.ndarray, center: float) -> np.ndarray:
     return (longitude - center + 180.0) % 360.0 - 180.0
+
+
+def _diagnostic_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
+    for candidate in (
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ):
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _nice_scale_km(map_width_km: float) -> float:
+    maximum_km = max(map_width_km * 0.28, 0.001)
+    exponent = math.floor(math.log10(maximum_km))
+    for multiplier in (5.0, 2.0, 1.0):
+        candidate = multiplier * 10.0**exponent
+        if candidate <= maximum_km:
+            return candidate
+    return 10.0 ** (exponent - 1)
 
 
 def _render_preview(
@@ -452,7 +526,84 @@ def _render_preview(
                 width=3 if row["reach_kind"] == "channel" else 2,
                 joint="curve",
             )
-    image.save(path, optimize=True)
+
+    title_height = 52
+    footer_height = 76
+    legend_width = 320
+    canvas = Image.new(
+        "RGB",
+        (width + legend_width, height + title_height + footer_height),
+        (240, 241, 237),
+    )
+    canvas.paste(image, (0, title_height))
+    draw = ImageDraw.Draw(canvas)
+    title_font = _diagnostic_font(22)
+    label_font = _diagnostic_font(17)
+    small_font = _diagnostic_font(15)
+    draw.text((18, 13), "L2 regional handoff", fill=(25, 30, 27), font=title_font)
+    draw.line((width, 0, width, canvas.height), fill=(178, 181, 174), width=1)
+
+    legend_x = width + 24
+    draw.text((legend_x, 20), "Surface and vectors", fill=(25, 30, 27), font=title_font)
+    entries = (
+        ((116, 160, 105), "core land"),
+        ((31, 88, 128), "physical ocean"),
+        ((52, 135, 166), "lake"),
+        ((55, 121, 93), "wetland"),
+        ((190, 194, 184), "faded context / halo"),
+    )
+    legend_y = 70
+    for color, label in entries:
+        draw.rectangle(
+            (legend_x, legend_y, legend_x + 34, legend_y + 18),
+            fill=color,
+            outline=(50, 55, 52),
+        )
+        draw.text(
+            (legend_x + 48, legend_y - 1),
+            label,
+            fill=(35, 39, 36),
+            font=small_font,
+        )
+        legend_y += 34
+    legend_y += 10
+    draw.text((legend_x, legend_y), "Inherited river graph", fill=(25, 30, 27), font=label_font)
+    legend_y += 36
+    draw.line((legend_x, legend_y + 8, legend_x + 38, legend_y + 8), fill=(17, 88, 145), width=3)
+    draw.text((legend_x + 50, legend_y), "physical channel", fill=(35, 39, 36), font=small_font)
+    legend_y += 34
+    draw.line((legend_x, legend_y + 8, legend_x + 38, legend_y + 8), fill=(74, 116, 132), width=2)
+    draw.text((legend_x + 50, legend_y), "hydraulic connector", fill=(35, 39, 36), font=small_font)
+
+    map_width_km = math.radians(right - left) * 6_371.0
+    scale_km = _nice_scale_km(map_width_km)
+    scale_pixels = max(1, round(scale_km / map_width_km * width))
+    scale_left = 18
+    scale_top = title_height + height + 24
+    segment_count = 4
+    for segment in range(segment_count):
+        segment_left = scale_left + round(scale_pixels * segment / segment_count)
+        segment_right = scale_left + round(scale_pixels * (segment + 1) / segment_count)
+        draw.rectangle(
+            (segment_left, scale_top, segment_right, scale_top + 14),
+            fill=(31, 34, 31) if segment % 2 == 0 else (238, 239, 235),
+            outline=(31, 34, 31),
+        )
+    draw.text((scale_left, scale_top + 19), "0", fill=(50, 54, 51), font=small_font)
+    draw.text(
+        (scale_left + scale_pixels - 8, scale_top + 19),
+        f"{scale_km:g} km",
+        anchor="ra",
+        fill=(50, 54, 51),
+        font=small_font,
+    )
+    draw.text(
+        (scale_left + scale_pixels + 18, scale_top + 1),
+        "approximate local scale",
+        fill=(80, 84, 80),
+        font=small_font,
+    )
+    canvas.save(path, optimize=True)
 
 
 def _source_provenance(
@@ -581,6 +732,19 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
         wetland_target = _artifact_array(
             results["surface_materials"], "EffectiveWetlandFraction"
         ).reshape(-1)[parent_ids]
+        parent_lake_id = _artifact_array(results["hydrology"], "LakeID").reshape(-1)[parent_ids]
+        next_unregistered_lake_id = int(np.max(parent_lake_id, initial=-1)) + 1
+        lake_groups = np.where(
+            parent_lake_id >= 0,
+            parent_lake_id,
+            next_unregistered_lake_id + np.arange(len(parent_ids), dtype=np.int32),
+        ).astype(np.int64)
+        parent_channel_surface = _column_numpy(
+            parents, "channel_surface_prior_m", np.dtype(np.float32)
+        )
+        lake_rank_score = (child_terrain_m - parent_channel_surface[child_parent_row]).astype(
+            np.float32
+        )
         realized = _realize_surface_fractions(
             {
                 "ocean_fraction": ocean_target,
@@ -592,6 +756,8 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             child_terrain_m,
             fine_cell_ids,
             len(parent_ids),
+            parent_groups={"lake_fraction": lake_groups},
+            child_rank_scores={"lake_fraction": lake_rank_score},
         )
         parent_surface = _artifact_array(results["sea_level"], "SurfaceElevationM").reshape(-1)[
             parent_ids
@@ -599,9 +765,15 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
         parent_refined_elevation = _column_numpy(
             parents, "parent_elevation_m", np.dtype(np.float32)
         )
-        child_surface_m = (
-            child_terrain_m + (parent_surface - parent_refined_elevation)[child_parent_row]
+        source_parent_elevation = _column_numpy(
+            parents, "source_parent_elevation_m", np.dtype(np.float32)
         )
+        unresolved_basin_adjusted = _column_numpy(
+            parents, "unresolved_basin_depth_adjusted", np.dtype(bool)
+        )
+        parent_surface_offset = parent_surface - source_parent_elevation
+        conditioned_parent_surface = parent_refined_elevation + parent_surface_offset
+        child_surface_m = child_terrain_m + parent_surface_offset[child_parent_row]
         total_water = (
             realized["ocean_fraction"] + realized["lake_fraction"] + realized["wetland_fraction"]
         )
@@ -631,6 +803,26 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
         )
         _zarr_array(parent_group, "halo_ring", halo_ring, config.chunk_rows)
         _zarr_array(parent_group, "area_km2", parent_area_km2, config.chunk_rows, units="km2")
+        _zarr_array(
+            parent_group,
+            "source_terrain_elevation_m",
+            source_parent_elevation,
+            config.chunk_rows,
+            units="m",
+        )
+        _zarr_array(
+            parent_group,
+            "terrain_conditioning_target_m",
+            parent_refined_elevation,
+            config.chunk_rows,
+            units="m",
+        )
+        _zarr_array(
+            parent_group,
+            "unresolved_basin_depth_adjusted",
+            unresolved_basin_adjusted,
+            config.chunk_rows,
+        )
 
         geometry_group = root.require_group("l2/geometry")
         geometry_fields = {
@@ -803,7 +995,7 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             )
             for name, values in realized.items()
         }
-        surface_errors = {
+        surface_parent_errors = {
             "ocean_fraction": float(
                 np.max(np.abs(represented_surface["ocean_fraction"] - ocean_target))
             ),
@@ -814,6 +1006,16 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 np.max(np.abs(represented_surface["wetland_fraction"] - wetland_target))
             ),
         }
+        surface_errors = {
+            "ocean_fraction": surface_parent_errors["ocean_fraction"],
+            "lake_fraction_by_lake_id": _maximum_group_fraction_error(
+                represented_surface["lake_fraction"],
+                lake_target,
+                parent_area_km2,
+                lake_groups,
+            ),
+            "wetland_fraction": surface_parent_errors["wetland_fraction"],
+        }
         represented_surface_elevation = _parent_weighted_mean(
             child_surface_m,
             child_parent_row,
@@ -821,6 +1023,9 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             parent_area_km2,
         )
         maximum_surface_elevation_error_m = float(
+            np.max(np.abs(represented_surface_elevation - conditioned_parent_surface))
+        )
+        maximum_source_surface_deviation_m = float(
             np.max(np.abs(represented_surface_elevation - parent_surface))
         )
         fine_paths = refined_reaches["fine_cell_path"].to_pylist()
@@ -847,7 +1052,74 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             "maximum_parent_terrain_mean_error_m": float(
                 refinement_metadata["maximum_parent_elevation_error_m"]
             ),
+            "maximum_parent_terrain_mean_error_relief_fraction": float(
+                refinement_metadata["maximum_parent_elevation_error_relief_fraction"]
+            ),
+            "maximum_parent_mean_error_m": float(
+                refinement_metadata["maximum_parent_mean_error_m"]
+            ),
+            "maximum_parent_mean_error_relief_fraction": float(
+                refinement_metadata["maximum_parent_mean_error_relief_fraction"]
+            ),
+            "terrain_parent_mean_conditioning_valid": int(
+                refinement_metadata["terrain_parent_mean_conditioning_valid"]
+            ),
+            "terrain_conditioning_iteration_count": int(
+                refinement_metadata["conditioning_iteration_count"]
+            ),
+            "terrain_raw_parent_elevation_error_max_m": float(
+                refinement_metadata["raw_parent_elevation_error_max_m"]
+            ),
+            "terrain_conditioning_center_correction_max_abs_m": float(
+                refinement_metadata["conditioning_center_correction_max_abs_m"]
+            ),
+            "terrain_conditioning_center_correction_relief_fraction_max": float(
+                refinement_metadata["conditioning_center_correction_relief_fraction_max"]
+            ),
+            "terrain_conditioning_center_correction_scale_fraction_max": float(
+                refinement_metadata["conditioning_center_correction_scale_fraction_max"]
+            ),
+            "maximum_center_correction_scale_fraction": float(
+                refinement_metadata["maximum_center_correction_scale_fraction"]
+            ),
+            "terrain_tile_motif_valid": int(refinement_metadata["terrain_tile_motif_valid"]),
+            "terrain_tile_bubble_absolute_correlation_p50": float(
+                refinement_metadata["terrain_tile_bubble_absolute_correlation_p50"]
+            ),
+            "terrain_tile_bubble_absolute_correlation_p95": float(
+                refinement_metadata["terrain_tile_bubble_absolute_correlation_p95"]
+            ),
+            "terrain_parent_offset_span_max_m": float(
+                refinement_metadata["terrain_parent_offset_span_max_m"]
+            ),
+            "terrain_parent_offset_span_relief_fraction_max": float(
+                refinement_metadata["terrain_parent_offset_span_relief_fraction_max"]
+            ),
+            "maximum_parent_offset_span_m": float(
+                refinement_metadata["maximum_parent_offset_span_m"]
+            ),
+            "maximum_parent_offset_span_relief_fraction": float(
+                refinement_metadata["maximum_parent_offset_span_relief_fraction"]
+            ),
+            "terrain_local_relief_envelope_valid": int(
+                refinement_metadata["terrain_local_relief_envelope_valid"]
+            ),
             "maximum_parent_surface_elevation_mean_error_m": (maximum_surface_elevation_error_m),
+            "maximum_source_parent_surface_elevation_mean_deviation_m": (
+                maximum_source_surface_deviation_m
+            ),
+            "unresolved_basin_depth_adjusted_parent_count": int(
+                refinement_metadata["unresolved_basin_depth_adjusted_parent_count"]
+            ),
+            "unresolved_basin_elevation_adjustment_max_m": float(
+                refinement_metadata["unresolved_basin_elevation_adjustment_max_m"]
+            ),
+            "unresolved_basin_depth_bound_excess_max_m": float(
+                refinement_metadata["unresolved_basin_depth_bound_excess_max_m"]
+            ),
+            "unresolved_basin_depth_bound_valid": int(
+                refinement_metadata["unresolved_basin_depth_bound_valid"]
+            ),
             "terrain_parent_boundary_jump_p95_m": float(
                 refinement_metadata["terrain_parent_boundary_jump_p95_m"]
             ),
@@ -865,6 +1137,8 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             ),
             "maximum_surface_fraction_error": max(surface_errors.values()),
             "surface_fraction_errors": surface_errors,
+            "surface_parent_fraction_diagnostics": surface_parent_errors,
+            "maximum_parent_lake_fraction_deviation": surface_parent_errors["lake_fraction"],
             "maximum_child_surface_occupancy": float(np.max(total_water, initial=0.0)),
             "minimum_child_surface_occupancy": float(np.min(total_water)),
             "unique_child_ids": int(len(np.unique(fine_cell_ids)) == len(fine_cell_ids)),
@@ -876,9 +1150,17 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
         }
         validation["passed"] = bool(
             validation["maximum_parent_area_relative_error"] <= 1e-9
-            and validation["maximum_parent_terrain_mean_error_m"] <= 1e-3
-            and validation["maximum_parent_surface_elevation_mean_error_m"] <= 1e-3
+            and validation["terrain_parent_mean_conditioning_valid"] == 1
+            and validation["maximum_parent_terrain_mean_error_m"]
+            <= validation["maximum_parent_mean_error_m"]
+            and validation["maximum_parent_terrain_mean_error_relief_fraction"]
+            <= validation["maximum_parent_mean_error_relief_fraction"]
+            and validation["maximum_parent_surface_elevation_mean_error_m"]
+            <= validation["maximum_parent_mean_error_m"]
             and validation["terrain_parent_boundary_continuity_valid"] == 1
+            and validation["terrain_tile_motif_valid"] == 1
+            and validation["terrain_local_relief_envelope_valid"] == 1
+            and validation["unresolved_basin_depth_bound_valid"] == 1
             and validation["maximum_surface_fraction_error"] <= 1e-6
             and validation["maximum_child_surface_occupancy"] <= 1.0 + 1e-6
             and validation["minimum_child_surface_occupancy"] >= -1e-7
@@ -978,8 +1260,15 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 for name, table in table_values.items()
             },
             "semantics": {
-                "terrain": "deterministic parent-mean-conserving L2 conditional realization",
-                "surface": "terrain-ranked parent-area-conserving conditional occupancy",
+                "terrain": (
+                    "deterministic spherical multiscale L2 realization with bounded shared "
+                    "soft L0 conditioning and bounded unresolved hydraulic-basin depth; raw "
+                    "L0 bedrock remains a parent prior"
+                ),
+                "surface": (
+                    "terrain-ranked conditional occupancy; ocean and wetland conserve each "
+                    "parent while lake area conserves each stable LakeID across its L2 basin"
+                ),
                 "parent_priors": "inherited values; not recomputed or claimed as L2 downscaling",
                 "rivers": "inherited graph/vector identities with no applied L2 incision",
                 "resources": "absent until an upstream mineral and energy system exists",

@@ -7,7 +7,8 @@ use topology_native::{
 };
 
 const D4_NEIGHBORS: usize = 4;
-const TERRAIN_NOISE_GAIN: f64 = 2.0;
+const TERRAIN_CONDITIONING_NEIGHBOR_RINGS: usize = 3;
+const TERRAIN_SIGNAL_GAIN: f64 = 2.0;
 const ROUTING_ANCHOR_UNAVAILABLE: i32 = 50;
 const ROUTING_BOUNDARY_UNAVAILABLE: i32 = 51;
 const ROUTING_TARGETS_EMPTY: i32 = 52;
@@ -23,7 +24,7 @@ const ROUTING_REVERSE_EDGE_CONFLICT: i32 = 61;
 
 #[no_mangle]
 pub extern "C" fn refinement_native_abi_version() -> u32 {
-    3
+    4
 }
 
 #[repr(C)]
@@ -34,6 +35,17 @@ pub struct RefinementConfig {
     pub planet_radius_m: f64,
     pub terrain_seed: u64,
     pub terrain_noise_fraction: f32,
+    pub terrain_base_wavelength_m: f32,
+    pub terrain_octave_count: i32,
+    pub terrain_persistence: f32,
+    pub terrain_domain_warp_fraction: f32,
+    pub terrain_ridge_fraction: f32,
+    pub conditioning_maximum_iterations: i32,
+    pub conditioning_damping: f32,
+    pub conditioning_sigma_parent_cells: f32,
+    pub maximum_parent_mean_error_m: f32,
+    pub maximum_parent_mean_error_relief_fraction: f32,
+    pub maximum_center_correction_scale_fraction: f32,
 }
 
 #[repr(C)]
@@ -112,6 +124,13 @@ pub struct RefinementStats {
     pub selected_area_km2: f64,
     pub maximum_parent_area_relative_error: f64,
     pub maximum_parent_elevation_error_m: f64,
+    pub maximum_parent_elevation_error_relief_fraction: f64,
+    pub raw_parent_elevation_error_max_m: f64,
+    pub conditioning_center_correction_max_abs_m: f64,
+    pub conditioning_center_correction_relief_fraction_max: f64,
+    pub conditioning_center_correction_scale_fraction_max: f64,
+    pub conditioning_iteration_count: i32,
+    pub conditioning_converged: i32,
     pub total_reach_length_km: f64,
     pub represented_channel_area_km2: f64,
     pub represented_valley_area_km2: f64,
@@ -144,6 +163,61 @@ struct Outcome {
     path_cells: Vec<i32>,
     memberships: Vec<ReachCellRecord>,
     stats: RefinementStats,
+}
+
+#[derive(Clone, Copy, Default)]
+struct TerrainConditioningStats {
+    raw_parent_elevation_error_max_m: f64,
+    center_correction_max_abs_m: f64,
+    center_correction_relief_fraction_max: f64,
+    center_correction_scale_fraction_max: f64,
+    iteration_count: i32,
+    converged: i32,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Vec3 {
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Vec3 {
+    fn from_array(values: [f64; 3]) -> Self {
+        Self {
+            x: values[0],
+            y: values[1],
+            z: values[2],
+        }
+    }
+
+    fn from_f32(values: [f32; 3]) -> Self {
+        Self {
+            x: values[0] as f64,
+            y: values[1] as f64,
+            z: values[2] as f64,
+        }
+    }
+
+    fn add(self, other: Self) -> Self {
+        Self {
+            x: self.x + other.x,
+            y: self.y + other.y,
+            z: self.z + other.z,
+        }
+    }
+
+    fn dot(self, other: Self) -> f64 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    fn scale(self, factor: f64) -> Self {
+        Self {
+            x: self.x * factor,
+            y: self.y * factor,
+            z: self.z * factor,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -182,10 +256,119 @@ fn splitmix64(mut value: u64) -> u64 {
     value ^ (value >> 31)
 }
 
-fn signed_noise(seed: u64, cell: i32) -> f64 {
-    let bits = splitmix64(seed ^ cell as u32 as u64);
+fn lattice_hash(seed: u64, x: i64, y: i64, z: i64) -> f64 {
+    let mut bits = seed;
+    bits = splitmix64(bits ^ (x as u64).wrapping_mul(0x9e37_79b1_85eb_ca87));
+    bits = splitmix64(bits ^ (y as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f));
+    bits = splitmix64(bits ^ (z as u64).wrapping_mul(0x1656_67b1_9e37_79f9));
     let unit = (bits >> 11) as f64 * (1.0 / ((1u64 << 53) as f64));
     unit * 2.0 - 1.0
+}
+
+fn fade(value: f64) -> f64 {
+    value * value * value * (value * (value * 6.0 - 15.0) + 10.0)
+}
+
+fn lerp(first: f64, second: f64, amount: f64) -> f64 {
+    first + (second - first) * amount
+}
+
+fn value_noise(position: Vec3, seed: u64) -> f64 {
+    let x0 = position.x.floor() as i64;
+    let y0 = position.y.floor() as i64;
+    let z0 = position.z.floor() as i64;
+    let tx = fade(position.x - x0 as f64);
+    let ty = fade(position.y - y0 as f64);
+    let tz = fade(position.z - z0 as f64);
+    let mut values = [0.0f64; 8];
+    for dz in 0..2 {
+        for dy in 0..2 {
+            for dx in 0..2 {
+                values[dz * 4 + dy * 2 + dx] =
+                    lattice_hash(seed, x0 + dx as i64, y0 + dy as i64, z0 + dz as i64);
+            }
+        }
+    }
+    let z0_value = lerp(
+        lerp(values[0], values[1], tx),
+        lerp(values[2], values[3], tx),
+        ty,
+    );
+    let z1_value = lerp(
+        lerp(values[4], values[5], tx),
+        lerp(values[6], values[7], tx),
+        ty,
+    );
+    lerp(z0_value, z1_value, tz)
+}
+
+fn fbm(position: Vec3, seed: u64, octave_count: usize, persistence: f64) -> f64 {
+    let mut frequency = 1.0;
+    let mut amplitude = 1.0;
+    let mut total = 0.0;
+    let mut normalization = 0.0;
+    for octave in 0..octave_count {
+        total +=
+            value_noise(position.scale(frequency), splitmix64(seed ^ octave as u64)) * amplitude;
+        normalization += amplitude;
+        frequency *= 2.0;
+        amplitude *= persistence;
+    }
+    total / normalization.max(f64::EPSILON)
+}
+
+fn terrain_signal(xyz: Vec3, config: RefinementConfig) -> f64 {
+    let scale = config.planet_radius_m / config.terrain_base_wavelength_m as f64;
+    let base = xyz.scale(scale);
+    let warp = Vec3 {
+        x: value_noise(
+            base.scale(0.41).add(Vec3 {
+                x: 17.3,
+                y: -5.9,
+                z: 3.1,
+            }),
+            config.terrain_seed ^ 0x31a5,
+        ),
+        y: value_noise(
+            base.scale(0.41).add(Vec3 {
+                x: -4.2,
+                y: 13.7,
+                z: 21.9,
+            }),
+            config.terrain_seed ^ 0xb479,
+        ),
+        z: value_noise(
+            base.scale(0.41).add(Vec3 {
+                x: 8.6,
+                y: 27.1,
+                z: -15.4,
+            }),
+            config.terrain_seed ^ 0xe213,
+        ),
+    }
+    .scale(config.terrain_domain_warp_fraction as f64);
+    let warped = base.add(warp);
+    let rolling = fbm(
+        warped,
+        config.terrain_seed,
+        config.terrain_octave_count as usize,
+        config.terrain_persistence as f64,
+    );
+    let ridge_noise = fbm(
+        warped.scale(0.91).add(warp.scale(0.67)).add(Vec3 {
+            x: 31.7,
+            y: -19.2,
+            z: 7.8,
+        }),
+        config.terrain_seed ^ 0x8d58_91a3,
+        (config.terrain_octave_count as usize)
+            .saturating_sub(1)
+            .max(2),
+        config.terrain_persistence as f64,
+    );
+    let ridged = 1.0 - 2.0 * ridge_noise.abs();
+    let ridge_weight = config.terrain_ridge_fraction as f64;
+    ((1.0 - ridge_weight) * rolling + ridge_weight * ridged).clamp(-1.0, 1.0)
 }
 
 fn angular_distance(first: [f32; 3], second: [f32; 3]) -> f64 {
@@ -205,6 +388,33 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
         || inputs.config.planet_radius_m <= 0.0
         || !inputs.config.terrain_noise_fraction.is_finite()
         || !(0.0..=1.0).contains(&inputs.config.terrain_noise_fraction)
+        || !inputs.config.terrain_base_wavelength_m.is_finite()
+        || inputs.config.terrain_base_wavelength_m <= 0.0
+        || !(2..=8).contains(&inputs.config.terrain_octave_count)
+        || !inputs.config.terrain_persistence.is_finite()
+        || !(0.0..1.0).contains(&inputs.config.terrain_persistence)
+        || !inputs.config.terrain_domain_warp_fraction.is_finite()
+        || !(0.0..=1.0).contains(&inputs.config.terrain_domain_warp_fraction)
+        || !inputs.config.terrain_ridge_fraction.is_finite()
+        || !(0.0..=0.8).contains(&inputs.config.terrain_ridge_fraction)
+        || !(1..=200).contains(&inputs.config.conditioning_maximum_iterations)
+        || !inputs.config.conditioning_damping.is_finite()
+        || !(0.0..=1.0).contains(&inputs.config.conditioning_damping)
+        || inputs.config.conditioning_damping == 0.0
+        || !inputs.config.conditioning_sigma_parent_cells.is_finite()
+        || !(0.25..=2.0).contains(&inputs.config.conditioning_sigma_parent_cells)
+        || !inputs.config.maximum_parent_mean_error_m.is_finite()
+        || inputs.config.maximum_parent_mean_error_m <= 0.0
+        || !inputs
+            .config
+            .maximum_parent_mean_error_relief_fraction
+            .is_finite()
+        || inputs.config.maximum_parent_mean_error_relief_fraction <= 0.0
+        || !inputs
+            .config
+            .maximum_center_correction_scale_fraction
+            .is_finite()
+        || inputs.config.maximum_center_correction_scale_fraction <= 0.0
     {
         return Err(2);
     }
@@ -313,7 +523,12 @@ fn validate_inputs(inputs: &Inputs<'_>) -> Result<(usize, usize), i32> {
 }
 
 type ParentRanges = HashMap<i32, (usize, usize, usize)>;
-type ChildGeneration = (Vec<RefinedCellRecord>, HashMap<i32, usize>, ParentRanges);
+type ChildGeneration = (
+    Vec<RefinedCellRecord>,
+    HashMap<i32, usize>,
+    ParentRanges,
+    TerrainConditioningStats,
+);
 type ReachGeneration = (Vec<RefinedReachRecord>, Vec<i32>, Vec<ReachCellRecord>);
 
 fn generate_children(
@@ -364,39 +579,7 @@ fn generate_children(
         ranges.insert(parent_id, (start, cells.len(), parent_index));
     }
 
-    let mut noise = cells
-        .iter()
-        .map(|cell| signed_noise(inputs.config.terrain_seed, cell.fine_cell_id))
-        .collect::<Vec<_>>();
-    // The residual field must cross L0 parent boundaries. Restricting this
-    // stencil to one parent creates a visible factor-by-factor tile imprint.
-    for _ in 0..3 {
-        let previous = noise.clone();
-        for local in 0..cells.len() {
-            let cell = cells[local];
-            let mut sum = previous[local] * 2.0;
-            let mut weight = 2.0;
-            for slot in 0..D4_NEIGHBORS {
-                let Some(neighbor_id) =
-                    cubed_sphere_neighbor_index(cell.fine_cell_id as usize, slot, fine)
-                else {
-                    continue;
-                };
-                let Some(&neighbor_local) = local_by_id.get(&(neighbor_id as i32)) else {
-                    continue;
-                };
-                sum += previous[neighbor_local];
-                weight += 1.0;
-            }
-            noise[local] = sum / weight;
-        }
-    }
-
     for &(start, end, parent_index) in ranges.values() {
-        let total_area = cells[start..end]
-            .iter()
-            .map(|cell| cell.area_km2)
-            .sum::<f64>();
         let parent_id = inputs.parent_ids[parent_index];
         let parent_elevation = inputs.parent_elevation_m[parent_index] as f64;
         let neighbor_value = |values: &[f32], slot: usize, fallback: f64| -> f64 {
@@ -413,11 +596,9 @@ fn generate_children(
         let south_relief = neighbor_value(inputs.parent_relief_m, 1, parent_relief);
         let west_relief = neighbor_value(inputs.parent_relief_m, 2, parent_relief);
         let east_relief = neighbor_value(inputs.parent_relief_m, 3, parent_relief);
-        let mut offsets = Vec::with_capacity(end - start);
-        let mut correction_weights = Vec::with_capacity(end - start);
-        for local in start..end {
-            let local_row = cells[local].row as usize % factor;
-            let local_col = cells[local].col as usize % factor;
+        for cell in &mut cells[start..end] {
+            let local_row = cell.row as usize % factor;
+            let local_col = cell.col as usize % factor;
             let unit_y = (local_row as f64 + 0.5) / factor as f64;
             let unit_x = (local_col as f64 + 0.5) / factor as f64;
             let y = unit_y - 0.5;
@@ -443,39 +624,270 @@ fn generate_children(
                 (parent_relief - north_relief) * y
             };
             let local_relief = (parent_relief + relief_horizontal + relief_vertical).max(0.0);
-            let residual = (noise[local] * TERRAIN_NOISE_GAIN).clamp(-1.0, 1.0)
+            let residual = (terrain_signal(Vec3::from_f32(cell.xyz), inputs.config)
+                * TERRAIN_SIGNAL_GAIN)
+                .clamp(-1.0, 1.0)
                 * local_relief
                 * inputs.config.terrain_noise_fraction as f64;
-            offsets.push(horizontal + vertical + residual);
-            correction_weights.push(
-                (std::f64::consts::PI * unit_x).sin() * (std::f64::consts::PI * unit_y).sin(),
-            );
-        }
-        let offset_mean = cells[start..end]
-            .iter()
-            .zip(&offsets)
-            .map(|(cell, offset)| cell.area_km2 * offset)
-            .sum::<f64>()
-            / total_area;
-        let correction_weight_mean = cells[start..end]
-            .iter()
-            .zip(&correction_weights)
-            .map(|(cell, weight)| cell.area_km2 * weight)
-            .sum::<f64>()
-            / total_area;
-        for ((cell, offset), correction_weight) in cells[start..end]
-            .iter_mut()
-            .zip(offsets)
-            .zip(correction_weights)
-        {
-            let corrected_offset =
-                offset - offset_mean * correction_weight / correction_weight_mean;
-            cell.terrain_elevation_m = (parent_elevation + corrected_offset) as f32;
+            let offset = horizontal + vertical + residual;
+            cell.terrain_elevation_m = (parent_elevation + offset) as f32;
             cell.terrain_offset_m = cell.terrain_elevation_m - parent_elevation as f32;
         }
     }
 
-    Ok((cells, local_by_id, ranges))
+    let conditioning = condition_terrain(inputs, coarse, &mut cells, &ranges, &parent_input_by_id)?;
+
+    Ok((cells, local_by_id, ranges, conditioning))
+}
+
+fn conditioning_candidates(
+    parent_id: i32,
+    coarse: usize,
+    parent_input_by_id: &HashMap<i32, usize>,
+) -> Vec<usize> {
+    let mut visited = HashSet::from([parent_id]);
+    let mut queue = VecDeque::from([(parent_id, 0usize)]);
+    let mut candidates = Vec::new();
+    while let Some((cell, distance)) = queue.pop_front() {
+        if let Some(&row) = parent_input_by_id.get(&cell) {
+            candidates.push(row);
+        }
+        if distance == TERRAIN_CONDITIONING_NEIGHBOR_RINGS {
+            continue;
+        }
+        for slot in 0..D4_NEIGHBORS {
+            let Some(neighbor) = cubed_sphere_neighbor_index(cell as usize, slot, coarse) else {
+                continue;
+            };
+            let neighbor = neighbor as i32;
+            if visited.insert(neighbor) {
+                queue.push_back((neighbor, distance + 1));
+            }
+        }
+    }
+    candidates.sort_unstable();
+    candidates
+}
+
+fn conditioning_weight(
+    child: Vec3,
+    center: Vec3,
+    parent_width_radians: f64,
+    sigma_parent_cells: f64,
+) -> f64 {
+    let distance = child.dot(center).clamp(-1.0, 1.0).acos();
+    let sigma = (parent_width_radians * sigma_parent_cells).max(1e-12);
+    (-0.5 * (distance / sigma).powi(2)).exp()
+}
+
+fn condition_terrain(
+    inputs: &Inputs<'_>,
+    coarse: usize,
+    cells: &mut [RefinedCellRecord],
+    ranges: &ParentRanges,
+    parent_input_by_id: &HashMap<i32, usize>,
+) -> Result<TerrainConditioningStats, i32> {
+    let parent_count = inputs.parent_ids.len();
+    let parent_centers = inputs
+        .parent_ids
+        .iter()
+        .map(|&parent| {
+            let (face, row, col) = cubed_sphere_decode_index(parent as usize, coarse).ok_or(3)?;
+            cubed_sphere_cell_xyz(face, row, col, coarse)
+                .map(Vec3::from_array)
+                .ok_or(3)
+        })
+        .collect::<Result<Vec<_>, i32>>()?;
+    let parent_widths = inputs
+        .parent_area_steradians
+        .iter()
+        .map(|area| area.sqrt())
+        .collect::<Vec<_>>();
+    let candidate_rows = inputs
+        .parent_ids
+        .iter()
+        .map(|&parent| conditioning_candidates(parent, coarse, parent_input_by_id))
+        .collect::<Vec<_>>();
+    let conditioning_scales = inputs
+        .parent_ids
+        .iter()
+        .enumerate()
+        .map(|(parent, &parent_id)| {
+            let center_elevation = inputs.parent_elevation_m[parent] as f64;
+            let maximum_neighbor_contrast = (0..D4_NEIGHBORS)
+                .filter_map(|slot| {
+                    cubed_sphere_neighbor_index(parent_id as usize, slot, coarse)
+                        .and_then(|neighbor| parent_input_by_id.get(&(neighbor as i32)).copied())
+                })
+                .map(|neighbor| {
+                    (inputs.parent_elevation_m[neighbor] as f64 - center_elevation).abs()
+                })
+                .fold(0.0, f64::max);
+            (inputs.parent_relief_m[parent] as f64)
+                .max(maximum_neighbor_contrast)
+                .max(50.0)
+        })
+        .collect::<Vec<_>>();
+    let sigma = inputs.config.conditioning_sigma_parent_cells as f64;
+    let mut response = Vec::<Vec<(usize, f64)>>::with_capacity(parent_count);
+    let mut raw_error = vec![0.0f64; parent_count];
+
+    for parent_index in 0..parent_count {
+        let parent_id = inputs.parent_ids[parent_index];
+        let &(start, end, _) = ranges.get(&parent_id).ok_or(3)?;
+        let candidates = &candidate_rows[parent_index];
+        if candidates.is_empty() || !candidates.contains(&parent_index) {
+            return Err(3);
+        }
+        let total_area = cells[start..end]
+            .iter()
+            .map(|cell| cell.area_km2)
+            .sum::<f64>();
+        let raw_mean = cells[start..end]
+            .iter()
+            .map(|cell| cell.area_km2 * cell.terrain_elevation_m as f64)
+            .sum::<f64>()
+            / total_area;
+        raw_error[parent_index] = raw_mean - inputs.parent_elevation_m[parent_index] as f64;
+        let mut accumulated = vec![0.0f64; candidates.len()];
+        let mut weights = vec![0.0f64; candidates.len()];
+        for cell in &cells[start..end] {
+            let xyz = Vec3::from_f32(cell.xyz);
+            let mut weight_sum = 0.0;
+            for (local, &candidate) in candidates.iter().enumerate() {
+                let weight = conditioning_weight(
+                    xyz,
+                    parent_centers[candidate],
+                    parent_widths[candidate],
+                    sigma,
+                );
+                weights[local] = weight;
+                weight_sum += weight;
+            }
+            if !weight_sum.is_finite() || weight_sum <= 0.0 {
+                return Err(7);
+            }
+            for (local, weight) in weights.iter().enumerate() {
+                accumulated[local] += cell.area_km2 * weight / weight_sum;
+            }
+        }
+        response.push(
+            candidates
+                .iter()
+                .copied()
+                .zip(accumulated.into_iter().map(|value| value / total_area))
+                .collect(),
+        );
+    }
+
+    let raw_parent_elevation_error_max_m =
+        raw_error.iter().copied().map(f64::abs).fold(0.0, f64::max);
+    let mut coefficients = vec![0.0f64; parent_count];
+    let mut final_error = raw_error.clone();
+    let mut converged = false;
+    let mut iteration_count = 0;
+    for iteration in 0..inputs.config.conditioning_maximum_iterations as usize {
+        for parent in 0..parent_count {
+            let mut diagonal = 0.0;
+            let mut adjacent = 0.0;
+            for &(candidate, weight) in &response[parent] {
+                if candidate == parent {
+                    diagonal = weight;
+                } else {
+                    adjacent += weight * coefficients[candidate];
+                }
+            }
+            if diagonal <= 1e-9 || !diagonal.is_finite() {
+                return Err(7);
+            }
+            let target = (-raw_error[parent] - adjacent) / diagonal;
+            let correction_limit = inputs.config.maximum_center_correction_scale_fraction as f64
+                * conditioning_scales[parent];
+            let bounded_target = target.clamp(-correction_limit, correction_limit);
+            coefficients[parent] = (1.0 - inputs.config.conditioning_damping as f64)
+                * coefficients[parent]
+                + inputs.config.conditioning_damping as f64 * bounded_target;
+        }
+        for parent in 0..parent_count {
+            final_error[parent] = raw_error[parent]
+                + response[parent]
+                    .iter()
+                    .map(|(candidate, weight)| weight * coefficients[*candidate])
+                    .sum::<f64>();
+        }
+        iteration_count = iteration + 1;
+        let maximum_absolute = final_error
+            .iter()
+            .copied()
+            .map(f64::abs)
+            .fold(0.0, f64::max);
+        let maximum_relative = final_error
+            .iter()
+            .enumerate()
+            .map(|(parent, error)| error.abs() / (inputs.parent_relief_m[parent] as f64).max(50.0))
+            .fold(0.0, f64::max);
+        if maximum_absolute <= inputs.config.maximum_parent_mean_error_m as f64
+            && maximum_relative <= inputs.config.maximum_parent_mean_error_relief_fraction as f64
+        {
+            converged = true;
+            break;
+        }
+    }
+
+    for parent_index in 0..parent_count {
+        let parent_id = inputs.parent_ids[parent_index];
+        let &(start, end, _) = ranges.get(&parent_id).ok_or(3)?;
+        let candidates = &candidate_rows[parent_index];
+        let mut weights = vec![0.0f64; candidates.len()];
+        for cell in &mut cells[start..end] {
+            let xyz = Vec3::from_f32(cell.xyz);
+            let mut weight_sum = 0.0;
+            for (local, &candidate) in candidates.iter().enumerate() {
+                let weight = conditioning_weight(
+                    xyz,
+                    parent_centers[candidate],
+                    parent_widths[candidate],
+                    sigma,
+                );
+                weights[local] = weight;
+                weight_sum += weight;
+            }
+            let correction = candidates
+                .iter()
+                .zip(&weights)
+                .map(|(&candidate, &weight)| coefficients[candidate] * weight / weight_sum)
+                .sum::<f64>();
+            cell.terrain_elevation_m = (cell.terrain_elevation_m as f64 + correction) as f32;
+            cell.terrain_offset_m =
+                cell.terrain_elevation_m - inputs.parent_elevation_m[parent_index];
+        }
+    }
+
+    let center_correction_max_abs_m = coefficients
+        .iter()
+        .copied()
+        .map(f64::abs)
+        .fold(0.0, f64::max);
+    let center_correction_relief_fraction_max = coefficients
+        .iter()
+        .enumerate()
+        .map(|(parent, correction)| {
+            correction.abs() / (inputs.parent_relief_m[parent] as f64).max(50.0)
+        })
+        .fold(0.0, f64::max);
+    let center_correction_scale_fraction_max = coefficients
+        .iter()
+        .enumerate()
+        .map(|(parent, correction)| correction.abs() / conditioning_scales[parent])
+        .fold(0.0, f64::max);
+    Ok(TerrainConditioningStats {
+        raw_parent_elevation_error_max_m,
+        center_correction_max_abs_m,
+        center_correction_relief_fraction_max,
+        center_correction_scale_fraction_max,
+        iteration_count: iteration_count as i32,
+        converged: i32::from(converged),
+    })
 }
 
 fn choose_anchor(
@@ -1378,10 +1790,12 @@ fn compute_stats(
     ranges: &ParentRanges,
     reaches: &[RefinedReachRecord],
     memberships: &[ReachCellRecord],
+    conditioning: TerrainConditioningStats,
 ) -> RefinementStats {
     let radius_squared_km = (inputs.config.planet_radius_m / 1_000.0).powi(2);
     let mut maximum_area_error = 0.0f64;
     let mut maximum_elevation_error = 0.0f64;
+    let mut maximum_elevation_relief_fraction = 0.0f64;
     for &(start, end, parent_index) in ranges.values() {
         let child_area = cells[start..end]
             .iter()
@@ -1394,8 +1808,11 @@ fn compute_stats(
             .map(|cell| cell.terrain_elevation_m as f64 * cell.area_km2)
             .sum::<f64>()
             / child_area;
-        maximum_elevation_error = maximum_elevation_error
-            .max((mean_elevation - inputs.parent_elevation_m[parent_index] as f64).abs());
+        let elevation_error =
+            (mean_elevation - inputs.parent_elevation_m[parent_index] as f64).abs();
+        maximum_elevation_error = maximum_elevation_error.max(elevation_error);
+        maximum_elevation_relief_fraction = maximum_elevation_relief_fraction
+            .max(elevation_error / (inputs.parent_relief_m[parent_index] as f64).max(50.0));
     }
     let selected_area_km2 = cells.iter().map(|cell| cell.area_km2).sum::<f64>();
     let area_by_cell = cells
@@ -1427,6 +1844,15 @@ fn compute_stats(
         selected_area_km2,
         maximum_parent_area_relative_error: maximum_area_error,
         maximum_parent_elevation_error_m: maximum_elevation_error,
+        maximum_parent_elevation_error_relief_fraction: maximum_elevation_relief_fraction,
+        raw_parent_elevation_error_max_m: conditioning.raw_parent_elevation_error_max_m,
+        conditioning_center_correction_max_abs_m: conditioning.center_correction_max_abs_m,
+        conditioning_center_correction_relief_fraction_max: conditioning
+            .center_correction_relief_fraction_max,
+        conditioning_center_correction_scale_fraction_max: conditioning
+            .center_correction_scale_fraction_max,
+        conditioning_iteration_count: conditioning.iteration_count,
+        conditioning_converged: conditioning.converged,
         total_reach_length_km: reaches
             .iter()
             .map(|reach| reach.path_length_m / 1_000.0)
@@ -1443,10 +1869,18 @@ fn compute_stats(
 
 fn run_refinement(inputs: &Inputs<'_>) -> Result<Outcome, i32> {
     let (coarse, fine) = validate_inputs(inputs)?;
-    let (cells, local_by_id, ranges) = generate_children(inputs, coarse, fine)?;
+    let (cells, local_by_id, ranges, conditioning) = generate_children(inputs, coarse, fine)?;
     let (reaches, path_cells, memberships) =
         refine_reaches(inputs, fine, &cells, &local_by_id, &ranges)?;
-    let stats = compute_stats(inputs, fine, &cells, &ranges, &reaches, &memberships);
+    let stats = compute_stats(
+        inputs,
+        fine,
+        &cells,
+        &ranges,
+        &reaches,
+        &memberships,
+        conditioning,
+    );
     Ok(Outcome {
         cells,
         reaches,
@@ -1673,6 +2107,17 @@ mod tests {
                 planet_radius_m: 6_371_000.0,
                 terrain_seed: 42,
                 terrain_noise_fraction: 0.45,
+                terrain_base_wavelength_m: 1_000_000.0,
+                terrain_octave_count: 4,
+                terrain_persistence: 0.52,
+                terrain_domain_warp_fraction: 0.25,
+                terrain_ridge_fraction: 0.15,
+                conditioning_maximum_iterations: 64,
+                conditioning_damping: 0.72,
+                conditioning_sigma_parent_cells: 0.72,
+                maximum_parent_mean_error_m: 1.0,
+                maximum_parent_mean_error_relief_fraction: 0.02,
+                maximum_center_correction_scale_fraction: 0.95,
             },
             parent_ids: &parent_ids,
             parent_elevation_m: &elevations,
@@ -1697,7 +2142,8 @@ mod tests {
         assert!(result.reaches[0].path_length_m > 0.0);
         assert_eq!(result.stats.path_topology_valid, 1);
         assert!(result.stats.maximum_parent_area_relative_error < 1e-12);
-        assert!(result.stats.maximum_parent_elevation_error_m < 1e-3);
+        assert!(result.stats.maximum_parent_elevation_error_m <= 1.01);
+        assert_eq!(result.stats.conditioning_converged, 1);
         assert!(result
             .memberships
             .iter()
@@ -1747,6 +2193,17 @@ mod tests {
                 planet_radius_m: 6_371_000.0,
                 terrain_seed: 91,
                 terrain_noise_fraction: 0.35,
+                terrain_base_wavelength_m: 1_000_000.0,
+                terrain_octave_count: 4,
+                terrain_persistence: 0.52,
+                terrain_domain_warp_fraction: 0.25,
+                terrain_ridge_fraction: 0.15,
+                conditioning_maximum_iterations: 64,
+                conditioning_damping: 0.72,
+                conditioning_sigma_parent_cells: 0.72,
+                maximum_parent_mean_error_m: 1.0,
+                maximum_parent_mean_error_relief_fraction: 0.02,
+                maximum_center_correction_scale_fraction: 0.95,
             },
             parent_ids: &parent_ids,
             parent_elevation_m: &elevations,
@@ -1876,6 +2333,17 @@ mod tests {
                 planet_radius_m: 6_371_000.0,
                 terrain_seed: 91,
                 terrain_noise_fraction: 0.4,
+                terrain_base_wavelength_m: 1_000_000.0,
+                terrain_octave_count: 4,
+                terrain_persistence: 0.52,
+                terrain_domain_warp_fraction: 0.25,
+                terrain_ridge_fraction: 0.15,
+                conditioning_maximum_iterations: 64,
+                conditioning_damping: 0.72,
+                conditioning_sigma_parent_cells: 0.72,
+                maximum_parent_mean_error_m: 1.0,
+                maximum_parent_mean_error_relief_fraction: 0.02,
+                maximum_center_correction_scale_fraction: 0.95,
             },
             parent_ids: &parent_ids,
             parent_elevation_m: &elevations,

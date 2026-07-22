@@ -127,7 +127,29 @@ stage_overrides:
     river_minimum_discharge_m3s: 25.0
   basin_refinement:
     refinement_factor: 16
-    terrain_noise_fraction: 0.45
+    # Literal L2 owns coherent hills, uplands, and valleys broader than L3.
+    terrain_noise_fraction: 0.85
+    terrain_base_wavelength_m: 72000
+    terrain_octave_count: 5
+    terrain_persistence: 0.58
+    terrain_domain_warp_fraction: 0.32
+    terrain_ridge_fraction: 0.20
+    # L0 means constrain the regional realization without embossing one
+    # correction dome into every approximately 72 km parent.
+    conditioning_maximum_iterations: 48
+    conditioning_damping: 0.72
+    conditioning_sigma_parent_cells: 0.50
+    maximum_parent_mean_error_m: 15
+    maximum_parent_mean_error_relief_fraction: 0.05
+    maximum_center_correction_scale_fraction: 5.00
+    # L0 priority-flood head is connectivity, not 72 km bathymetry. Bound
+    # anomalous dry proto-ocean pits while retaining their raw bedrock prior.
+    maximum_unresolved_basin_depth_m: 1200
+    unresolved_basin_relief_depth_multiplier: 4.0
+    maximum_parent_offset_span_m: 2500
+    maximum_parent_offset_span_relief_fraction: 8.0
+    maximum_tile_bubble_correlation_p50: 0.35
+    maximum_tile_bubble_correlation_p95: 0.80
     maximum_parent_boundary_residual_p95_ratio: 1.35
   basin_erosion:
     minimum_bed_slope: 0.00001

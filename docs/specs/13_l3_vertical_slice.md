@@ -1,6 +1,6 @@
 # L3 Regional Vertical Slice
 
-Status: approved contract; continuous base terrain implemented; human review pending
+Status: base terrain and hydrology V0 implemented; channel geometry pending
 
 ## Purpose
 
@@ -21,6 +21,12 @@ The first physical L3 stage is reproduced with:
 
 ```bash
 uv run map-maker l3-terrain
+```
+
+Route its monthly water, depressions, and vector river network with:
+
+```bash
+uv run map-maker l3-hydrology
 ```
 
 It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
@@ -50,24 +56,30 @@ geology, materials, soils, biosphere, and biome fields remain parent priors.
 They may constrain an L3 process but cannot be relabeled as recomputed L3
 physics.
 
+L2 already owns coherent regional morphology from approximately `5-72 km`.
+L3 consumes that shape and adds local residual terrain at roughly `4.5 km` and
+below. Increasing L3 wavelengths to compensate for a smooth L2 source is a
+contract violation; the L2 realization must be repaired instead.
+
 The target package contains a complete coarse upstream catchment, a continuous
 L2 terrain window extending four L2 cells (about `18 km`) beyond its bounding
 box, and one further L2 source-context ring. It records the sole outlet, L2
 child indexes, source checksums, expected raster cost, and mutually exclusive
-core, process-halo, and outside roles. Hydrological acceptance is measured only
-on the catchment core; the halo supplies process boundary state.
+core, process-halo, and outside roles. The inherited catchment core selects the
+target and conserves forcing. Hydrology refines its actual D8 outlet watershed
+inside the halo and measures process acceptance on that routed core.
 
 ## V0 Process Order
 
 1. **Implemented:** generate seamless deterministic base terrain conditioned on
    L2 means, relief, lithology, orogenic direction, and fixed boundary values.
-2. Downscale monthly precipitation, snowmelt, and runoff as conservative
+2. **Implemented:** downscale monthly precipitation, snowmelt, and runoff as conservative
    forcing fields; do not run a new atmospheric model in V0.
-3. Perform depression-aware routing with explicit lake storage, spill controls,
+3. **Implemented:** perform depression-aware routing with explicit lake storage, spill controls,
    and one registered regional outlet.
-4. Discover tributary vectors from accumulated flow while preserving inherited
+4. **Implemented:** discover tributary vectors from accumulated flow while preserving inherited
    major-trunk identity and monthly hydrographs.
-5. Derive physical width, depth, velocity, slope, stream power, sediment load,
+5. **Implemented:** derive physical width, depth, velocity, slope, stream power, sediment load,
    and channel/floodplain/valley fractional support.
 6. Apply bounded fluvial incision and deposition only where the active terrain
    resolution can represent the process support.
@@ -107,6 +119,40 @@ explicit domain boundaries in `terrain_domain.png`. Both include legends and
 an approximate kilometre scale bar. It does not route water or create river
 cells.
 
+## Implemented Hydrology V0
+
+The hydrology artifact routes the full process domain with a native D8 graph.
+It conservatively redistributes inherited monthly forcing, realizes physical
+ocean separately from terrain elevation, iterates fill/spill/breach relaxation,
+and publishes lakes, prospective breach events, generated reaches, inherited
+reaches, and inherited-reach alignment. Base terrain is not mutated.
+
+The registered outlet is a regional handoff, not necessarily a sea mouth.
+Hydrology derives a fine routed catchment around that outlet rather than using
+the inherited L0 envelope as an artificial wall. Both masks are durable. Hard
+gates cover overlap in both directions, area ratio, outer-halo contact, outlet
+hydrograph agreement, forcing and runoff conservation, receiver topology,
+open-water fraction, and unexplained downstream discharge loss.
+
+Rivers remain vector reach paths with stable IDs. `reported_reach_support`
+rasterizes those paths only for diagnostics; `waterbody_flow_connector` marks
+the zero-width parts that carry graph continuity through lakes or unresolved
+hydraulic controls. Neither field claims a cell-wide channel. Graph validation
+uses complete reach support so flow cannot stop and restart at each lake. The
+map keeps connectors through small ponds but suppresses their stroke beneath
+lakes at least `50 km2`, where the lake polygon itself shows the continuous
+water path. Physical width and depth remain reach attributes.
+
+The canonical seed-42 result contains `6.04 million` cells, a routed core of
+about `96,560 km2`, `18,555` reported reaches, `2,819` core lakes, a
+Strahler-order-6 network, and a roughly `1,190 m3/s` outlet. Its outlet monthly
+hydrograph differs from the inherited target by about `11.5%`, open water
+covers about `8.61%` of core land, and no material discharge loss is
+unexplained. This selected inland window contains no physical ocean, no closed
+routing sinks, and no endorheic depressions. Sparse arrowheads in the diagnostic
+show downstream direction so headwater starts are not mistaken for river ends.
+Both hydrology maps include a legend and approximate `100 km` scale bar.
+
 ## Required Outputs
 
 - base terrain elevation and unresolved relief;
@@ -129,9 +175,11 @@ cells.
 - exact target extent, unique stable IDs, and bounded peak memory/storage;
 - a continuous terrain rectangle with exhaustive, mutually exclusive core,
   process-halo, and outside masks;
-- hydrological validity and conservation acceptance measured on the core only;
+- hydrological validity and conservation acceptance measured on the fine routed core;
+- inherited/routed catchment overlap, area-ratio, and process-boundary gates;
 - all non-lake flow reaches the registered outlet or another explicit terminal;
 - no accidental sinks and no receiver cycles;
+- no material downstream discharge decrease without explicit waterbody loss;
 - inherited major trunks remain connected and discharge-conservative;
 - precipitation/runoff, lake storage, erosion, deposition, and sediment budgets
   close within their declared tolerances;

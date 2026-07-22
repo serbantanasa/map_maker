@@ -182,13 +182,18 @@ uv run map-maker regional-handoff
 
 The checked-in `configs/l2_regional_handoff.yaml` selects a complete drainage
 basin, adds five L0 context rings, and writes deterministic factor-16 terrain,
-conservative ocean/lake/wetland occupancy, inherited parent priors, and river
-graph/vector tables under
+parent-conservative ocean/wetland occupancy, basin-conservative lake occupancy,
+inherited parent priors, and river graph/vector tables under
 `out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2/`. Arrays use
 chunked Zarr, graph and catalog data use Parquet, and a checksummed manifest and
 hard validation report state which fields are true L2 realizations versus L0
-priors. The package deliberately does not invent tributaries, downscale climate
-or soils, or apply river incision.
+priors. L2 terrain realizes coherent regional morphology across roughly
+`5-72 km` wavelengths under bounded soft L0 conditioning; it does not stamp an
+exact correction shape into each coarse parent. Unresolved coarse hydraulic
+pits retain their raw bedrock prior but use a bounded L2 conditioning target,
+and lake area is realized coherently over stable hydraulic-basin identities
+rather than repeated inside every parent. The package deliberately does not
+invent tributaries, downscale climate or soils, or apply river incision.
 
 Select and validate the canonical L3 vertical-slice target with:
 
@@ -219,6 +224,26 @@ stable 64-bit IDs, explicit core/process-halo/outside masks, parent and chunk
 diagnostics, checksummed provenance, a clean native-face terrain preview, and a
 separate domain-role preview. Both maps include a legend and kilometre scale
 bar. It does not yet downscale runoff or route L3 rivers.
+
+Route depression-aware monthly hydrology and generate the first L3 tributary
+graph with:
+
+```bash
+uv run map-maker l3-hydrology
+```
+
+This writes conservative monthly forcing, a fine routed-catchment mask,
+fractional lakes and wetlands, D8 receivers, monthly discharge, physical reach
+attributes, generated and inherited river graphs, explicit lake-flow
+connectors, validation, and checksummed maps under
+`out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0/`.
+The regional outlet is a downstream handoff, not necessarily an ocean mouth.
+Base terrain is unchanged; breach incision remains prospective. Diagnostic
+maps preserve graph continuity, suppress connector strokes only beneath large
+lake polygons, use sparse arrowheads to show downstream direction, explicitly
+report whether physical ocean or closed sinks are present, and include legends
+and kilometre scales. The canonical first slice is inland and contains no
+physical ocean.
 
 Run the previous procedural generator for comparison:
 

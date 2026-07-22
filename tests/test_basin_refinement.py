@@ -11,6 +11,7 @@ from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline.cubed_sphere import CubedSphereGrid
 from map_maker.pipeline.stages.basin_refinement import (
     BasinRefinementConfig,
+    _bounded_unresolved_basin_targets,
     _expand_parent_halo,
     _extend_hydraulic_surface_over_submerged_approaches,
 )
@@ -63,6 +64,11 @@ def _config(tmp_path: Path, run_id: str, *, seed: int = 37) -> PipelineConfig:
                 "basin_refinement": {
                     "refinement_factor": 4,
                     "terrain_noise_fraction": 0.4,
+                    # The face-20 fixture has intentionally abrupt, continent-scale
+                    # parent means; this exercises convergence rather than the
+                    # face-128 Earthlike correction-amplitude calibration.
+                    "maximum_center_correction_scale_fraction": 10.0,
+                    "maximum_tile_bubble_correlation_p50": 0.50,
                 },
             },
         }
@@ -109,14 +115,31 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert metadata["channel_reach_count"] + metadata["connector_reach_count"] == reaches.num_rows
     assert metadata["reach_cell_count"] == memberships.num_rows > 0
     assert metadata["maximum_parent_area_relative_error"] < 1e-10
-    assert metadata["maximum_parent_elevation_error_m"] < 1e-3
+    assert metadata["conditioning_converged"] == 1
+    assert metadata["terrain_parent_mean_conditioning_valid"] == 1
+    assert metadata["maximum_parent_elevation_error_m"] <= metadata["maximum_parent_mean_error_m"]
+    assert (
+        metadata["maximum_parent_elevation_error_relief_fraction"]
+        <= metadata["maximum_parent_mean_error_relief_fraction"]
+    )
+    assert metadata["terrain_tile_motif_valid"] == 1
+    assert metadata["terrain_local_relief_envelope_valid"] == 1
+    assert metadata["terrain_parent_offset_span_max_m"] <= metadata["maximum_parent_offset_span_m"]
+    assert (
+        metadata["terrain_parent_offset_span_relief_fraction_max"]
+        <= metadata["maximum_parent_offset_span_relief_fraction"]
+    )
+    assert metadata["unresolved_basin_depth_bound_valid"] == 1
     assert metadata["terrain_parent_boundary_edge_count"] > 0
     assert metadata["terrain_parent_boundary_continuity_valid"] == 1
     assert metadata["terrain_parent_boundary_residual_p95_ratio"] <= 2.0
 
     assert len(set(cells["fine_cell_id"].to_pylist())) == cells.num_rows
     assert np.max(np.abs(np.asarray(parents["area_relative_error"]))) < 1e-10
-    assert np.max(np.abs(np.asarray(parents["elevation_error_m"]))) < 1e-3
+    assert (
+        np.max(np.abs(np.asarray(parents["elevation_error_m"])))
+        <= metadata["maximum_parent_mean_error_m"]
+    )
     assert np.any(np.asarray(cells["terrain_offset_m"]) > 0.0)
     assert np.any(np.asarray(cells["terrain_offset_m"]) < 0.0)
     assert "process_excluded" in cells.column_names
@@ -127,6 +150,8 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert "standing_water_fraction" in parents.column_names
     assert "channel_surface_prior_m" in parents.column_names
     assert "hydraulic_surface_controlled" in parents.column_names
+    assert "source_parent_elevation_m" in parents.column_names
+    assert "unresolved_basin_depth_adjusted" in parents.column_names
     assert (
         int(np.count_nonzero(np.asarray(parents["process_excluded"])))
         == metadata["process_excluded_parent_count"]
@@ -294,6 +319,12 @@ def test_refinement_config_rejects_invalid_controls():
         BasinRefinementConfig.from_mapping({"basin_id": -1})
     with pytest.raises(ValueError, match="terrain_noise_fraction"):
         BasinRefinementConfig.from_mapping({"terrain_noise_fraction": 1.1})
+    with pytest.raises(ValueError, match="terrain_base_wavelength_m"):
+        BasinRefinementConfig.from_mapping({"terrain_base_wavelength_m": 0.0})
+    with pytest.raises(ValueError, match="terrain_octave_count"):
+        BasinRefinementConfig.from_mapping({"terrain_octave_count": 1})
+    with pytest.raises(ValueError, match="conditioning_sigma_parent_cells"):
+        BasinRefinementConfig.from_mapping({"conditioning_sigma_parent_cells": 3.0})
     with pytest.raises(ValueError, match="halo_parent_rings"):
         BasinRefinementConfig.from_mapping({"halo_parent_rings": 9})
     with pytest.raises(ValueError, match="maximum_parent_boundary"):
@@ -314,6 +345,25 @@ def test_parent_halo_expands_over_topology_neighbors():
     np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 0), [0])
     np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 1), [0, 1, 2])
     np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 2), [0, 1, 2, 3])
+
+
+def test_unresolved_hydraulic_basin_depth_is_bounded_without_losing_source() -> None:
+    source = np.asarray([-4_000.0, -500.0, -4_000.0, -4_000.0], dtype=np.float32)
+    relief = np.asarray([300.0, 300.0, 800.0, 300.0], dtype=np.float32)
+    hydraulic_surface = np.asarray([200.0, 200.0, 200.0, 200.0], dtype=np.float32)
+    controlled = np.asarray([True, True, True, False])
+    target, adjusted, depth_limit = _bounded_unresolved_basin_targets(
+        source,
+        relief,
+        hydraulic_surface,
+        controlled,
+        maximum_depth_m=1_200.0,
+        relief_depth_multiplier=4.0,
+    )
+    np.testing.assert_array_equal(adjusted, [True, False, True, False])
+    np.testing.assert_allclose(depth_limit, [1_200.0, 1_200.0, 3_200.0, 1_200.0])
+    np.testing.assert_allclose(target, [-1_000.0, -500.0, -3_000.0, -4_000.0])
+    np.testing.assert_allclose(source, [-4_000.0, -500.0, -4_000.0, -4_000.0])
 
 
 def test_submerged_channel_approach_inherits_receiving_water_surface():

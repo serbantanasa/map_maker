@@ -20,7 +20,7 @@ NATIVE_ABI_OVERRIDES = {
     "hydrology_pass2_native": 1,
     "l3_terrain_native": 1,
     "potential_biosphere_native": 3,
-    "refinement_native": 3,
+    "refinement_native": 4,
     "surface_water_native": 2,
 }
 SIMULATION_NATIVE_LIBRARIES = (

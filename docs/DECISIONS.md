@@ -2475,7 +2475,7 @@ without pretending that coarse terrain resolves their banks or lake passages.
 
 ## Decision 050: L2 Regional Handoff Is A Conditional Package
 
-Status: implemented
+Status: implemented; terrain and lake-realization clauses superseded by Decisions 055-056
 
 Decision:
 Build the first literal L2 product as a selected regional handoff package, not
@@ -2491,11 +2491,12 @@ The package contract is:
 
 - select one complete drainage basin by stable `BasinID` and include a
   configurable number of L0 neighbor rings as boundary context;
-- realize every selected parent into deterministic, parent-mean-conserving L2
+- realize every selected parent into deterministic, softly L0-conditioned L2
   child terrain using the established refinement kernel;
-- place ocean, lake, and wetland occupancy among child cells by terrain rank,
-  conserving each source parent's fractional areas and never exceeding unit
-  surface occupancy;
+- place ocean and wetland occupancy among child cells by terrain rank while
+  conserving each source parent's fractional area; realize lake occupancy over
+  each stable hydraulic `LakeID` as specified by Decision 056, and never exceed
+  unit surface occupancy;
 - persist all other grid-shaped tectonic, geological, climate, hydrologic,
   material, soil, biosphere, and biome values as parent priors joined through
   stable parent IDs; do not relabel repeated parent values as downscaled L2
@@ -2508,8 +2509,9 @@ The package contract is:
   software/config versions, selection, topology, resolution, units, and
   approximation semantics explicitly.
 
-The package is accepted only when child area and parent-mean terrain conserve
-their parents, surface fractions conserve parent ocean/lake/wetland area,
+The package is accepted only when child area conserves its parents, terrain
+means satisfy the bounded soft contract in Decision 055, ocean and wetland
+fractions conserve parent area, lake fractions conserve hydraulic-basin area,
 surface occupancy closes, river paths reference packaged children, source
 checksums are complete, and a repeated export is deterministic.
 
@@ -2655,3 +2657,179 @@ Routing against that boundary would truncate neighboring slopes, depressions,
 and tributaries. A modest continuous window is still cheap on the 32 GB target
 machine and gives later processes honest boundary state without changing which
 catchment they are required to conserve.
+
+## Decision 054: L3 Hydrology Refines The Catchment And Keeps Rivers As Vectors
+
+Status: implemented; canonical artifact passes automated acceptance
+
+Decision:
+Run the first L3 hydrology solve over the complete `200 m` terrain window's
+core plus process halo using D8 topology. Redistribute inherited monthly
+precipitation, runoff, snowmelt, and glacier melt over L3 topography while
+conserving represented L0 water volume. This is regional hydrology, not a new
+atmospheric simulation.
+
+Treat physical ocean occupancy, elevation relative to sea level, and a regional
+outlet as distinct concepts. A negative-elevation cell is land unless the
+inherited physical-ocean fraction places water there. The selected outlet is a
+handoff where the target river continues into downstream regional context; it
+is not assumed to be an ocean mouth. Diagnostic maps must not color closed
+below-datum land as ocean.
+
+Use priority-flood routing with explicit depressions, water balance, fill,
+spill, and bounded iterative breach relaxation. The canonical configuration
+allows at most `80 m` prospective incision in one pass and `160 m` cumulatively.
+Hydrologic elevation and prospective breach incision are separate outputs;
+this stage does not modify base terrain. Applied fluvial incision remains a
+later process with physical support and sediment accounting.
+
+The inherited L0 catchment mask is a target envelope, not a block-aligned
+watershed wall. Derive `inside_routed_catchment_core` as the complete fine D8
+upstream closure of the registered outlet. Measure hydrological acceptance on
+that routed core, retain the inherited mask for provenance and forcing
+conservation, and require:
+
+- at least `80%` of inherited area retained by the fine watershed;
+- at least `80%` of routed area overlapping the inherited envelope;
+- routed-to-inherited area ratio in `[0.80, 1.20]`; and
+- no more than `0.1%` of routed-core area touching the outer process boundary.
+
+This supersedes Decision 053 only where it made the inherited core mask the
+hydrological acceptance boundary. Its storage extent, role masks, durability,
+and map requirements remain in force.
+
+Canonical river identity is the generated reach graph and vector path. Raster
+cells store fractional channel, floodplain, lake, and wetland support; they do
+not become categorical river-width pixels. Preserve inherited L2 reaches and
+audit their support rather than coercing the fine graph onto coarse centerlines.
+Where flow crosses a lake or unresolved hydraulic control, publish an explicit
+zero-width connector. Graph validation must use complete reach support,
+including those connectors. Cartographic diagnostics may suppress connector
+strokes beneath a large lake polygon, but may not delete, split, or renumber the
+underlying reach.
+
+Mean discharge must be nondecreasing along every internal receiver edge except
+for an explicitly waterbody-associated evaporation or seepage loss. Any
+material unexplained decrease is a hard failure. River width on a map is a
+symbolized discharge class; physical channel width remains an attribute of the
+vector reach until adaptive refinement resolves banks.
+
+The seed-42 baseline routes `6,040,320` cells, produces a roughly `96,560 km2`
+fine catchment, a Strahler-order-6 network, a roughly `1,190 m3/s` outlet, and a
+roughly `1,158 km` longest reported chain. Its `2,819` core lakes occupy `8.61%`
+of core land; only `13` are at least `50 km2`. The current inland window
+contains no physical ocean, no closed routing sink, and no endorheic
+depression. Small depressions remain fractional hydrology: in the full process
+catalog, `92%` of lakes are below `1 km2` but contribute only about `9%` of lake
+area. Their named/cartographic reporting threshold is separate from whether
+their water exists.
+
+Reason:
+The coarse target envelope differs slightly from the watershed resolved by
+fine terrain. Hard-walling that envelope would manufacture divides and lose
+valid tributaries. Conversely, accepting an unconstrained regional basin could
+silently capture neighboring drainage. Explicit overlap and boundary gates
+permit honest refinement. Complete vector support also prevents a continuous
+river from appearing as disconnected beads merely because it traverses lakes
+or channels narrower than one L3 cell.
+
+## Decision 055: Mesoscale Terrain Morphology Belongs To L2
+
+Status: implemented; canonical artifacts regenerated; human visual disposition pending
+
+Decision:
+Treat the roughly `72 km` L0 elevation and relief fields as regional
+constraints, not as literal planar pixels and not as stamps that each finer
+level must reproduce exactly. The literal factor-16 L2 realization owns
+coherent hills, uplands, valleys, and drainage-divide structure from roughly
+one L2 cell through one L0 cell. With the current hierarchy this is about
+`5-72 km`, with the strongest regional form in the `18-72 km` band. L3 owns
+local terrain at roughly one L2 cell and below; it must not manufacture missing
+regional hills by increasing its own wavelength.
+
+Generate L2 residual terrain from global spherical coordinates using a
+deterministic, domain-warped multiscale field with a bounded ridged component.
+The field crosses L0 and cube-face boundaries continuously. Do not use a
+parent-local sine, dome, or exact-mean correction basis. Condition L2 to L0
+with overlapping spherical radial basis functions spanning three L0 rings.
+The final mean for each L0 parent must lie within both `15 m` and `5%` of its
+declared relief. Correction amplitude is bounded against the largest of local
+relief, neighboring L0 elevation contrast, and a small absolute floor so
+coastlines and continental-to-abyssal transitions remain representable.
+
+Reject an L2 artifact when parent-boundary residuals exceed the declared
+interior-jump ratio, when the repeated-parent motif correlation exceeds its
+limits, when any one parent exceeds the configured absolute or relief-relative
+child-elevation span, or when the soft conditioner fails to converge. Continue
+to conserve parent area and parent ocean/wetland fractions exactly. Decision
+056 owns hydraulic-basin conditioning and lake-area conservation. L3 retains
+its own independent seam, motif, and soft mean gates after consuming this L2
+result.
+
+The canonical target window is approximately `461 x 532 km`, not one coarse
+pixel. Its source L0 state has negligible local orogenic amplitude, so its
+accepted morphology is rolling upland and lowland rather than a mountain belt.
+Mountain-scale regional form must remain causally tied to L0 tectonic and
+orogenic state; refinement may reveal plausible hills but may not invent an
+absent range.
+
+This decision supersedes Decision 050's exact parent-mean terrain language. It
+does not change exact area conservation, Decision 056's surface-realization
+contract, Decision 052's L3 soft-conditioning contract, or Decision 054's
+immutable base-terrain rule for hydrology.
+
+Reason:
+The first L3 map exposed a real scale gap: L0 supplied a broad continental
+slope while L3 intentionally supplied only sub-L2 texture, leaving hundreds of
+kilometres visually monotone. Extending L3 noise to regional wavelengths
+failed seam and repeated-tile gates and assigned morphology to the wrong
+level. A coherent L2 realization fills the gap once, before routing, while
+preserving the large-scale geological signal and avoiding one embossed hill
+per L0 parent.
+
+## Decision 056: L2 Hydraulic Basins Are Basin-Coherent Conditional Realizations
+
+Status: implemented; canonical artifacts regenerated; human visual disposition pending
+
+Decision:
+Treat the L0 priority-flood hydraulic surface as a connectivity and spill-head
+constraint, not as resolved bathymetry and not as permission to preserve an
+abyssal cell mean on land. Preserve the raw source bedrock prior, but condition
+literal L2 terrain against a separate bounded target wherever a hydraulically
+controlled inland parent lies implausibly far below its control surface.
+
+For the current Earthlike profile, the maximum unresolved depth is the larger
+of `1,200 m` and four times inherited local relief. These values are scenario
+controls, not universal planetary constants. Publish the raw source mean,
+conditioned target, adjustment mask, and adjustment magnitude independently.
+Reject the artifact if any controlled parent exceeds the configured depth
+after conditioning.
+
+Do not reproduce fractional lake area independently inside every L0 parent.
+That method conserves numbers but stamps rectangular water quotas at the parent
+frequency. Instead, group parents by stable hydrology `LakeID`, conserve total
+lake area across that represented basin, and rank eligible L2 children by
+continuous terrain relative to the inherited hydraulic surface with stable ID
+tie-breaking. Ocean and wetland fractions remain exactly parent-conservative;
+combined occupancy may never exceed one.
+
+Add a localized terrain gate in addition to percentile seam and motif checks.
+The Earthlike canonical package rejects any L0 parent whose L2 child offset span
+exceeds `2,500 m` or eight times inherited relief. Scenario profiles and
+deliberately coarse test worlds may declare different limits explicitly.
+
+This decision supersedes Decision 050's exact per-parent lake-fraction clause
+and its implication that raw source surface elevation must be reproduced even
+when that source is an unresolved hydraulic pit. It does not permit arbitrary
+terrain raising, erase source provenance, invent physical lake bathymetry, or
+change Decision 054's immutable L3 base-terrain rule.
+
+Reason:
+The wider L2 preview exposed 42 inland proto-ocean parents near `-4.1 km` while
+their connected flood head lay near `+0.2 km`. Exact conditioning turned those
+unresolved coarse states into a parent-aligned multi-kilometre chasm, and exact
+per-parent lake quotas tiled its surface with block-shaped ponds. Bounded
+hydraulic targets remove the false abyss while retaining the source state for
+audit and future process refinement. Basin-level area conservation then lets
+one connected lake or inland sea occupy the locally lowest terrain rather than
+repeating the L0 storage pattern as visible geometry.

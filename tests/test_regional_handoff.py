@@ -16,6 +16,7 @@ from map_maker.pipeline.l3_target import (
 from map_maker.pipeline.regional_handoff import (
     RegionalHandoffConfig,
     RegionalHandoffResult,
+    _maximum_group_fraction_error,
     _realize_surface_fractions,
     _restrict_grid_array,
     export_regional_handoff,
@@ -113,6 +114,26 @@ def test_surface_realization_is_deterministic_and_parent_area_conserving():
     assert np.max(occupancy) <= 1.0
 
 
+def test_lake_realization_conserves_identified_basin_instead_of_parent_blocks():
+    parent_row = np.repeat(np.arange(2, dtype=np.int32), 4)
+    area = np.ones(8, dtype=np.float64)
+    terrain = np.asarray([100.0, 110.0, 120.0, 130.0, -40.0, -30.0, -20.0, -10.0])
+    target = np.asarray([0.5, 0.0])
+    groups = np.asarray([7, 7], dtype=np.int64)
+    realized = _realize_surface_fractions(
+        {"lake_fraction": target},
+        parent_row,
+        area,
+        terrain,
+        np.arange(8, dtype=np.int32),
+        parent_count=2,
+        parent_groups={"lake_fraction": groups},
+    )["lake_fraction"]
+    represented = np.bincount(parent_row, weights=realized * area) / 4.0
+    np.testing.assert_allclose(represented, [0.0, 0.5])
+    assert _maximum_group_fraction_error(represented, target, np.asarray([4.0, 4.0]), groups) < 1e-8
+
+
 def test_regional_handoff_cli(tmp_path: Path, monkeypatch, capsys):
     config_path = tmp_path / "handoff.yaml"
     config_path.write_text("world_config: world.yaml\n", encoding="utf8")
@@ -164,6 +185,10 @@ stage_overrides:
     moisture_steps_per_month_at_face_128: 16
   basin_refinement:
     terrain_noise_fraction: 0.4
+    maximum_center_correction_scale_fraction: 20.0
+    maximum_parent_offset_span_m: 5000.0
+    maximum_parent_offset_span_relief_fraction: 10.0
+    maximum_tile_bubble_correlation_p50: 0.50
 """,
         encoding="utf8",
     )
@@ -198,6 +223,7 @@ region:
     assert validation["passed"]
     assert validation["maximum_surface_fraction_error"] <= 1e-6
     assert validation["terrain_parent_boundary_continuity_valid"] == 1
+    assert validation["terrain_local_relief_envelope_valid"] == 1
     assert (
         validation["terrain_parent_boundary_residual_p95_ratio"]
         <= validation["maximum_parent_boundary_residual_p95_ratio"]

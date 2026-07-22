@@ -257,7 +257,17 @@ pub extern "C" fn cubed_sphere_hydrology_abi_version() -> u32 {
     3
 }
 
-fn priority_flood(elevation: &[f32], ocean: &[u8], neighbors: &[i32]) -> Option<FloodResult> {
+#[no_mangle]
+pub extern "C" fn regional_hydrology_abi_version() -> u32 {
+    1
+}
+
+fn priority_flood(
+    elevation: &[f32],
+    ocean: &[u8],
+    neighbors: &[i32],
+    neighbor_count: usize,
+) -> Option<FloodResult> {
     let total = elevation.len();
     let mut filled = vec![f32::INFINITY; total];
     let mut receiver = vec![-1i32; total];
@@ -283,7 +293,7 @@ fn priority_flood(elevation: &[f32], ocean: &[u8], neighbors: &[i32]) -> Option<
             continue;
         }
         order.push(entry.cell);
-        for adjacent in &neighbors[entry.cell * D4_NEIGHBORS..(entry.cell + 1) * D4_NEIGHBORS] {
+        for adjacent in &neighbors[entry.cell * neighbor_count..(entry.cell + 1) * neighbor_count] {
             let next = *adjacent as usize;
             if visited[next] {
                 continue;
@@ -345,6 +355,7 @@ fn find_depressions(
     relief: &[f32],
     ocean: &[u8],
     neighbors: &[i32],
+    neighbor_count: usize,
     area_km2: &[f64],
     config: &HydrologyConfig,
 ) -> (Vec<i32>, Vec<Depression>) {
@@ -369,7 +380,7 @@ fn find_depressions(
         let mut cells = Vec::new();
         while let Some(cell) = queue.pop_front() {
             cells.push(cell);
-            for adjacent in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+            for adjacent in &neighbors[cell * neighbor_count..(cell + 1) * neighbor_count] {
                 let next = *adjacent as usize;
                 if candidate[next] && depression_id[next] < 0 {
                     depression_id[next] = id;
@@ -390,7 +401,7 @@ fn find_depressions(
         let mut outlet_receiver = flood.receiver[outlet_cell].max(0) as usize;
         let mut component_saddle_m = f32::INFINITY;
         for &cell in &cells {
-            for adjacent in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+            for adjacent in &neighbors[cell * neighbor_count..(cell + 1) * neighbor_count] {
                 let next = *adjacent as usize;
                 if depression_id[next] == id {
                     continue;
@@ -955,6 +966,7 @@ fn route_preserved_water(
     depressions: &mut [Depression],
     depression_id: &[i32],
     neighbors: &[i32],
+    neighbor_count: usize,
     flood_order: &[usize],
     receiver: &mut [i32],
 ) {
@@ -991,7 +1003,7 @@ fn route_preserved_water(
         visited[root] = true;
         queue.push_back(root);
         while let Some(cell) = queue.pop_front() {
-            for adjacent in &neighbors[cell * D4_NEIGHBORS..(cell + 1) * D4_NEIGHBORS] {
+            for adjacent in &neighbors[cell * neighbor_count..(cell + 1) * neighbor_count] {
                 let next = *adjacent as usize;
                 if depression_id[next] == depression.id && !visited[next] {
                     visited[next] = true;
@@ -1446,6 +1458,7 @@ fn free_raw_array<T>(data: *mut T, len: usize) {
 #[allow(clippy::too_many_arguments)]
 fn run_hydrology(
     total: usize,
+    neighbor_count: usize,
     config: &HydrologyConfig,
     area_steradians: &[f64],
     neighbors: &[i32],
@@ -1485,6 +1498,8 @@ fn run_hydrology(
     stats_out: &mut HydrologyStats,
 ) -> i32 {
     if total == 0
+        || !(D4_NEIGHBORS..=8).contains(&neighbor_count)
+        || neighbors.len() != total * neighbor_count
         || config.planet_radius_m <= 0.0
         || !config.planet_radius_m.is_finite()
         || config.subgrid_relief_scale <= 0.0
@@ -1533,7 +1548,7 @@ fn run_hydrology(
         }
     }
 
-    let Some(initial_flood) = priority_flood(elevation, ocean, neighbors) else {
+    let Some(initial_flood) = priority_flood(elevation, ocean, neighbors, neighbor_count) else {
         return 4;
     };
     let (depression_id, mut depressions) = find_depressions(
@@ -1542,6 +1557,7 @@ fn run_hydrology(
         relief,
         ocean,
         neighbors,
+        neighbor_count,
         &area_km2,
         config,
     );
@@ -1566,7 +1582,8 @@ fn run_hydrology(
         &area_km2,
         config,
     );
-    let Some(final_flood) = priority_flood(&hydrologic_elevation, ocean, neighbors) else {
+    let Some(final_flood) = priority_flood(&hydrologic_elevation, ocean, neighbors, neighbor_count)
+    else {
         return 4;
     };
     retain_post_breach_lakes(
@@ -1584,6 +1601,7 @@ fn run_hydrology(
         &mut depressions,
         &depression_id,
         neighbors,
+        neighbor_count,
         &final_flood.order,
         &mut receiver,
     );
@@ -1956,6 +1974,7 @@ pub unsafe extern "C" fn hydrology_run_cubed_sphere(
     let total = cell_count as usize;
     run_hydrology(
         total,
+        D4_NEIGHBORS,
         &*config,
         slice::from_raw_parts(area_steradians, total),
         slice::from_raw_parts(neighbors, total * D4_NEIGHBORS),
@@ -1965,6 +1984,149 @@ pub unsafe extern "C" fn hydrology_run_cubed_sphere(
         slice::from_raw_parts(rock_strength, total),
         slice::from_raw_parts(accommodation, total),
         slice::from_raw_parts(ocean, total),
+        slice::from_raw_parts(runoff, total * MONTHS),
+        slice::from_raw_parts(evaporation, total * MONTHS),
+        slice::from_raw_parts(aridity, total),
+        slice::from_raw_parts_mut(depression_id_out, total),
+        slice::from_raw_parts_mut(lake_id_out, total),
+        slice::from_raw_parts_mut(water_class_out, total),
+        slice::from_raw_parts_mut(lake_fraction_out, total),
+        slice::from_raw_parts_mut(wetland_fraction_out, total),
+        slice::from_raw_parts_mut(fill_depth_out, total),
+        slice::from_raw_parts_mut(hydrologic_elevation_out, total),
+        slice::from_raw_parts_mut(breach_incision_out, total),
+        slice::from_raw_parts_mut(receiver_out, total),
+        slice::from_raw_parts_mut(flow_direction_out, total * 3),
+        slice::from_raw_parts_mut(flow_slope_out, total),
+        slice::from_raw_parts_mut(contributing_area_out, total),
+        slice::from_raw_parts_mut(monthly_discharge_out, total * MONTHS),
+        slice::from_raw_parts_mut(mean_discharge_out, total),
+        slice::from_raw_parts_mut(velocity_out, total),
+        slice::from_raw_parts_mut(stream_power_out, total),
+        slice::from_raw_parts_mut(basin_id_out, total),
+        slice::from_raw_parts_mut(sink_type_out, total),
+        slice::from_raw_parts_mut(river_corridor_out, total),
+        slice::from_raw_parts_mut(floodplain_out, total),
+        &mut *lake_records_out,
+        &mut *breach_records_out,
+        &mut *reach_records_out,
+        &mut *reach_vertices_out,
+        &mut *stats_out,
+    )
+}
+
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+#[allow(unsafe_op_in_unsafe_fn)]
+/// Build hydrology on a bounded regional graph with four or eight neighbors.
+///
+/// The `ocean` input is the terminal mask for this generic graph. Callers may
+/// include explicit open-boundary and registered-outlet cells, then retain a
+/// separate physical-ocean mask for publication.
+///
+/// # Safety
+///
+/// Every pointer must be aligned, non-null, correctly sized for `cell_count`,
+/// and non-overlapping. Neighbor IDs must reference valid local cells. Returned
+/// record arrays must each be released exactly once with their matching free
+/// function.
+pub unsafe extern "C" fn hydrology_run_regional_graph(
+    cell_count: i32,
+    neighbor_count: i32,
+    config: *const HydrologyConfig,
+    area_steradians: *const f64,
+    neighbors: *const i32,
+    xyz: *const f32,
+    elevation: *const f32,
+    relief: *const f32,
+    rock_strength: *const f32,
+    accommodation: *const f32,
+    terminal: *const u8,
+    runoff: *const f32,
+    evaporation: *const f32,
+    aridity: *const f32,
+    depression_id_out: *mut i32,
+    lake_id_out: *mut i32,
+    water_class_out: *mut u8,
+    lake_fraction_out: *mut f32,
+    wetland_fraction_out: *mut f32,
+    fill_depth_out: *mut f32,
+    hydrologic_elevation_out: *mut f32,
+    breach_incision_out: *mut f32,
+    receiver_out: *mut i32,
+    flow_direction_out: *mut f32,
+    flow_slope_out: *mut f32,
+    contributing_area_out: *mut f64,
+    monthly_discharge_out: *mut f32,
+    mean_discharge_out: *mut f32,
+    velocity_out: *mut f32,
+    stream_power_out: *mut f32,
+    basin_id_out: *mut i32,
+    sink_type_out: *mut u8,
+    river_corridor_out: *mut f32,
+    floodplain_out: *mut f32,
+    lake_records_out: *mut LakeRecordArray,
+    breach_records_out: *mut BreachRecordArray,
+    reach_records_out: *mut RiverReachRecordArray,
+    reach_vertices_out: *mut Int32Array,
+    stats_out: *mut HydrologyStats,
+) -> i32 {
+    if cell_count <= 0
+        || !matches!(neighbor_count, 4 | 8)
+        || config.is_null()
+        || area_steradians.is_null()
+        || neighbors.is_null()
+        || xyz.is_null()
+        || elevation.is_null()
+        || relief.is_null()
+        || rock_strength.is_null()
+        || accommodation.is_null()
+        || terminal.is_null()
+        || runoff.is_null()
+        || evaporation.is_null()
+        || aridity.is_null()
+        || depression_id_out.is_null()
+        || lake_id_out.is_null()
+        || water_class_out.is_null()
+        || lake_fraction_out.is_null()
+        || wetland_fraction_out.is_null()
+        || fill_depth_out.is_null()
+        || hydrologic_elevation_out.is_null()
+        || breach_incision_out.is_null()
+        || receiver_out.is_null()
+        || flow_direction_out.is_null()
+        || flow_slope_out.is_null()
+        || contributing_area_out.is_null()
+        || monthly_discharge_out.is_null()
+        || mean_discharge_out.is_null()
+        || velocity_out.is_null()
+        || stream_power_out.is_null()
+        || basin_id_out.is_null()
+        || sink_type_out.is_null()
+        || river_corridor_out.is_null()
+        || floodplain_out.is_null()
+        || lake_records_out.is_null()
+        || breach_records_out.is_null()
+        || reach_records_out.is_null()
+        || reach_vertices_out.is_null()
+        || stats_out.is_null()
+    {
+        return 1;
+    }
+    let total = cell_count as usize;
+    let neighbor_count = neighbor_count as usize;
+    run_hydrology(
+        total,
+        neighbor_count,
+        &*config,
+        slice::from_raw_parts(area_steradians, total),
+        slice::from_raw_parts(neighbors, total * neighbor_count),
+        slice::from_raw_parts(xyz, total * 3),
+        slice::from_raw_parts(elevation, total),
+        slice::from_raw_parts(relief, total),
+        slice::from_raw_parts(rock_strength, total),
+        slice::from_raw_parts(accommodation, total),
+        slice::from_raw_parts(terminal, total),
         slice::from_raw_parts(runoff, total * MONTHS),
         slice::from_raw_parts(evaporation, total * MONTHS),
         slice::from_raw_parts(aridity, total),
@@ -2049,6 +2211,39 @@ mod tests {
         result
     }
 
+    fn d8_grid_neighbors(height: usize, width: usize) -> Vec<i32> {
+        let offsets = [
+            (-1isize, 0isize),
+            (-1, 1),
+            (0, 1),
+            (1, 1),
+            (1, 0),
+            (1, -1),
+            (0, -1),
+            (-1, -1),
+        ];
+        let mut result = Vec::with_capacity(height * width * 8);
+        for row in 0..height {
+            for column in 0..width {
+                for (row_offset, column_offset) in offsets {
+                    let next_row = row as isize + row_offset;
+                    let next_column = column as isize + column_offset;
+                    let cell = if next_row >= 0
+                        && next_row < height as isize
+                        && next_column >= 0
+                        && next_column < width as isize
+                    {
+                        next_row as usize * width + next_column as usize
+                    } else {
+                        row * width + column
+                    };
+                    result.push(cell as i32);
+                }
+            }
+        }
+        result
+    }
+
     #[test]
     fn subgrid_hypsometry_integrates_fraction_and_volume() {
         let (half_fraction, equivalent_depth_m) =
@@ -2072,11 +2267,20 @@ mod tests {
     fn priority_flood_routes_a_closed_depression_to_ocean() {
         let elevation = [0.0, 8.0, 2.0, 3.0, 9.0];
         let ocean = [1, 0, 0, 0, 0];
-        let flood = priority_flood(&elevation, &ocean, &line_neighbors(5)).unwrap();
+        let flood = priority_flood(&elevation, &ocean, &line_neighbors(5), D4_NEIGHBORS).unwrap();
         assert_eq!(flood.receiver[2], 1);
         assert_eq!(flood.filled[2], 8.0);
         assert_eq!(flood.filled[3], 8.0);
         assert_eq!(flood.order.len(), elevation.len());
+    }
+
+    #[test]
+    fn regional_priority_flood_uses_diagonal_neighbors() {
+        let elevation = [0.0, 20.0, 20.0, 20.0, 5.0, 20.0, 20.0, 20.0, 30.0];
+        let ocean = [1, 0, 0, 0, 0, 0, 0, 0, 0];
+        let flood = priority_flood(&elevation, &ocean, &d8_grid_neighbors(3, 3), 8).unwrap();
+        assert_eq!(flood.receiver[4], 0);
+        assert_eq!(flood.filled[4], 5.0);
     }
 
     #[test]
@@ -2087,13 +2291,14 @@ mod tests {
         let area_km2 = [100.0; 4];
         let relief = [100.0; 4];
         let config = test_config();
-        let initial_flood = priority_flood(&elevation, &ocean, &neighbors).unwrap();
+        let initial_flood = priority_flood(&elevation, &ocean, &neighbors, D4_NEIGHBORS).unwrap();
         let (_, mut depressions) = find_depressions(
             &initial_flood,
             &elevation,
             &relief,
             &ocean,
             &neighbors,
+            D4_NEIGHBORS,
             &area_km2,
             &config,
         );
@@ -2109,7 +2314,8 @@ mod tests {
             &config,
         );
         assert_eq!(records.len(), 1);
-        let final_flood = priority_flood(&hydrologic_elevation, &ocean, &neighbors).unwrap();
+        let final_flood =
+            priority_flood(&hydrologic_elevation, &ocean, &neighbors, D4_NEIGHBORS).unwrap();
         retain_post_breach_lakes(
             &mut depressions,
             &final_flood,
@@ -2164,7 +2370,7 @@ mod tests {
         let ocean = [1, 0, 0, 0, 0];
         let neighbors = line_neighbors(elevation.len());
         let area_km2 = [100.0; 5];
-        let flood = priority_flood(&elevation, &ocean, &neighbors).unwrap();
+        let flood = priority_flood(&elevation, &ocean, &neighbors, D4_NEIGHBORS).unwrap();
         let relief = [100.0; 5];
         let (depression_id, template) = find_depressions(
             &flood,
@@ -2172,6 +2378,7 @@ mod tests {
             &relief,
             &ocean,
             &neighbors,
+            D4_NEIGHBORS,
             &area_km2,
             &test_config(),
         );
@@ -2221,6 +2428,7 @@ mod tests {
             &relief,
             &ocean,
             &neighbors,
+            D4_NEIGHBORS,
             &area_km2,
             &test_config(),
         );
@@ -2255,6 +2463,7 @@ mod tests {
             &relief,
             &ocean,
             &neighbors,
+            D4_NEIGHBORS,
             &area_km2,
             &test_config(),
         );
@@ -2292,7 +2501,7 @@ mod tests {
         let ocean = [1, 0, 0, 0, 0, 0];
         let neighbors = line_neighbors(elevation.len());
         let area_km2 = [100.0; 6];
-        let flood = priority_flood(&elevation, &ocean, &neighbors).unwrap();
+        let flood = priority_flood(&elevation, &ocean, &neighbors, D4_NEIGHBORS).unwrap();
         let relief = [100.0; 6];
         let (depression_id, mut depressions) = find_depressions(
             &flood,
@@ -2300,6 +2509,7 @@ mod tests {
             &relief,
             &ocean,
             &neighbors,
+            D4_NEIGHBORS,
             &area_km2,
             &test_config(),
         );

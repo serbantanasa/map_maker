@@ -2,6 +2,7 @@ format_version: 2
 handoff_dir: ../out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2
 output_dir: ../out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment
 terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain
+hydrology_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0
 target:
   id: temperate-highland-catchment
   # Chosen from seed 42 by catchment completeness, runoff, relief, water,
@@ -36,7 +37,10 @@ terrain:
   maximum_parent_mean_error_m: 15
   maximum_parent_mean_error_relief_fraction: 0.05
   maximum_parent_area_relative_error: 1.0e-9
-  maximum_parent_boundary_residual_p95_ratio: 1.35
+  # Higher-amplitude L2 morphology raises boundary/interior ratios slightly;
+  # retain an independent absolute ceiling so this cannot hide a real seam.
+  maximum_parent_boundary_residual_p95_ratio: 1.45
+  maximum_parent_boundary_residual_p95_m: 20
   # This is a smaller statistical subset of L2 boundaries. Exact alternate-
   # partition replay remains the hard chunk-seam gate.
   maximum_chunk_boundary_residual_p95_ratio: 1.50
@@ -47,7 +51,46 @@ terrain:
   conditioning_maximum_iterations: 24
   conditioning_damping: 0.72
   maximum_center_correction_relief_fraction: 0.75
+hydrology:
+  chunk_rows: 262144
+  # Monthly forcing conserves represented L0 water volume exactly, while these
+  # bounded weights distribute it across L3 terrain without a new climate run.
+  orographic_runoff_weight: 0.28
+  orographic_precipitation_weight: 0.20
+  highland_melt_weight: 0.22
+  minimum_depression_depth_m: 3.0
+  wetland_mean_depth_m: 2.5
+  endorheic_aridity_threshold: 0.35
+  maximum_fill_time_years: 10000
+  lake_seepage_mm_year: 30
+  subgrid_relief_scale: 0.10
+  subgrid_connected_basin_fraction: 1.0
+  breach_score_threshold: 0.10
+  # Per-event incision remains bounded independently from cumulative relaxation.
+  maximum_breach_incision_m: 80
+  maximum_cumulative_breach_incision_m: 160
+  breach_length_cells: 12
+  # Repeated passes let filled depressions spill and bounded breaches propagate
+  # downstream; one pass strands nearly every tributary in local L3 roughness.
+  maximum_breach_rounds: 20
+  # Rivers remain graph/vector features. These thresholds decide which routed
+  # paths are reported, not which 200 m cells are categorically water.
+  river_discharge_threshold_m3s: 2.0
+  river_contributing_area_threshold_km2: 20.0
+  river_minimum_discharge_m3s: 0.15
+  maximum_forcing_conservation_relative_error: 1.0e-6
+  maximum_runoff_conservation_relative_error: 1.0e-6
+  # The 72 km inherited envelope selects the basin; routing refines its true
+  # divide inside the halo instead of manufacturing a block-aligned wall.
+  minimum_inherited_core_retained_fraction: 0.80
+  minimum_routed_core_inherited_fraction: 0.80
+  minimum_routed_to_inherited_area_ratio: 0.80
+  maximum_routed_to_inherited_area_ratio: 1.20
+  maximum_routed_core_process_boundary_contact_fraction: 0.001
+  maximum_outlet_hydrograph_relative_error: 0.40
+  maximum_core_open_water_fraction: 0.10
 limits:
   maximum_base_cell_count: 7000000
   maximum_peak_memory_gb: 24
   maximum_terrain_storage_gb: 2
+  maximum_hydrology_storage_gb: 4

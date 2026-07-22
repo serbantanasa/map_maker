@@ -26,8 +26,9 @@ from ._l3_terrain_native import run_l3_terrain_chunk
 from .regional_handoff import _file_checksum, _replace_directory, _tree_checksum
 
 TERRAIN_FORMAT_VERSION = 2
-TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v5"
+TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v6"
 EARTH_OROGENIC_REFERENCE_M = 1_500.0
+TERRAIN_DIAGNOSTIC_VERTICAL_EXAGGERATION = 4.0
 RAW_CHUNK_ARRAY_PATHS = (
     "geometry/cell_id",
     "geometry/parent_l2_cell_id",
@@ -69,7 +70,8 @@ class L3TerrainConfig:
     maximum_parent_mean_error_m: float = 15.0
     maximum_parent_mean_error_relief_fraction: float = 0.05
     maximum_parent_area_relative_error: float = 1e-9
-    maximum_parent_boundary_residual_p95_ratio: float = 1.35
+    maximum_parent_boundary_residual_p95_ratio: float = 1.45
+    maximum_parent_boundary_residual_p95_m: float = 20.0
     maximum_chunk_boundary_residual_p95_ratio: float = 1.50
     maximum_cell_size_relative_error: float = 0.12
     minimum_terrain_offset_std_m: float = 2.0
@@ -133,7 +135,10 @@ class L3TerrainConfig:
                 terrain.get("maximum_parent_area_relative_error", 1e-9)
             ),
             maximum_parent_boundary_residual_p95_ratio=float(
-                terrain.get("maximum_parent_boundary_residual_p95_ratio", 1.35)
+                terrain.get("maximum_parent_boundary_residual_p95_ratio", 1.45)
+            ),
+            maximum_parent_boundary_residual_p95_m=float(
+                terrain.get("maximum_parent_boundary_residual_p95_m", 20.0)
             ),
             maximum_chunk_boundary_residual_p95_ratio=float(
                 terrain.get("maximum_chunk_boundary_residual_p95_ratio", 1.50)
@@ -203,6 +208,10 @@ class L3TerrainConfig:
             (
                 "maximum_parent_boundary_residual_p95_ratio",
                 self.maximum_parent_boundary_residual_p95_ratio,
+            ),
+            (
+                "maximum_parent_boundary_residual_p95_m",
+                self.maximum_parent_boundary_residual_p95_m,
             ),
             (
                 "maximum_chunk_boundary_residual_p95_ratio",
@@ -1331,6 +1340,8 @@ def _validate_terrain(
         "l2_parent_boundary_continuity_valid": int(
             seam["l2_parent_boundary_residual_p95_ratio"]
             <= config.maximum_parent_boundary_residual_p95_ratio
+            and seam["l2_parent_boundary_residual_p95_m"]
+            <= config.maximum_parent_boundary_residual_p95_m
         ),
         "chunk_boundary_continuity_valid": int(
             seam["chunk_boundary_residual_p95_ratio"]
@@ -1339,6 +1350,7 @@ def _validate_terrain(
         "maximum_parent_boundary_residual_p95_ratio": (
             config.maximum_parent_boundary_residual_p95_ratio
         ),
+        "maximum_parent_boundary_residual_p95_m": (config.maximum_parent_boundary_residual_p95_m),
         "maximum_chunk_boundary_residual_p95_ratio": (
             config.maximum_chunk_boundary_residual_p95_ratio
         ),
@@ -1469,8 +1481,8 @@ def _render_terrain(
     south = np.where(np.isfinite(south), south, center)
     west = np.where(np.isfinite(west), west, center)
     east = np.where(np.isfinite(east), east, center)
-    dzdx = (east - west) / (2.0 * actual_cell_size_m)
-    dzdy = (south - north) / (2.0 * actual_cell_size_m)
+    dzdx = (east - west) / (2.0 * actual_cell_size_m) * TERRAIN_DIAGNOSTIC_VERTICAL_EXAGGERATION
+    dzdy = (south - north) / (2.0 * actual_cell_size_m) * TERRAIN_DIAGNOSTIC_VERTICAL_EXAGGERATION
     normal_x = -dzdx
     normal_y = -dzdy
     normal_z = np.ones_like(dense)
@@ -1523,6 +1535,12 @@ def _render_terrain(
         y = gradient_top + round((2_000 - value) / 2_600 * gradient_height)
         draw.line((legend_x + 34, y, legend_x + 42, y), fill=(50, 54, 51), width=1)
         draw.text((legend_x + 48, y - 8), f"{value:,} m", fill=(35, 39, 36), font=small_font)
+    draw.text(
+        (legend_x, gradient_top + gradient_height + 12),
+        "Hillshade: 4x vertical exaggeration",
+        fill=(70, 74, 70),
+        font=small_font,
+    )
 
     if show_domain:
         role_y = gradient_top + gradient_height + 38

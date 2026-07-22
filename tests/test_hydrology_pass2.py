@@ -69,6 +69,8 @@ def _config(
                 "basin_refinement": {
                     "refinement_factor": 4,
                     "terrain_noise_fraction": 0.4,
+                    "maximum_tile_bubble_correlation_p50": 0.60,
+                    "maximum_tile_bubble_correlation_p95": 0.95,
                 },
                 "basin_erosion": {
                     "minimum_bed_slope": 1e-5,
@@ -247,6 +249,8 @@ def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
                     "basin_refinement": {
                         "refinement_factor": 4,
                         "terrain_noise_fraction": 0.45,
+                        "maximum_tile_bubble_correlation_p50": 0.60,
+                        "maximum_tile_bubble_correlation_p95": 0.95,
                     },
                     "basin_erosion": {
                         "minimum_bed_slope": 1e-6,
@@ -293,8 +297,7 @@ def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
     assert metadata["maximum_routing_surface_change_m"] == 0.0
     assert metadata["raster_terrain_feedback_applied"] == 0
     assert (
-        metadata["routing_semantics"]
-        == "unchanged_terrain_with_vector_trunk_receiver_constraints"
+        metadata["routing_semantics"] == "unchanged_terrain_with_vector_trunk_receiver_constraints"
     )
     assert cells.num_rows == metadata["cell_count"]
     assert reaches.num_rows > 0

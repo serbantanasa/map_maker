@@ -76,6 +76,8 @@ def _config(
                 "basin_refinement": {
                     "refinement_factor": 4,
                     "terrain_noise_fraction": 0.4,
+                    "maximum_tile_bubble_correlation_p50": 0.60,
+                    "maximum_tile_bubble_correlation_p95": 0.95,
                 },
                 "basin_erosion": {
                     "minimum_bed_slope": 1e-5,

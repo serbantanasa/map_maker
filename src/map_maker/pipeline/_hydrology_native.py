@@ -11,6 +11,7 @@ from cffi import FFI
 from .._native import NativeLibraryAbiError, native_library_info, native_library_path
 
 CUBED_SPHERE_HYDROLOGY_ABI_VERSION = 3
+REGIONAL_HYDROLOGY_ABI_VERSION = 1
 
 WATER_BODY_CLASSES = {
     1: "wetland",
@@ -248,6 +249,7 @@ typedef struct {
 } HydrologyStats;
 
 uint32_t cubed_sphere_hydrology_abi_version(void);
+uint32_t regional_hydrology_abi_version(void);
 int32_t hydrology_run_cubed_sphere(
     int32_t cell_count,
     const HydrologyConfig* config,
@@ -259,6 +261,47 @@ int32_t hydrology_run_cubed_sphere(
     const float* rock_strength,
     const float* accommodation,
     const uint8_t* ocean,
+    const float* runoff,
+    const float* evaporation,
+    const float* aridity,
+    int32_t* depression_id_out,
+    int32_t* lake_id_out,
+    uint8_t* water_class_out,
+    float* lake_fraction_out,
+    float* wetland_fraction_out,
+    float* fill_depth_out,
+    float* hydrologic_elevation_out,
+    float* breach_incision_out,
+    int32_t* receiver_out,
+    float* flow_direction_out,
+    float* flow_slope_out,
+    double* contributing_area_out,
+    float* monthly_discharge_out,
+    float* mean_discharge_out,
+    float* velocity_out,
+    float* stream_power_out,
+    int32_t* basin_id_out,
+    uint8_t* sink_type_out,
+    float* river_corridor_out,
+    float* floodplain_out,
+    LakeRecordArray* lake_records_out,
+    BreachRecordArray* breach_records_out,
+    RiverReachRecordArray* reach_records_out,
+    Int32Array* reach_vertices_out,
+    HydrologyStats* stats_out
+);
+int32_t hydrology_run_regional_graph(
+    int32_t cell_count,
+    int32_t neighbor_count,
+    const HydrologyConfig* config,
+    const double* area_steradians,
+    const int32_t* neighbors,
+    const float* xyz,
+    const float* elevation,
+    const float* relief,
+    const float* rock_strength,
+    const float* accommodation,
+    const uint8_t* terminal,
     const float* runoff,
     const float* evaporation,
     const float* aridity,
@@ -336,6 +379,17 @@ if _cubed_sphere_abi != CUBED_SPHERE_HYDROLOGY_ABI_VERSION:
     raise NativeLibraryAbiError(
         "hydrology_native cubed-sphere ABI "
         f"{_cubed_sphere_abi} does not match expected {CUBED_SPHERE_HYDROLOGY_ABI_VERSION}"
+    )
+try:
+    _regional_abi = int(_lib.regional_hydrology_abi_version())
+except AttributeError as exc:
+    raise NativeLibraryAbiError(
+        "hydrology_native lacks the regional API; rebuild native libraries"
+    ) from exc
+if _regional_abi != REGIONAL_HYDROLOGY_ABI_VERSION:
+    raise NativeLibraryAbiError(
+        f"hydrology_native regional ABI {_regional_abi} does not match expected "
+        f"{REGIONAL_HYDROLOGY_ABI_VERSION}"
     )
 
 
@@ -695,10 +749,229 @@ def run_cubed_sphere_hydrology(
     )
 
 
+def run_regional_hydrology(
+    *,
+    controls: dict[str, int | float],
+    areas_steradians: np.ndarray,
+    neighbors: np.ndarray,
+    xyz: np.ndarray,
+    elevation: np.ndarray,
+    relief: np.ndarray,
+    rock_strength: np.ndarray,
+    accommodation: np.ndarray,
+    terminal: np.ndarray,
+    runoff: np.ndarray,
+    evaporation: np.ndarray,
+    aridity: np.ndarray,
+) -> tuple[dict[str, np.ndarray], pa.Table, pa.Table, pa.Table, dict[str, Any]]:
+    """Run the shared hydrology model on a bounded D4 or D8 regional graph."""
+
+    if set(controls) != HYDROLOGY_CONTROL_NAMES:
+        missing = sorted(HYDROLOGY_CONTROL_NAMES - set(controls))
+        extra = sorted(set(controls) - HYDROLOGY_CONTROL_NAMES)
+        raise ValueError(f"hydrology controls mismatch; missing={missing}, extra={extra}")
+    if any(not np.isfinite(value) for value in controls.values()):
+        raise ValueError("hydrology controls must be finite")
+
+    inputs = {
+        "areas_steradians": _read(
+            areas_steradians, name="areas_steradians", dtype=np.dtype(np.float64)
+        ),
+        "neighbors": _read(neighbors, name="neighbors", dtype=np.dtype(np.int32)),
+        "xyz": _read(xyz, name="xyz", dtype=np.dtype(np.float32)),
+        "elevation": _read(elevation, name="elevation", dtype=np.dtype(np.float32)),
+        "relief": _read(relief, name="relief", dtype=np.dtype(np.float32)),
+        "rock_strength": _read(rock_strength, name="rock_strength", dtype=np.dtype(np.float32)),
+        "accommodation": _read(accommodation, name="accommodation", dtype=np.dtype(np.float32)),
+        "terminal": _read(terminal, name="terminal", dtype=np.dtype(np.uint8)),
+        "runoff": _read(runoff, name="runoff", dtype=np.dtype(np.float32)),
+        "evaporation": _read(evaporation, name="evaporation", dtype=np.dtype(np.float32)),
+        "aridity": _read(aridity, name="aridity", dtype=np.dtype(np.float32)),
+    }
+    if inputs["areas_steradians"].ndim != 1:
+        raise ValueError("areas_steradians must be one-dimensional")
+    cell_count = len(inputs["areas_steradians"])
+    if cell_count == 0 or cell_count > np.iinfo(np.int32).max:
+        raise ValueError("regional hydrology cell count must fit positive int32")
+    if inputs["neighbors"].shape not in ((cell_count, 4), (cell_count, 8)):
+        raise ValueError("neighbors must have shape (cell_count, 4) or (cell_count, 8)")
+    expected_shapes = {
+        "xyz": (cell_count, 3),
+        "elevation": (cell_count,),
+        "relief": (cell_count,),
+        "rock_strength": (cell_count,),
+        "accommodation": (cell_count,),
+        "terminal": (cell_count,),
+        "runoff": (12, cell_count),
+        "evaporation": (12, cell_count),
+        "aridity": (cell_count,),
+    }
+    for name, shape in expected_shapes.items():
+        if inputs[name].shape != shape:
+            raise ValueError(f"{name} must have shape {shape}")
+
+    dtypes: dict[str, np.dtype[Any]] = {
+        "DepressionID": np.dtype(np.int32),
+        "LakeID": np.dtype(np.int32),
+        "WaterBodyClass": np.dtype(np.uint8),
+        "LakeFraction": np.dtype(np.float32),
+        "WetlandFraction": np.dtype(np.float32),
+        "DepressionFillDepthM": np.dtype(np.float32),
+        "HydrologicElevationM": np.dtype(np.float32),
+        "BreachIncisionM": np.dtype(np.float32),
+        "FlowReceiverID": np.dtype(np.int32),
+        "FlowDirectionXYZ": np.dtype(np.float32),
+        "FlowSlope": np.dtype(np.float32),
+        "ContributingAreaKm2": np.dtype(np.float64),
+        "MonthlyDischargeM3s": np.dtype(np.float32),
+        "MeanDischargeM3s": np.dtype(np.float32),
+        "MeanFlowVelocityMps": np.dtype(np.float32),
+        "StreamPowerW": np.dtype(np.float32),
+        "BasinID": np.dtype(np.int32),
+        "FlowSinkType": np.dtype(np.uint8),
+        "RiverCorridor": np.dtype(np.float32),
+        "FloodplainPotential": np.dtype(np.float32),
+    }
+    shapes = {
+        **{name: (cell_count,) for name in dtypes},
+        "FlowDirectionXYZ": (cell_count, 3),
+        "MonthlyDischargeM3s": (12, cell_count),
+    }
+    outputs = {name: np.empty(shapes[name], dtype=dtype) for name, dtype in dtypes.items()}
+    _require_disjoint(inputs, outputs)
+
+    config_ptr = _ffi.new("HydrologyConfig*")
+    for name, value in controls.items():
+        setattr(config_ptr[0], name, value)
+    lakes_ptr = _ffi.new("LakeRecordArray*")
+    breaches_ptr = _ffi.new("BreachRecordArray*")
+    reaches_ptr = _ffi.new("RiverReachRecordArray*")
+    vertices_ptr = _ffi.new("Int32Array*")
+    stats_ptr = _ffi.new("HydrologyStats*")
+
+    def input_pointer(name: str, c_type: str) -> Any:
+        return _ffi.cast(
+            f"const {c_type}*",
+            _ffi.from_buffer(f"{c_type}[]", inputs[name], require_writable=False),
+        )
+
+    def output_pointer(name: str, c_type: str) -> Any:
+        return _ffi.cast(
+            f"{c_type}*",
+            _ffi.from_buffer(f"{c_type}[]", outputs[name], require_writable=True),
+        )
+
+    result = _lib.hydrology_run_regional_graph(
+        cell_count,
+        inputs["neighbors"].shape[1],
+        config_ptr,
+        input_pointer("areas_steradians", "double"),
+        input_pointer("neighbors", "int32_t"),
+        input_pointer("xyz", "float"),
+        input_pointer("elevation", "float"),
+        input_pointer("relief", "float"),
+        input_pointer("rock_strength", "float"),
+        input_pointer("accommodation", "float"),
+        input_pointer("terminal", "uint8_t"),
+        input_pointer("runoff", "float"),
+        input_pointer("evaporation", "float"),
+        input_pointer("aridity", "float"),
+        output_pointer("DepressionID", "int32_t"),
+        output_pointer("LakeID", "int32_t"),
+        output_pointer("WaterBodyClass", "uint8_t"),
+        output_pointer("LakeFraction", "float"),
+        output_pointer("WetlandFraction", "float"),
+        output_pointer("DepressionFillDepthM", "float"),
+        output_pointer("HydrologicElevationM", "float"),
+        output_pointer("BreachIncisionM", "float"),
+        output_pointer("FlowReceiverID", "int32_t"),
+        output_pointer("FlowDirectionXYZ", "float"),
+        output_pointer("FlowSlope", "float"),
+        output_pointer("ContributingAreaKm2", "double"),
+        output_pointer("MonthlyDischargeM3s", "float"),
+        output_pointer("MeanDischargeM3s", "float"),
+        output_pointer("MeanFlowVelocityMps", "float"),
+        output_pointer("StreamPowerW", "float"),
+        output_pointer("BasinID", "int32_t"),
+        output_pointer("FlowSinkType", "uint8_t"),
+        output_pointer("RiverCorridor", "float"),
+        output_pointer("FloodplainPotential", "float"),
+        lakes_ptr,
+        breaches_ptr,
+        reaches_ptr,
+        vertices_ptr,
+        stats_ptr,
+    )
+    if result != 0:
+        messages = {
+            1: "null, invalid, or unsupported regional FFI argument",
+            2: "invalid numeric input or topology",
+            3: "regional graph must contain routed cells and terminal cells",
+            4: "priority flood could not cover the regional graph",
+            5: "regional drainage graph contains a cycle",
+        }
+        raise RuntimeError(
+            f"hydrology_run_regional_graph failed: {messages.get(result, f'status {result}')}"
+        )
+
+    lake_records = _copy_records(
+        lakes_ptr[0], dtype=LAKE_RECORD_DTYPE, free=_lib.hydrology_free_lakes
+    )
+    breach_records = _copy_records(
+        breaches_ptr[0], dtype=BREACH_RECORD_DTYPE, free=_lib.hydrology_free_breaches
+    )
+    reach_records = _copy_records(
+        reaches_ptr[0], dtype=REACH_RECORD_DTYPE, free=_lib.hydrology_free_reaches
+    )
+    reach_vertices = _copy_i32(vertices_ptr[0])
+    stats = stats_ptr[0]
+    metadata: dict[str, Any] = {
+        name: int(getattr(stats, name))
+        for name in (
+            "depression_count",
+            "lake_count",
+            "breach_count",
+            "basin_count",
+            "reach_count",
+            "wetland_count",
+            "endorheic_count",
+            "stable_lake_count",
+            "overflow_lake_count",
+            "land_cell_count",
+            "river_cell_count",
+            "closed_sink_count",
+            "topology_valid",
+        )
+    }
+    metadata.update(
+        {
+            name: float(getattr(stats, name))
+            for name in (
+                "maximum_contributing_area_km2",
+                "maximum_discharge_m3s",
+                "annual_runoff_km3",
+                "lake_volume_km3",
+                "breach_sediment_pulse_km3",
+                "annual_open_water_loss_km3",
+                "conservation_relative_error",
+            )
+        }
+    )
+    return (
+        outputs,
+        _depression_table(lake_records),
+        _breach_table(breach_records),
+        _reach_table(reach_records, reach_vertices),
+        metadata,
+    )
+
+
 __all__ = [
     "BED_MATERIAL_CLASSES",
     "CUBED_SPHERE_HYDROLOGY_ABI_VERSION",
+    "REGIONAL_HYDROLOGY_ABI_VERSION",
     "RIVER_MORPHOLOGY_CLASSES",
     "WATER_BODY_CLASSES",
     "run_cubed_sphere_hydrology",
+    "run_regional_hydrology",
 ]
