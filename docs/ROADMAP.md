@@ -49,6 +49,11 @@ or stamping one correction shape into every L0 parent. Decision 056 separates
 raw coarse hydraulic pits from literal L2 terrain and replaces parent-stamped
 lake quotas with basin-coherent area conservation. Raw D8
 centerline geometry remains unsuitable as final bank or meander geometry.
+The current L3 hydrology solve covers the catchment plus process halo, not the
+entire stored terrain rectangle; diagnostics now distinguish its `56.9%`
+process coverage from terrain-only context. A future full rectangular map must
+generate a larger hidden routing halo rather than truncate drainage at the
+display edge.
 
 ## Thaw Gate
 

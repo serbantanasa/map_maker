@@ -5,9 +5,11 @@ from pathlib import Path
 import numpy as np
 import pyarrow as pa
 
+from map_maker.cli import main
 from map_maker.pipeline._hydrology_native import run_regional_hydrology
 from map_maker.pipeline.l3_hydrology import (
     L3HydrologyConfig,
+    L3HydrologyResult,
     _adjacent_d8,
     _d8_neighbors,
     _discharge_continuity_metrics,
@@ -20,6 +22,35 @@ from map_maker.pipeline.l3_hydrology import (
     _realize_parent_fraction,
     _topographic_weights,
 )
+
+
+def test_cli_reports_process_coverage_honestly(tmp_path: Path, monkeypatch, capsys) -> None:
+    config_path = tmp_path / "l3.yaml"
+    config_path.write_text(
+        "output_dir: target\nterrain_output_dir: terrain\nhydrology_output_dir: hydro\n",
+        encoding="utf8",
+    )
+    result = L3HydrologyResult(
+        output_dir=tmp_path / "hydro",
+        manifest_path=tmp_path / "hydro/manifest.json",
+        validation_path=tmp_path / "hydro/validation.json",
+        zarr_path=tmp_path / "hydro/hydrology.zarr",
+        preview_path=tmp_path / "hydro/hydrology.png",
+        target_id="test-catchment",
+        cell_count=1_000,
+        process_cell_count=600,
+        river_reach_count=42,
+        lake_count=7,
+        validation_passed=True,
+    )
+    monkeypatch.setattr(
+        "map_maker.pipeline.l3_hydrology.generate_l3_hydrology",
+        lambda _config: result,
+    )
+
+    assert main(["l3-hydrology", "--config", str(config_path)]) == 0
+    output = capsys.readouterr().out
+    assert "Solved hydrology on 600 of 1000 stored terrain cells" in output
 
 
 def _controls() -> dict[str, int | float]:

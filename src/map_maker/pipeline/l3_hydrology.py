@@ -39,7 +39,7 @@ from .l3_terrain import (
 from .regional_handoff import _replace_directory
 
 HYDROLOGY_FORMAT_VERSION = 1
-HYDROLOGY_MODEL_VERSION = "l3_depression_hydrology_v3"
+HYDROLOGY_MODEL_VERSION = "l3_depression_hydrology_v4"
 MONTHS = 12
 SECONDS_PER_YEAR = 365.2425 * 86_400.0
 SECONDS_PER_MONTH = SECONDS_PER_YEAR / MONTHS
@@ -239,6 +239,7 @@ class L3HydrologyResult:
     preview_path: Path
     target_id: str
     cell_count: int
+    process_cell_count: int
     river_reach_count: int
     lake_count: int
     validation_passed: bool
@@ -1852,10 +1853,21 @@ def _validate_hydrology(
         else np.empty(0, dtype=np.float32)
     )
 
+    process_domain = sources.inside_core | sources.inside_process_halo
+    process_cell_count = int(np.count_nonzero(process_domain))
+    terrain_context_cell_count = int(np.count_nonzero(sources.outside_process))
+    process_domain_partition_valid = bool(
+        np.array_equal(process_domain, ~sources.outside_process)
+        and not np.any(sources.inside_core & sources.inside_process_halo)
+    )
     validation: dict[str, Any] = {
         "format_version": HYDROLOGY_FORMAT_VERSION,
         "model_version": HYDROLOGY_MODEL_VERSION,
         "cell_count": len(sources.cell_id),
+        "process_domain_cell_count": process_cell_count,
+        "process_domain_fraction_of_stored_window": process_cell_count / len(sources.cell_id),
+        "terrain_context_cell_count": terrain_context_cell_count,
+        "process_domain_partition_valid": int(process_domain_partition_valid),
         "core_cell_count": int(np.count_nonzero(core)),
         "inherited_target_core_cell_count": int(np.count_nonzero(inherited_core)),
         "process_halo_cell_count": int(np.count_nonzero(sources.inside_process_halo)),
@@ -1951,6 +1963,7 @@ def _validate_hydrology(
             validation["native_runoff_conservation_relative_error"]
             <= config.maximum_runoff_conservation_relative_error
         ),
+        "process_domain_partition_valid": process_domain_partition_valid,
         "registered_outlet_connected": validation["registered_outlet_connected"] == 1,
         "routed_core_replay_valid": core_replay_valid,
         "inherited_core_retention_valid": (
@@ -2158,6 +2171,12 @@ def _render_hydrology(
     colors = colors * (1.0 - lake[..., None]) + lake_color * lake[..., None]
     wetland_blend = np.clip(wetland * 0.70, 0.0, 0.70)
     colors = colors * (1.0 - wetland_blend[..., None]) + wetland_color * wetland_blend[..., None]
+    terrain_context = ~process
+    colors[terrain_context] = (
+        colors[terrain_context] * 0.32 + np.asarray((226.0, 227.0, 222.0)) * 0.68
+    )
+    process_boundary = _inner_boundary(process)
+    colors[process_boundary] = np.asarray((156.0, 100.0, 54.0))
 
     q = np.asarray(root["routing/mean_discharge_m3s"][:], dtype=np.float32)[spatial_order].reshape(
         height, width
@@ -2214,10 +2233,40 @@ def _render_hydrology(
     title_font = _diagnostic_font(22)
     label_font = _diagnostic_font(17)
     small_font = _diagnostic_font(15)
-    draw.text((18, 13), "L3 depression-aware hydrology", fill=(25, 30, 27), font=title_font)
+    draw.text((18, 13), "L3 catchment hydrology", fill=(25, 30, 27), font=title_font)
     draw.line((width, 0, width, canvas.height), fill=(178, 181, 174), width=1)
     legend_x = width + 24
-    draw.text((legend_x, 20), "Surface water", fill=(25, 30, 27), font=title_font)
+    draw.text((legend_x, 20), "Hydrology coverage", fill=(25, 30, 27), font=title_font)
+    y = 70
+    draw.rectangle(
+        (legend_x, y, legend_x + 34, y + 18),
+        fill=(220, 222, 217),
+        outline=(50, 55, 52),
+    )
+    draw.text(
+        (legend_x + 48, y - 1),
+        "terrain-only context",
+        fill=(35, 39, 36),
+        font=small_font,
+    )
+    y += 34
+    draw.line((legend_x, y + 8, legend_x + 38, y + 8), fill=(156, 100, 54), width=3)
+    draw.text(
+        (legend_x + 50, y),
+        "hydrology process boundary",
+        fill=(35, 39, 36),
+        font=small_font,
+    )
+    y += 34
+    draw.text(
+        (legend_x, y),
+        f"{validation['process_domain_fraction_of_stored_window']:.1%} of stored cells routed",
+        fill=(50, 54, 51),
+        font=small_font,
+    )
+    y += 44
+    draw.text((legend_x, y), "Surface water", fill=(25, 30, 27), font=label_font)
+    y += 36
     physical_ocean_present = validation["physical_ocean_area_km2"] > 0.0
     entries = (
         (
@@ -2227,7 +2276,6 @@ def _render_hydrology(
         ((45, 132, 168), "L3 lake"),
         ((63, 126, 91), "L3 wetland"),
     )
-    y = 70
     for color, label in entries:
         draw.rectangle((legend_x, y, legend_x + 34, y + 18), fill=color, outline=(50, 55, 52))
         draw.text((legend_x + 48, y - 1), label, fill=(35, 39, 36), font=small_font)
@@ -2269,7 +2317,10 @@ def _render_hydrology(
             f"{validation['endorheic_depression_count']} endorheic sinks"
         ),
         "large-lake connectors hidden",
-        "routing solved on core + halo",
+        (
+            f"{validation['process_domain_cell_count']:,} process cells / "
+            f"{validation['cell_count']:,} stored"
+        ),
     )
     for line in summary_lines:
         draw.text((legend_x, y), line, fill=(50, 54, 51), font=small_font)
@@ -2459,6 +2510,7 @@ def _existing_result(
         preview_path=config.output_dir / "hydrology.png",
         target_id=str(manifest["target_id"]),
         cell_count=int(summary["cell_count"]),
+        process_cell_count=int(summary["process_cell_count"]),
         river_reach_count=int(summary["river_reach_count"]),
         lake_count=int(summary["lake_count"]),
         validation_passed=True,
@@ -2592,6 +2644,8 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
         "run_fingerprint": run_fingerprint,
         "summary": {
             "cell_count": len(sources.cell_id),
+            "process_cell_count": validation["process_domain_cell_count"],
+            "terrain_context_cell_count": validation["terrain_context_cell_count"],
             "core_cell_count": validation["core_cell_count"],
             "river_reach_count": reaches.num_rows,
             "core_river_reach_count": validation["core_river_reach_count"],
@@ -2609,6 +2663,7 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
             "terrain_change": "none; hydrologic elevation and prospective breach incision are separate from base terrain",
             "water_occupancy": "physical ocean realized from L2 fractions; lakes and wetlands recomputed from L3 depressions",
             "hydrological_acceptance_scope": "fine routed catchment core only",
+            "storage_scope": "complete terrain rectangle; hydrology is solved only on catchment core plus process halo",
             "neighbor_count": 8,
         },
         "registered_outlet": dict(outlet),
@@ -2670,6 +2725,7 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
         preview_path=config.output_dir / "hydrology.png",
         target_id=sources.target_id,
         cell_count=len(sources.cell_id),
+        process_cell_count=int(validation["process_domain_cell_count"]),
         river_reach_count=reaches.num_rows,
         lake_count=int(validation["core_lake_count"]),
         validation_passed=True,

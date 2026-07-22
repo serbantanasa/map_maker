@@ -95,7 +95,10 @@ routed-to-inherited area ratio, process-boundary contact, bounded open-water
 area, cumulative prospective breach incision, river-network presence, inherited
 trunk support, and zero material downstream discharge losses not explained by
 lake or wetland losses. The published fine routed core is replayed from the
-receiver graph during validation. Cache hits recheck the complete output tree.
+receiver graph during validation. It also records the exact process-domain and
+terrain-only context counts; outside-process cells are sentinel state and may
+not be presented as hydrologically solved terrain. Cache hits recheck the
+complete output tree.
 
 ## Gate Classes
 

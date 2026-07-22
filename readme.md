@@ -242,8 +242,10 @@ Base terrain is unchanged; breach incision remains prospective. Diagnostic
 maps preserve graph continuity, suppress connector strokes only beneath large
 lake polygons, use sparse arrowheads to show downstream direction, explicitly
 report whether physical ocean or closed sinks are present, and include legends
-and kilometre scales. The canonical first slice is inland and contains no
-physical ocean.
+and kilometre scales. The canonical solve covers `3.44 million` catchment and
+halo cells inside the `6.04 million`-cell stored terrain rectangle. Its other
+`2.60 million` cells are visibly muted terrain-only context, not simulated dry
+hydrology. The canonical first slice is inland and contains no physical ocean.
 
 Run the previous procedural generator for comparison:
 

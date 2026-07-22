@@ -611,9 +611,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Validation: {hydrology.validation_path}")
         print(f"Preview: {hydrology.preview_path}")
         print(
-            f"Routed {hydrology.cell_count} cells into {hydrology.river_reach_count} "
-            f"reported reaches and {hydrology.lake_count} core lakes for "
-            f"{hydrology.target_id}."
+            f"Solved hydrology on {hydrology.process_cell_count} of {hydrology.cell_count} "
+            f"stored terrain cells, producing {hydrology.river_reach_count} reported reaches "
+            f"and {hydrology.lake_count} core lakes for {hydrology.target_id}."
         )
         return 0
 

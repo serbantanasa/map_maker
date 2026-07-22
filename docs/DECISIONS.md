@@ -2669,6 +2669,14 @@ precipitation, runoff, snowmelt, and glacier melt over L3 topography while
 conserving represented L0 water volume. This is regional hydrology, not a new
 atmospheric simulation.
 
+The stored terrain rectangle is larger than that process domain. Cells marked
+`outside_process_domain` carry real terrain context but no L3 routing, lakes,
+wetlands, or river discovery. Persist sentinel process state for array-shape
+consistency, never interpret it as a dry hydrological result, and visibly mute
+or mask it in hydrology diagnostics. Full hydrology for the complete displayed
+rectangle requires a larger hidden terrain and routing halo around that
+rectangle; do not manufacture boundary-truncated rivers merely to fill a map.
+
 Treat physical ocean occupancy, elevation relative to sea level, and a regional
 outlet as distinct concepts. A negative-elevation cell is land unless the
 inherited physical-ocean fraction places water there. The selected outlet is a
@@ -2714,10 +2722,14 @@ material unexplained decrease is a hard failure. River width on a map is a
 symbolized discharge class; physical channel width remains an attribute of the
 vector reach until adaptive refinement resolves banks.
 
-The seed-42 baseline routes `6,040,320` cells, produces a roughly `96,560 km2`
-fine catchment, a Strahler-order-6 network, a roughly `1,190 m3/s` outlet, and a
-roughly `1,158 km` longest reported chain. Its `2,819` core lakes occupy `8.61%`
-of core land; only `13` are at least `50 km2`. The current inland window
+The seed-42 artifact stores hydrology-shaped arrays for all `6,040,320` terrain
+cells but solves hydrology only on the `3,438,336`-cell catchment-plus-halo
+process domain, or `56.9%` of the stored rectangle. The remaining `2,601,984`
+cells are terrain-only context and must be visibly identified as such in every
+hydrology diagnostic. The solve produces a roughly `96,300 km2` fine catchment,
+a Strahler-order-6 network, a roughly `1,190 m3/s` outlet, and a roughly
+`1,158 km` longest reported chain. Its `2,819` core lakes occupy `8.61%` of core
+land; only `13` are at least `50 km2`. The current inland window
 contains no physical ocean, no closed routing sink, and no endorheic
 depression. Small depressions remain fractional hydrology: in the full process
 catalog, `92%` of lakes are below `1 km2` but contribute only about `9%` of lake

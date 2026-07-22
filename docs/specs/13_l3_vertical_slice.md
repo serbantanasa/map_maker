@@ -121,11 +121,20 @@ cells.
 
 ## Implemented Hydrology V0
 
-The hydrology artifact routes the full process domain with a native D8 graph.
-It conservatively redistributes inherited monthly forcing, realizes physical
-ocean separately from terrain elevation, iterates fill/spill/breach relaxation,
-and publishes lakes, prospective breach events, generated reaches, inherited
-reaches, and inherited-reach alignment. Base terrain is not mutated.
+The hydrology artifact routes the full catchment-plus-halo process domain with
+a native D8 graph. It conservatively redistributes inherited monthly forcing,
+realizes physical ocean separately from terrain elevation, iterates
+fill/spill/breach relaxation, and publishes lakes, prospective breach events,
+generated reaches, inherited reaches, and inherited-reach alignment. Base
+terrain is not mutated.
+
+This is not hydrology over the entire stored terrain rectangle. The canonical
+artifact has `3,438,336` process cells (`56.9%` of `6,040,320` stored cells);
+the other `2,601,984` cells are terrain-only context. Hydrology arrays retain
+sentinels there for shape consistency. Diagnostics must mute that context and
+outline the process boundary rather than showing un-routed terrain as if it
+were a riverless result. A full rectangular map requires a larger hidden
+routing halo outside the desired display area.
 
 The registered outlet is a regional handoff, not necessarily a sea mouth.
 Hydrology derives a fine routed catchment around that outlet rather than using
@@ -143,8 +152,8 @@ map keeps connectors through small ponds but suppresses their stroke beneath
 lakes at least `50 km2`, where the lake polygon itself shows the continuous
 water path. Physical width and depth remain reach attributes.
 
-The canonical seed-42 result contains `6.04 million` cells, a routed core of
-about `96,560 km2`, `18,555` reported reaches, `2,819` core lakes, a
+The canonical seed-42 result contains `6.04 million` stored cells, a routed core
+of about `96,300 km2`, `18,555` reported reaches, `2,819` core lakes, a
 Strahler-order-6 network, and a roughly `1,190 m3/s` outlet. Its outlet monthly
 hydrograph differs from the inherited target by about `11.5%`, open water
 covers about `8.61%` of core land, and no material discharge loss is
@@ -175,6 +184,8 @@ Both hydrology maps include a legend and approximate `100 km` scale bar.
 - exact target extent, unique stable IDs, and bounded peak memory/storage;
 - a continuous terrain rectangle with exhaustive, mutually exclusive core,
   process-halo, and outside masks;
+- explicit process-domain coverage counts, sentinel-only state outside that
+  domain, and visibly distinct terrain-only context in hydrology diagnostics;
 - hydrological validity and conservation acceptance measured on the fine routed core;
 - inherited/routed catchment overlap, area-ratio, and process-boundary gates;
 - all non-lake flow reaches the registered outlet or another explicit terminal;
