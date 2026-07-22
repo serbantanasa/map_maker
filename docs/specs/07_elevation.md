@@ -2,9 +2,10 @@
 
 ## Status
 
-V1 implementation target. This stage creates pre-erosion bedrock elevation on
-the canonical cubed sphere. It does not finalize sea level, coastlines,
-drainage, sediment, or eroded landforms.
+The canonical cubed-sphere implementation is active under the global map-export
+milestone. Current work focuses on multi-seed morphology and world-map
+legibility. This stage creates pre-erosion bedrock elevation; it does not
+finalize sea level, coastlines, drainage, sediment, or eroded landforms.
 
 ## Purpose
 

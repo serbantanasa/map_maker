@@ -11,6 +11,8 @@ Consume every explicit outlet-erosion feedback record, cut a physically narrow
 and topologically bounded drainage path, rerun local hydrology, and then rerun
 monthly surface-water balance. This pass resolves false standing water caused
 by erodible local sills without lowering whole refined cells by channel depth.
+It is bounded by the active terrain resolution: residual moving spill edges are
+handed to regional refinement rather than carved indefinitely.
 
 ## Inputs
 
@@ -74,7 +76,11 @@ support is grade-limited; a candidate whose existing persisted bed already
 satisfies the requested profile is already-satisfied. These accepted spill
 identities accumulate monotonically across the loop so alternating candidate
 sets cannot oscillate by forgetting the previous feasibility result. Other
-residual records remain an explicit blocker for soils and biomes.
+residual records remain explicit blockers until the configured round bound. At
+that bound, each remaining spill is persisted as
+`regional_refinement_deferred`, retained as standing water, and suppressed from
+further coarse outlet carving. This is an explicit scale handoff, not simulated
+convergence.
 
 ## Persistent Outputs
 
@@ -109,21 +115,29 @@ residual records remain an explicit blocker for soils and biomes.
 - The corrected receiver graph is acyclic and conserves active area.
 - Post-incision monthly water balance and immediate-edge transfer audits pass.
 - Soil readiness requires a zero residual feedback count, not merely exhaustion
-  of the configured round count.
+  of the configured round count. A round-limited candidate reaches zero coarse
+  feedback only through an explicit regional-refinement deferral record.
+- True outlet convergence and resolution deferral are reported separately.
 
 ## Canonical Provisional Result
 
-The fixed-seed face-128 world converges in seven rounds with residual feedback
-counts `2181, 671, 109, 22, 3, 1, 0`. Across all rounds it removes about
-`1.65e10 m3` from narrow outlet channels. Final accepted standing-water mean
-area is about `238,049 km2`, or `3.74%` of the selected basin's active area.
-The corrected graph conserves contributing area and preserves all 2,434
-physical trunk cells.
+The current fixed-seed face-128 world genuinely converges in 12 rounds with no
+regional deferral. Across all rounds it accounts for about `1.45e10 m3` of
+bounded outlet-channel erosion. Final accepted standing-water mean area is
+about `167,211 km2`, or `4.72%` of the selected basin's active area. The
+corrected graph conserves contributing area and preserves all 966 physical
+trunk cells.
 
-This is a structural milestone, not lake calibration. The canonical result has
-10,062 permanent candidates, seven hydrologic-wetland candidates, and no
-seasonal candidates. Candidate count, size distribution, hydroperiod, and
-bathymetry still require multi-seed and multi-resolution Earth comparison.
+In the fixed face-64 six-seed screen, four worlds genuinely converge in 6-17
+rounds. Seeds 42 and 101 reach the 20-round cap with two and one moving spill
+candidates respectively; `6,970 km2` and `5,725 km2` of standing-water area are
+explicitly handed to regional refinement. All six worlds pass hydrology hard
+gates and the biosphere, functional-vegetation, and derived-biome ensemble
+profiles.
+
+This is a structural milestone, not lake calibration. Candidate count, size
+distribution, hydroperiod, bathymetry, and the canonical world's globally high
+lake fraction still require multi-seed and multi-resolution Earth comparison.
 
 The depression-catalog aggregation is grouped by candidate rather than scanning
 the complete sparse basin once per candidate. On the canonical catalog this

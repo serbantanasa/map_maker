@@ -98,6 +98,63 @@ def _atlas_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _basin_atlas_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "basin-atlas", help="Export a projected categorical drainage-basin map."
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/physical_atlas.yaml"),
+        help="Atlas YAML configuration (default: configs/physical_atlas.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override atlas output directory.")
+    parser.add_argument("--width", type=int, help="Override output width in pixels.")
+    parser.add_argument(
+        "--central-meridian",
+        type=float,
+        help="Override automatic ocean-seam placement, in degrees longitude.",
+    )
+    parser.add_argument(
+        "--no-rivers",
+        action="store_true",
+        help="Omit vector river channels from this export.",
+    )
+    return parser
+
+
+def _regional_handoff_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "regional-handoff",
+        help="Export a validated sparse L2 drainage-basin handoff package.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l2_regional_handoff.yaml"),
+        help=(
+            "Regional handoff YAML configuration " "(default: configs/l2_regional_handoff.yaml)."
+        ),
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override package output directory.")
+    parser.add_argument(
+        "--basin-id",
+        type=int,
+        help="Override automatic basin selection with a stable BasinID.",
+    )
+    parser.add_argument(
+        "--halo-parent-rings",
+        type=int,
+        help="Override the number of L0 context rings around the basin.",
+    )
+    parser.add_argument(
+        "--refinement-factor",
+        type=int,
+        help="Override the per-axis refinement factor (power of two, 2-32).",
+    )
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -223,6 +280,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     _validation_parser(subparsers)
     _biosphere_validation_parser(subparsers)
     _atlas_parser(subparsers)
+    _basin_atlas_parser(subparsers)
+    _regional_handoff_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -296,6 +355,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"Surface-geography gallery: {biosphere_validation.surface_geography_gallery_path}"
             )
+        if biosphere_validation.physical_atlas_gallery_path is not None:
+            print(f"Physical-atlas gallery: {biosphere_validation.physical_atlas_gallery_path}")
         if biosphere_validation.passed:
             print(
                 f"PASS: {biosphere_validation.seed_count} worlds satisfy earth_biosphere_v1 "
@@ -346,6 +407,79 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Rendered {atlas.width_px}x{atlas.height_px} Equal Earth map at "
             f"{atlas.central_meridian_deg:.2f} degrees central longitude "
             f"with {atlas.rendered_river_count} river reaches."
+        )
+        return 0
+
+    if args.command == "basin-atlas":
+        try:
+            from .pipeline.atlas import AtlasExportConfig, export_drainage_basin_atlas
+
+            atlas_config = AtlasExportConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+                width_px=args.width,
+                central_meridian_deg=args.central_meridian,
+                draw_rivers=False if args.no_rivers else None,
+            )
+            atlas = export_drainage_basin_atlas(atlas_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Drainage-basin atlas: {atlas.png_path}")
+        print(f"Projected Basin-ID GeoTIFF: {atlas.basin_id_geotiff_path}")
+        print(f"Basin atlas metadata: {atlas.metadata_path}")
+        print(
+            f"Rendered {atlas.width_px}x{atlas.height_px} Equal Earth map at "
+            f"{atlas.central_meridian_deg:.2f} degrees central longitude with "
+            f"{atlas.basin_count} basins, {atlas.major_basin_count} major basins, and "
+            f"{atlas.rendered_river_count} river reaches."
+        )
+        return 0
+
+    if args.command == "regional-handoff":
+        try:
+            from .pipeline.regional_handoff import (
+                RegionalHandoffConfig,
+                export_regional_handoff,
+            )
+
+            handoff_config = RegionalHandoffConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+                basin_id=args.basin_id,
+                halo_parent_rings=args.halo_parent_rings,
+                refinement_factor=args.refinement_factor,
+            )
+            handoff = export_regional_handoff(handoff_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Regional handoff: {handoff.output_dir}")
+        print(f"Manifest: {handoff.manifest_path}")
+        print(f"Validation: {handoff.validation_path}")
+        print(f"Preview: {handoff.preview_path}")
+        print(
+            f"Packaged basin {handoff.basin_id}: {handoff.core_parent_count} core L0 cells, "
+            f"{handoff.parent_count - handoff.core_parent_count} context L0 cells, and "
+            f"{handoff.child_count} sparse L2 cells."
         )
         return 0
 

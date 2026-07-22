@@ -16,6 +16,7 @@ from .._refinement_native import run_basin_refinement
 from ..cubed_sphere import CubedSphereGrid
 from ..registry import stage
 from ..visualization import VisualizationRequest, VisualizationResult
+from .hydrology import WATER_DOMINATED_CELL_FRACTION
 
 EARTH_RADIUS_M = 6_371_000.0
 
@@ -25,6 +26,7 @@ class BasinRefinementConfig:
     refinement_factor: int = 16
     basin_id: int | None = None
     terrain_noise_fraction: float = 0.45
+    halo_parent_rings: int = 0
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> "BasinRefinementConfig":
@@ -38,16 +40,20 @@ class BasinRefinementConfig:
         terrain_noise_fraction = float(
             mapping.get("terrain_noise_fraction", cls.terrain_noise_fraction)
         )
+        halo_parent_rings = int(mapping.get("halo_parent_rings", cls.halo_parent_rings))
         if factor < 2 or factor > 32 or factor & (factor - 1):
             raise ValueError("refinement_factor must be a power of two in [2, 32]")
         if basin_id is not None and basin_id < 0:
             raise ValueError("basin_id must be non-negative when provided")
         if not np.isfinite(terrain_noise_fraction) or not 0.0 <= terrain_noise_fraction <= 1.0:
             raise ValueError("terrain_noise_fraction must be finite and in [0, 1]")
+        if not 0 <= halo_parent_rings <= 8:
+            raise ValueError("halo_parent_rings must be in [0, 8]")
         return cls(
             refinement_factor=factor,
             basin_id=basin_id,
             terrain_noise_fraction=terrain_noise_fraction,
+            halo_parent_rings=halo_parent_rings,
         )
 
 
@@ -134,6 +140,25 @@ def _flatten_paths(paths: list[list[int]]) -> tuple[np.ndarray, np.ndarray]:
     return offsets, flattened
 
 
+def _expand_parent_halo(
+    parent_ids: np.ndarray,
+    neighbors: np.ndarray,
+    rings: int,
+) -> np.ndarray:
+    selected = np.zeros(len(neighbors), dtype=bool)
+    selected[np.asarray(parent_ids, dtype=np.int32)] = True
+    frontier = np.asarray(parent_ids, dtype=np.int32)
+    for _ in range(rings):
+        candidates = np.unique(neighbors[frontier].reshape(-1))
+        candidates = candidates[candidates >= 0]
+        candidates = candidates[~selected[candidates]]
+        if candidates.size == 0:
+            break
+        selected[candidates] = True
+        frontier = candidates.astype(np.int32, copy=False)
+    return np.flatnonzero(selected).astype(np.int32)
+
+
 def _fixed_list(values: np.ndarray, size: int) -> pa.FixedSizeListArray:
     return pa.FixedSizeListArray.from_arrays(
         pa.array(np.asarray(values, dtype=np.float32).reshape(-1), type=pa.float32()), size
@@ -157,6 +182,102 @@ def _cell_table(records: np.ndarray) -> pa.Table:
     )
 
 
+def _parent_channel_surface_prior(
+    hydrology,
+    parent_ids: np.ndarray,
+    parent_elevation_m: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    prior = np.asarray(parent_elevation_m, dtype=np.float32).copy()
+    fill_depth = _artifact_array(hydrology, "DepressionFillDepthM").reshape(-1)[parent_ids]
+    filled = fill_depth > 0.0
+    prior[filled] += fill_depth[filled]
+    depression_ids = _artifact_array(hydrology, "DepressionID").reshape(-1)[parent_ids]
+    catalog = _artifact_table(hydrology, "DepressionCatalog")
+    catalog_ids = np.asarray(catalog["depression_id"], dtype=np.int32)
+    catalog_surfaces = np.asarray(catalog["surface_elevation_m"], dtype=np.float32)
+    registered = np.asarray(catalog["water_area_km2"], dtype=np.float64) > 0.0
+    surface_by_id = {
+        int(depression_id): float(surface)
+        for depression_id, surface, keep in zip(
+            catalog_ids, catalog_surfaces, registered, strict=True
+        )
+        if keep
+    }
+    registered_control = np.asarray(
+        [int(depression_id) in surface_by_id for depression_id in depression_ids],
+        dtype=bool,
+    )
+    registered_rows = np.flatnonzero(registered_control)
+    try:
+        prior[registered_rows] = np.asarray(
+            [surface_by_id[int(depression_ids[row])] for row in registered_rows],
+            dtype=np.float32,
+        )
+    except KeyError as error:
+        raise RuntimeError(
+            "fractional standing water has no registered hydraulic surface"
+        ) from error
+    if np.any(~np.isfinite(prior)):
+        raise RuntimeError("channel surface prior contains a non-finite elevation")
+    return prior, filled | registered_control
+
+
+def _extend_hydraulic_surface_over_submerged_approaches(
+    fine_cell_ids: np.ndarray,
+    surface_prior_m: np.ndarray,
+    hydraulic_surface_controlled: np.ndarray,
+    reaches: pa.Table,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Carry a receiving water surface over unresolved submerged approach terrain."""
+
+    prior = np.asarray(surface_prior_m, dtype=np.float32).copy()
+    controlled = np.asarray(hydraulic_surface_controlled, dtype=bool).copy()
+    initially_controlled = controlled.copy()
+    fine_ids = np.asarray(fine_cell_ids, dtype=np.int32)
+    order = np.argsort(fine_ids)
+    sorted_ids = fine_ids[order]
+    channel_paths = [
+        np.asarray(path, dtype=np.int32)
+        for path, kind in zip(
+            reaches["fine_cell_path"].to_pylist(),
+            reaches["reach_kind"].to_pylist(),
+            strict=True,
+        )
+        if kind == "channel"
+    ]
+
+    # Revisit the paths because a downstream reach may expose a hydraulic
+    # control at a shared junction after its upstream reach was inspected.
+    for _ in range(len(channel_paths) + 1):
+        changed = False
+        for path in channel_paths:
+            rows = _lookup_rows(sorted_ids, order, path)
+            receiving_surface: float | None = None
+            for row in rows[::-1]:
+                if controlled[row]:
+                    surface = float(prior[row])
+                    receiving_surface = (
+                        surface if receiving_surface is None else max(receiving_surface, surface)
+                    )
+                    continue
+                if receiving_surface is None:
+                    continue
+                if float(prior[row]) <= receiving_surface:
+                    prior[row] = receiving_surface
+                    controlled[row] = True
+                    changed = True
+                    continue
+                # This is the first emerged point upstream of the water body.
+                receiving_surface = None
+        if not changed:
+            break
+    else:
+        raise RuntimeError("submerged channel-approach conditioning did not converge")
+
+    approach_count = int(np.count_nonzero(controlled & ~initially_controlled))
+    return prior, controlled, approach_count
+
+
 def _parent_table(
     records: np.ndarray,
     parent_ids: np.ndarray,
@@ -165,6 +286,9 @@ def _parent_table(
     parent_relief_m: np.ndarray,
     parent_areas_km2: np.ndarray,
     parent_process_excluded: np.ndarray,
+    parent_standing_water_fraction: np.ndarray,
+    parent_channel_surface_prior_m: np.ndarray,
+    parent_hydraulic_surface_controlled: np.ndarray,
     factor: int,
 ) -> pa.Table:
     children_per_parent = factor * factor
@@ -180,6 +304,11 @@ def _parent_table(
             "parent_cell_id": pa.array(parent_ids, type=pa.int32()),
             "inside_selected_basin": pa.array(inside_selected_basin, type=pa.bool_()),
             "process_excluded": pa.array(parent_process_excluded != 0, type=pa.bool_()),
+            "standing_water_fraction": pa.array(parent_standing_water_fraction, type=pa.float32()),
+            "channel_surface_prior_m": pa.array(parent_channel_surface_prior_m, type=pa.float32()),
+            "hydraulic_surface_controlled": pa.array(
+                parent_hydraulic_surface_controlled, type=pa.bool_()
+            ),
             "child_count": pa.array(
                 np.full(len(parent_ids), children_per_parent, dtype=np.int32), type=pa.int32()
             ),
@@ -365,9 +494,7 @@ def _directed_path_graph_metadata(reaches: pa.Table) -> dict[str, int]:
     return {
         "directed_edge_count": len(edges),
         "reach_directed_edge_count": reach_edge_count,
-        "shared_directed_edge_count": sum(
-            count > 1 for count in edge_multiplicity.values()
-        ),
+        "shared_directed_edge_count": sum(count > 1 for count in edge_multiplicity.values()),
         "shared_physical_directed_edge_count": sum(
             count > 1 for count in physical_edge_multiplicity.values()
         ),
@@ -676,7 +803,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "RefinedReachCellCatalog",
         "BasinRefinementMetadata",
     ),
-    version="v6",
+    version="v12",
     native_libraries=("refinement_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -720,8 +847,13 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     inherited_path_ids = np.fromiter(
         (cell for path in paths for cell in path), dtype=np.int32, count=sum(map(len, paths))
     )
-    parent_ids = np.ascontiguousarray(
+    core_parent_ids = np.ascontiguousarray(
         np.union1d(basin_parent_ids, inherited_path_ids), dtype=np.int32
+    )
+    parent_ids = _expand_parent_halo(
+        core_parent_ids,
+        context.topology.neighbor_indices.reshape(-1, 4),
+        config.halo_parent_rings,
     )
     inside_selected_basin = basin_ids[parent_ids] == selected_basin_id
     bedrock = _artifact_array(deps["elevation"], "BedrockElevationM").reshape(-1)
@@ -734,16 +866,22 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     parent_area_steradians = np.ascontiguousarray(
         context.topology.cell_areas.reshape(-1)[parent_ids], dtype=np.float64
     )
-    depression_catalog = _artifact_table(hydrology, "DepressionCatalog")
-    preserved_depression_ids = np.asarray(
-        depression_catalog.filter(pc.not_equal(depression_catalog["class_code"], 5))[
-            "depression_id"
-        ],
-        dtype=np.int32,
-    )
-    depression_ids = _artifact_array(hydrology, "DepressionID").reshape(-1)
+    standing_water_fraction = _artifact_array(hydrology, "LakeFraction").reshape(
+        -1
+    ) + _artifact_array(hydrology, "WetlandFraction").reshape(-1)
     parent_process_excluded = np.ascontiguousarray(
-        np.isin(depression_ids[parent_ids], preserved_depression_ids), dtype=np.uint8
+        standing_water_fraction[parent_ids] >= WATER_DOMINATED_CELL_FRACTION,
+        dtype=np.uint8,
+    )
+    parent_standing_water_fraction = np.ascontiguousarray(
+        standing_water_fraction[parent_ids], dtype=np.float32
+    )
+    parent_channel_surface_prior, parent_hydraulic_surface_controlled = (
+        _parent_channel_surface_prior(
+            hydrology,
+            parent_ids,
+            parent_elevation,
+        )
     )
 
     reach_offsets, reach_parent_cells = _flatten_paths(paths)
@@ -789,6 +927,44 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     radius_km = radius_m / 1_000.0
     parent_areas_km2 = parent_area_steradians * radius_km * radius_km
     cells = _cell_table(cell_records)
+    reaches, junctions_valid, maximum_length_error = _reach_table(
+        selected_reaches,
+        reach_records,
+        path_cells,
+        cell_records,
+        fine_resolution=fine_resolution,
+        factor=config.refinement_factor,
+        planet_radius_m=radius_m,
+    )
+    children_per_parent = config.refinement_factor**2
+    child_standing_water_fraction = np.repeat(parent_standing_water_fraction, children_per_parent)
+    child_channel_surface_prior = np.asarray(cells["terrain_elevation_m"], dtype=np.float32).copy()
+    controlled_children = np.repeat(parent_hydraulic_surface_controlled, children_per_parent)
+    child_channel_surface_prior[controlled_children] = np.repeat(
+        parent_channel_surface_prior, children_per_parent
+    )[controlled_children]
+    (
+        child_channel_surface_prior,
+        controlled_children,
+        hydraulic_approach_child_count,
+    ) = _extend_hydraulic_surface_over_submerged_approaches(
+        np.asarray(cells["fine_cell_id"], dtype=np.int32),
+        child_channel_surface_prior,
+        controlled_children,
+        reaches,
+    )
+    cells = cells.append_column(
+        "standing_water_fraction",
+        pa.array(child_standing_water_fraction, type=pa.float32()),
+    )
+    cells = cells.append_column(
+        "channel_surface_prior_m",
+        pa.array(child_channel_surface_prior, type=pa.float32()),
+    )
+    cells = cells.append_column(
+        "hydraulic_surface_controlled",
+        pa.array(controlled_children, type=pa.bool_()),
+    )
     cells = cells.append_column(
         "process_excluded",
         pa.array(
@@ -804,16 +980,10 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
         parent_relief,
         parent_areas_km2,
         parent_process_excluded,
+        parent_standing_water_fraction,
+        parent_channel_surface_prior,
+        parent_hydraulic_surface_controlled,
         config.refinement_factor,
-    )
-    reaches, junctions_valid, maximum_length_error = _reach_table(
-        selected_reaches,
-        reach_records,
-        path_cells,
-        cell_records,
-        fine_resolution=fine_resolution,
-        factor=config.refinement_factor,
-        planet_radius_m=radius_m,
     )
     reaches, terminal_metadata = _classify_reach_terminals(
         reaches, basin_ids, flow_receiver, flow_sink_type
@@ -840,7 +1010,15 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "selected_basin_id": selected_basin_id,
             "selected_basin_parent_count": int(np.count_nonzero(inside_selected_basin)),
             "boundary_parent_count": int(np.count_nonzero(~inside_selected_basin)),
+            "halo_parent_count": int(len(parent_ids) - len(core_parent_ids)),
             "process_excluded_parent_count": int(np.count_nonzero(parent_process_excluded)),
+            "fractional_water_channel_prior_parent_count": int(
+                np.count_nonzero(parent_standing_water_fraction > 0.0)
+            ),
+            "hydraulic_surface_prior_parent_count": int(
+                np.count_nonzero(parent_hydraulic_surface_controlled)
+            ),
+            "hydraulic_backwater_approach_child_count": hydraulic_approach_child_count,
             "process_exclusion_valid": int(process_exclusion_valid),
             "channel_reach_count": int(
                 selected_reaches.num_rows - np.count_nonzero(selected_connectors)
@@ -857,6 +1035,10 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "inherited_discharge_relative_error": 0.0,
             "topology": "sparse_selected_basin_on_cubed_sphere",
             "terrain_semantics": "parent_mean_conserving_unresolved_relief_realization",
+            "channel_surface_prior_semantics": (
+                "priority_flood_control_surface_over_unresolved_fill_with_registered_"
+                "water_surface_override_and_submerged_backwater_approach_else_refined_terrain"
+            ),
             "river_semantics": "physical_channel_reaches_with_zero_width_hydrologic_connectors",
             "corridor_area_semantics": (
                 "conservative_nested_lateral_support_with_per_cell_capacity"

@@ -9,7 +9,11 @@ import pytest
 
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline.cubed_sphere import CubedSphereGrid
-from map_maker.pipeline.stages.basin_refinement import BasinRefinementConfig
+from map_maker.pipeline.stages.basin_refinement import (
+    BasinRefinementConfig,
+    _expand_parent_halo,
+    _extend_hydraulic_surface_over_submerged_approaches,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -114,9 +118,26 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert np.any(np.asarray(cells["terrain_offset_m"]) < 0.0)
     assert "process_excluded" in cells.column_names
     assert "process_excluded" in parents.column_names
+    assert "standing_water_fraction" in cells.column_names
+    assert "channel_surface_prior_m" in cells.column_names
+    assert "hydraulic_surface_controlled" in cells.column_names
+    assert "standing_water_fraction" in parents.column_names
+    assert "channel_surface_prior_m" in parents.column_names
+    assert "hydraulic_surface_controlled" in parents.column_names
     assert (
         int(np.count_nonzero(np.asarray(parents["process_excluded"])))
         == metadata["process_excluded_parent_count"]
+    )
+    channel_surface = np.asarray(cells["channel_surface_prior_m"], dtype=np.float32)
+    terrain_elevation = np.asarray(cells["terrain_elevation_m"], dtype=np.float32)
+    assert np.all(np.isfinite(channel_surface))
+    controlled = np.asarray(cells["hydraulic_surface_controlled"], dtype=bool)
+    np.testing.assert_array_equal(channel_surface[~controlled], terrain_elevation[~controlled])
+    assert metadata["fractional_water_channel_prior_parent_count"] == int(
+        np.count_nonzero(np.asarray(parents["standing_water_fraction"]) > 0.0)
+    )
+    assert metadata["hydraulic_surface_prior_parent_count"] == int(
+        np.count_nonzero(np.asarray(parents["hydraulic_surface_controlled"]))
     )
 
     fine_grid = CubedSphereGrid.create(fine_resolution)
@@ -270,3 +291,52 @@ def test_refinement_config_rejects_invalid_controls():
         BasinRefinementConfig.from_mapping({"basin_id": -1})
     with pytest.raises(ValueError, match="terrain_noise_fraction"):
         BasinRefinementConfig.from_mapping({"terrain_noise_fraction": 1.1})
+    with pytest.raises(ValueError, match="halo_parent_rings"):
+        BasinRefinementConfig.from_mapping({"halo_parent_rings": 9})
+
+
+def test_parent_halo_expands_over_topology_neighbors():
+    neighbors = np.asarray(
+        [
+            [1, 2, 1, 2],
+            [0, 3, 0, 3],
+            [0, 3, 0, 3],
+            [1, 2, 1, 2],
+        ],
+        dtype=np.int32,
+    )
+
+    np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 0), [0])
+    np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 1), [0, 1, 2])
+    np.testing.assert_array_equal(_expand_parent_halo(np.asarray([0]), neighbors, 2), [0, 1, 2, 3])
+
+
+def test_submerged_channel_approach_inherits_receiving_water_surface():
+    fine_cell_ids = np.asarray([10, 11, 12, 13, 20, 21, 29, 30, 31], dtype=np.int32)
+    prior = np.asarray([-50.0, 20.0, -100.0, 0.0, -100.0, 0.0, -100.0, -50.0, 0.0])
+    controlled = np.asarray([False, False, False, True, False, True, False, False, True])
+    reaches = pa.table(
+        {
+            "reach_kind": pa.array(["channel", "connector", "channel", "channel"]),
+            "fine_cell_path": pa.array(
+                [[10, 11, 12, 13], [20, 21], [29, 30], [30, 31]],
+                type=pa.list_(pa.int32()),
+            ),
+        }
+    )
+
+    conditioned, updated_control, approach_count = (
+        _extend_hydraulic_surface_over_submerged_approaches(
+            fine_cell_ids, prior, controlled, reaches
+        )
+    )
+
+    np.testing.assert_array_equal(
+        conditioned,
+        np.asarray([-50.0, 20.0, 0.0, 0.0, -100.0, 0.0, 0.0, 0.0, 0.0]),
+    )
+    np.testing.assert_array_equal(
+        updated_control,
+        np.asarray([False, False, True, True, False, True, True, True, True]),
+    )
+    assert approach_count == 3

@@ -1,8 +1,9 @@
 # Planet Engine Spec
 
-Status: working discussion draft. This document captures agreed direction and
-open questions before implementation. Stage-level details remain in
-`docs/specs/` until merged or superseded.
+Status: canonical product and scientific scope. The [decision log](DECISIONS.md)
+owns approved implementation choices, the [roadmap](ROADMAP.md) owns current
+sequencing, and live stage contracts remain under `specs/`. Completed and
+superseded contracts are indexed in the [archive](archive/README.md).
 
 ## Project Definition
 
@@ -76,8 +77,9 @@ hard gates.
 
 That distinction does not imply that every such world is already simulated
 credibly. Current implementation limits include Earthlike planet-config bounds,
-a bounded climate-temperature kernel, atomic L2 land/ocean cells, incomplete
-sea-ice and ice-sheet dynamics, and no calibrated non-Earth scenario suite.
+a bounded climate-temperature kernel, atomic L2 land/ocean cells,
+thermodynamic-only sea ice, incomplete ice-sheet dynamics, and no calibrated
+non-Earth scenario suite.
 These are capability gaps to expose and remove, not assumptions to embed in
 downstream artifacts.
 
@@ -89,44 +91,10 @@ V1 non-goals:
 
 ## Approved Decisions
 
-See `docs/DECISIONS.md`.
-
-Current approved/provisional decisions:
-- Decision 001: Canonical Planet Grid = Cubed Sphere.
-- Decision 002: Planetary Boundary Conditions.
-- Decision 003: Resolution Hierarchy.
-- Decision 004: Depression-Aware Hydrology.
-- Decision 005: Rivers As Graph/Vector Features.
-- Decision 006: Storage And Layer Versioning.
-- Decision 007: Stage Artifact Contract.
-- Decision 008: V1 World Stack.
-- Decision 009: Geological History Through Process-Constrained Synthesis.
-- Decision 012: Seasonal Intermediate-Complexity Climate.
-- Decision 013: Historical Source-To-Sink Coupling.
-- Decision 014: Modern Hydrology Realism Gates.
-- Decision 015: Property-First Soils And Functional Biomes.
-- Decision 016: System-First Mineral And Energy Resources.
-- Decision 017: Probabilistic Constrained Regional Refinement.
-- Decision 018: Truth And Atlas Rendering.
-- Decision 019: Gate Then Score Realism Evaluation.
-- Decision 020: Rust Computational Core With Python Orchestration.
-- Decision 021: Causal Pre-Erosion Elevation Components.
-- Decision 022: Fractional Coarse Surface Coverage.
-- Decision 023: Hierarchical Rivers And Subgrid Fluvial Incision.
-- Decision 024: Hydrologic Connectors And Conservative Corridor Support.
-- Decision 025: Junction Beds And Conservative First-Pass Fluvial Budgets.
-- Decision 026: Bounded Sparse Hydrology Pass 2.
-- Decision 027: Refined Seasonal Surface-Water Balance.
-- Decision 028: Bounded Subgrid Outlet Incision.
-- Decision 030: Bounded V1 Lake Hydrographs And Cryosphere.
-- Decision 031: Fractional Surface Materials Before Functional Biomes.
-- Decision 032: Earth Calibration Profile And Open Environmental Envelope.
-- Decision 033: Trait-First Potential Biosphere Before Functional Types.
-- Decision 034: Earth Biosphere Profile Before Functional Types.
-
-Accepted only as tentative prototype hypotheses:
-- Decision 010: Explicit History Window And Adaptive Nested Sweeps.
-- Decision 011: Persistent Subgrid Geological Features.
+The [Decision Log](DECISIONS.md) is the only current list of numbered decisions,
+their status, and supersession. Do not duplicate that growing index here.
+Decisions 010 and 011 remain tentative prototype hypotheses; later decisions
+explicitly supersede narrower parts of earlier contracts where stated.
 
 ## Geological Synthesis Model
 

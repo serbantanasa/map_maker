@@ -11,7 +11,11 @@ import pytest
 
 from map_maker.pipeline import ExecutionEngine, PipelineConfig, registry
 from map_maker.pipeline.cubed_sphere import CubedSphereGrid
-from map_maker.pipeline.stages.hydrology import HydrologyConfig
+from map_maker.pipeline.stages.hydrology import (
+    REFERENCE_SUBGRID_CELL_STERADIANS,
+    HydrologyConfig,
+    _effective_connected_basin_fraction,
+)
 from map_maker.pipeline.tools import main as pipeline_tools_main
 
 
@@ -208,7 +212,8 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
         depression_classes != 5
     ]
     preserved_support = np.isin(arrays["DepressionID"], preserved_depression_ids)
-    assert np.all(arrays["RiverCorridor"][preserved_support] == 0.0)
+    water_dominated_support = preserved_support & (water_fraction >= 0.5)
+    assert np.all(arrays["RiverCorridor"][water_dominated_support] == 0.0)
     assert basin_catalog.num_rows > 0
     assert drainage_graph.num_rows == int(np.count_nonzero(land))
     assert waterbody_cells.num_rows == int(np.count_nonzero(water_fraction > 0.0))
@@ -323,6 +328,11 @@ def test_hydrology_outputs_depression_aware_global_graph_and_catalogs(tmp_path: 
     assert metadata["depression_count"] == depression_catalog.num_rows
     assert metadata["lake_count"] == lake_catalog.num_rows
     assert metadata["wetland_count"] == wetland_catalog.num_rows
+    assert (
+        metadata["residual_post_breach_lake_count"] + metadata["fully_drained_breach_count"]
+        == metadata["breach_count"]
+    )
+    assert metadata["residual_post_breach_lake_area_km2"] >= 0.0
     assert metadata["waterbody_count"] == lake_catalog.num_rows + wetland_catalog.num_rows
     assert metadata["basin_count"] == basin_catalog.num_rows
     assert metadata["reach_count"] == reaches.num_rows
@@ -391,3 +401,14 @@ def test_hydrology_config_and_cli_reject_invalid_controls():
         HydrologyConfig.from_mapping({"subgrid_connected_basin_fraction": 1.1})
     with pytest.raises(SystemExit):
         pipeline_tools_main(["--stage", "hydrology"])
+
+
+def test_connected_basin_occupancy_scales_with_global_cell_area():
+    configured = 0.30
+
+    assert _effective_connected_basin_fraction(
+        configured, REFERENCE_SUBGRID_CELL_STERADIANS
+    ) == pytest.approx(configured)
+    assert _effective_connected_basin_fraction(
+        configured, 4.0 * REFERENCE_SUBGRID_CELL_STERADIANS
+    ) == pytest.approx(configured * 4.0 ** (1.0 / 3.0))

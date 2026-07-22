@@ -17,6 +17,10 @@ from ..visualization import VisualizationRequest, VisualizationResult
 
 EARTH_RADIUS_M = 6_371_000.0
 EARTH_LIKE_LAKE_AREA_FRACTION_RANGE = (0.015, 0.040)
+REFERENCE_SUBGRID_FACE_RESOLUTION = 128
+REFERENCE_SUBGRID_CELL_STERADIANS = 4.0 * np.pi / (6.0 * REFERENCE_SUBGRID_FACE_RESOLUTION**2)
+SUBGRID_OCCUPANCY_AREA_EXPONENT = 1.0 / 3.0
+WATER_DOMINATED_CELL_FRACTION = 0.50
 
 
 @dataclass(frozen=True)
@@ -73,6 +77,17 @@ class HydrologyConfig:
                 "river_minimum_discharge_m3s must not exceed river_discharge_threshold_m3s"
             )
         return config
+
+
+def _effective_connected_basin_fraction(
+    configured_fraction: float, median_cell_steradians: float
+) -> float:
+    """Preserve unresolved basin occupancy as global cell resolution changes."""
+
+    scale = (median_cell_steradians / REFERENCE_SUBGRID_CELL_STERADIANS) ** (
+        SUBGRID_OCCUPANCY_AREA_EXPONENT
+    )
+    return float(np.clip(configured_fraction * scale, 0.01, 1.0))
 
 
 def _artifact_array(result, name: str) -> np.ndarray:
@@ -525,7 +540,7 @@ ARRAY_DTYPES = {
         "RiverReachCatalog",
         "HydrologyMetadata",
     ),
-    version="v8",
+    version="v19",
     native_libraries=("hydrology_native",),
     visualizer=_hydrology_visualizer,
 )
@@ -553,9 +568,15 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
     physical_areas_km2 = context.topology.cell_areas * radius_km * radius_km
     land_mask = _artifact_array(deps["sea_level"], "SurfaceOceanMask") < 0.5
     median_land_cell_area = float(np.median(physical_areas_km2[land_mask]))
+    median_land_cell_steradians = float(np.median(context.topology.cell_areas[land_mask]))
+    effective_connected_basin_fraction = _effective_connected_basin_fraction(
+        config.subgrid_connected_basin_fraction,
+        median_land_cell_steradians,
+    )
     controls = {
         **asdict(config),
         "planet_radius_m": radius_m,
+        "subgrid_connected_basin_fraction": effective_connected_basin_fraction,
         "river_contributing_area_threshold_km2": max(
             config.river_contributing_area_threshold_km2, 4.0 * median_land_cell_area
         ),
@@ -662,12 +683,41 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
     validation_minimum, validation_maximum = EARTH_LIKE_LAKE_AREA_FRACTION_RANGE
     lake_area_km2 = float(pc.sum(lake_catalog["water_area_km2"]).as_py() or 0.0)
     mean_lake_depth_m = float(metadata["lake_volume_km3"] * 1_000.0 / max(lake_area_km2, 1e-12))
+    flat_receiver = views["FlowReceiverID"].reshape(-1)
+    flat_hydrologic_elevation = views["HydrologicElevationM"].reshape(-1)
+    flat_ocean = ocean.reshape(-1).astype(bool)
+    routed = (flat_receiver >= 0) & ~flat_ocean
+    routed_targets = np.maximum(flat_receiver, 0)
+    unresolved_hydraulic_ascent = (
+        routed
+        & ~flat_ocean[routed_targets]
+        & (
+            flat_hydrologic_elevation[routed_targets]
+            > flat_hydrologic_elevation + config.minimum_depression_depth_m
+        )
+    )
+    breach_applied = np.asarray(depression_catalog["breach_incision_m"], dtype=np.float32) > 0.0
+    registered_after_breach = np.asarray(depression_catalog["lake_id"], dtype=np.int32) >= 0
+    residual_breach_lake = breach_applied & registered_after_breach
+    fully_drained_breach = breach_applied & ~registered_after_breach
+    accounted_breach_count = int(
+        np.count_nonzero(residual_breach_lake) + np.count_nonzero(fully_drained_breach)
+    )
+    if accounted_breach_count != int(metadata["breach_count"]):
+        raise RuntimeError("hydrology did not classify every breached depression after incision")
     metadata.update(
         {
             **asdict(config),
             **reach_readiness,
             "planet_radius_m": radius_m,
             "median_land_cell_area_km2": median_land_cell_area,
+            "configured_subgrid_connected_basin_fraction": (
+                config.subgrid_connected_basin_fraction
+            ),
+            "effective_subgrid_connected_basin_fraction": (effective_connected_basin_fraction),
+            "subgrid_occupancy_reference_face_resolution": (REFERENCE_SUBGRID_FACE_RESOLUTION),
+            "subgrid_occupancy_area_exponent": SUBGRID_OCCUPANCY_AREA_EXPONENT,
+            "water_dominated_cell_fraction": WATER_DOMINATED_CELL_FRACTION,
             "effective_river_contributing_area_threshold_km2": controls[
                 "river_contributing_area_threshold_km2"
             ],
@@ -680,9 +730,27 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
                 )
                 if is_connector
             ),
+            "unresolved_hydraulic_ascent_cell_count": int(
+                np.count_nonzero(unresolved_hydraulic_ascent)
+            ),
+            "unresolved_hydraulic_ascent_land_cell_fraction": float(
+                np.mean(unresolved_hydraulic_ascent[~flat_ocean])
+            ),
+            "registered_hydraulic_control_cell_count": int(
+                len(set(depression_catalog["outlet_cell"].to_pylist()))
+            ),
             "open_lake_count": int(pc.sum(lake_catalog["open_outlet"]).as_py() or 0),
             "open_wetland_count": int(pc.sum(wetland_catalog["open_outlet"]).as_py() or 0),
             "mean_lake_depth_m": mean_lake_depth_m,
+            "residual_post_breach_lake_count": int(np.count_nonzero(residual_breach_lake)),
+            "fully_drained_breach_count": int(np.count_nonzero(fully_drained_breach)),
+            "residual_post_breach_lake_area_km2": float(
+                np.sum(
+                    np.asarray(depression_catalog["water_area_km2"], dtype=np.float64)[
+                        residual_breach_lake
+                    ]
+                )
+            ),
             "closed_drainage_land_fraction": closed_land_fraction,
             "lake_land_cell_fraction": lake_support_land_cell_fraction,
             "lake_support_land_cell_fraction": lake_support_land_cell_fraction,
@@ -702,11 +770,20 @@ def hydrology_stage(context, deps, config_mapping: Mapping[str, object]):
             ),
             "water_body_classes": {str(code): name for code, name in WATER_BODY_CLASSES.items()},
             "topology": "cubed_sphere",
-            "model": "fractional_priority_flood_fill_spill_breach_hydrology_v2",
+            "model": "fractional_priority_flood_fill_spill_breach_hydrology_v13",
             "runoff_semantics": "monthly_climate_runoff_potential_routed_conservatively",
-            "lake_semantics": "subgrid_fractional_open_or_closed_water_balance_depressions",
-            "river_semantics": ("vector_channel_reaches_with_zero_width_hydrologic_connectors"),
-            "breach_semantics": "selective_sustained_overflow_outlet_incision",
+            "lake_semantics": (
+                "subgrid_fractional_open_or_closed_water_balance_depressions_with_"
+                "unbiased_connected_hypsometry_and_relief_bounded_storage"
+            ),
+            "river_semantics": (
+                "vector_channel_reaches_preserved_across_fractional_water_cells_with_"
+                "zero_width_connectors_for_water_dominated_cells_control_boundaries_"
+                "routed_unresolved_fill_exits_and_priority_flood_ascents"
+            ),
+            "breach_semantics": (
+                "selective_sustained_overflow_outlet_incision_with_post_breach_residual_lakes"
+            ),
         }
     )
     context.logger.log_event({"type": "hydrology_summary", "stage": "hydrology", **metadata})

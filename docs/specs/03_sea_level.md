@@ -4,7 +4,9 @@
 
 Canonical cubed-sphere V1 implemented. All canonical surface consumers now use
 the solved sea-level artifacts; only geological and explicitly legacy stages
-retain the crust-class compatibility mask.
+retain the crust-class compatibility mask. The contract remains active under
+the global map-export milestone for coast, shelf, margin, and inland-sea
+morphology and their visual gates.
 
 ## Purpose
 

@@ -1614,9 +1614,13 @@ Cryosphere:
 - Ice above a storage threshold transfers conservatively toward the lowest
   neighboring bedrock cell; transfer into ocean is calving. This is a
   parameterized V1 spreading rule, not stress-driven glacier dynamics.
+- Ocean cells carry a separate thermodynamic sea-ice thickness reservoir.
+  Configurable seawater freezing and melt thresholds drive seasonal growth and
+  retreat; fractional concentration is derived from thickness. Sea ice does not
+  enter land runoff or create atmospheric precipitation.
 - Glaciers affect runoff immediately. Dynamic ice flow, ice sheets, glacial
-  erosion, moraines, and calibrated equilibrium-line statistics remain later
-  milestones.
+  erosion, moraines, sea-ice drift and ridging, and calibrated equilibrium-line
+  statistics remain later milestones.
 
 Reason:
 Lake regulation is necessary for correct river continuity. A bounded glacier
@@ -2304,3 +2308,214 @@ Supercontinents are geologically plausible phases, so a hard global ban would
 discard valid worlds. Treating them as equally likely in every scenario would
 also make an Earthlike request unreliable. Profile-conditioned generation gives
 the user control while preserving natural variation and useful edge cases.
+
+## Decision 047: Breach Erosion Does Not Imply Complete Lake Drainage
+
+Status: implemented, provisional
+
+Decision:
+Treat outlet breaching and basin drainage as separate outcomes. An accepted
+breach erodes its bounded outlet path, after which a second priority flood
+defines the post-breach hydraulic control surface. If that surface still stands
+at least one configured minimum-depression depth above the basin sink and
+retains connected hypsometric area, the depression becomes a smaller open lake
+or inland sea. Its breach remains in `BreachCatalog`, while its residual water
+is registered as ordinary process-excluded open-water support. Only a basin
+without resolved residual head remains a fully drained breached depression.
+
+The Earthlike basin-erosion profile also rejects a prospective trunk profile
+deeper than `2,200 m`. This is a diagnostic stop for a broken upstream waterbody
+or graph boundary, not permission to apply that incision to coarse raster
+terrain and not a universal planetary constant.
+
+Reason:
+The earlier model equated an accepted breach with removal of the entire water
+body. In seed 303 it therefore treated a roughly Mediterranean-sized,
+`4.46 km`-deep inland basin as dry after only `800 m` of bounded outlet erosion.
+The fluvial grade solver inherited the basin floor as a river node and propagated
+a roughly `-5.45 km` bed through ordinary downstream terrain, producing
+`5.75 km` of incision and about `91,000 km3` of bank erosion. Re-flooding after
+the breach preserves the physically unavoidable inland sea and keeps later
+channel processes out of its abyssal floor.
+
+## Decision 048: Terrain Resolution Owns Physical River Morphology
+
+Status: approved; global and sparse safeguards implemented, local refinement pending
+
+Decision:
+Treat the global and sparse-basin hydrology products as multiscale constraints,
+not as a raster landscape-evolution solve. At canonical face-128 resolution an
+Earth-sized global cell averages about `5,190 km2` and is roughly `72 km`
+across. Factor-16 sparse refinement reduces this to about `20.3 km2` and
+`4.5 km` across. That is sufficient to preserve an inherited major-trunk graph,
+but not to discover or physically excavate county-scale rivers and valleys.
+
+This decision supersedes Decision 025's sparse cell-mean terrain feedback and
+Decision 026's use of candidate channel beds as routing-raster elevations. It
+narrows Decision 023's provisional permission for 2-5 km valley realization:
+that scale may carry fractional support and major-trunk constraints, but the V1
+pipeline does not yet have the process history or lateral terrain resolution to
+claim evolved valley morphology there. It also supersedes Decision 028's
+indefinite soil blocker once the bounded outlet correction exhausts its coarse
+resolution budget; an explicit regional-refinement handoff is then required.
+
+The River Thames is the concrete regression example. Its roughly `350 km`
+length spans only about five face-128 cell widths, while its roughly
+`13,000 km2` basin occupies only about two and a half average global cells. It
+also falls far below the canonical `200,000 km2` global river-area threshold.
+The global product therefore must not pretend to resolve the Thames, its
+tributaries, floodplain, banks, or incision history.
+
+Resolution ownership is:
+
+- global L2 hydrology owns major drainage basins, lake and ocean terminals,
+  monthly runoff and discharge, and major trunk topology;
+- sparse factor-16 refinement realizes inherited trunk vectors and routing
+  constraints, but its candidate bed and sediment volumes remain prospective;
+- regional refinement discovers smaller tributaries and owns physical valley,
+  bank, floodplain, and terrain incision, initially at roughly `100-250 m`;
+- channels narrower than the active terrain cell remain vectors with physical
+  width, depth, velocity, discharge, and cross-section attributes.
+
+The representation contract applies at every resolution:
+
+- the river vector spine and reach graph remain canonical, including for large
+  rivers whose water surface is visible in a raster;
+- a typical roughly `30 m` channel remains subcell on a `100-250 m` terrain
+  grid, so raster layers store fractional channel-water, floodplain, wetland,
+  and valley effects rather than categorical river cells or whole-cell channel
+  excavation;
+- physical width is a process attribute. Cartographic stroke width is a
+  separate view- and scale-dependent style attribute and never feeds back into
+  physical state;
+- deterministic finer local refinement is created only where banks, meanders,
+  crossings, or other lateral morphology must be resolved. Its cell size is
+  chosen from physical channel width so the channel spans multiple cells, with
+  stable refinement bounds, seeding, and tie-breaking.
+
+The current global and sparse stages implement the persistent vector graph,
+fractional support, and no-whole-cell-excavation safeguards. Deterministic local
+bank and meander realization remains a regional-refinement requirement. A finer
+raster may sample or derive support from the vector spine; it never replaces
+the spine or reach graph as canonical river identity.
+
+Consequently, the sparse fluvial stage must publish separate prospective and
+applied process fields. Candidate channel excavation and floodplain deposition
+budgets may be routed and conserved, but applied erosion, applied deposition,
+cell-mean terrain change, and parent-restricted terrain change are exactly zero.
+Bank carving is disabled. Hydrology Pass 2 preserves accepted trunk receivers
+over the unchanged terrain prior instead of substituting the candidate vector
+bed as raster elevation. Surface materials consume only explicitly applied
+process volumes, never prospective budgets.
+
+The existing bounded lake-outlet spill correction is a separate hydraulic
+topology repair. It may apply its independently capped, volume-accounted outlet
+lowering, but it must not become a back door for coarse trunk or valley erosion.
+When its configured correction rounds end with a moving spill edge, remaining
+candidates are persisted as `regional_refinement_deferred` standing water with
+their exact spill IDs and area. The coarse pipeline must stop carving rather
+than increasing its iteration cap until a narrow channel happens to migrate
+across kilometre-scale cells.
+
+Reason:
+A conserved volume can still be attached to the wrong spatial support. Dividing
+a 10-100 m channel prism across a `20 km2` child cell creates a numerically neat
+but physically false terrain mean, and feeding that mean into hydrology and
+soils compounds the error. Persisting vector constraints and prospective
+budgets preserves useful causal information for later regional generation and
+surrogate training without claiming morphology the current grid cannot carry.
+
+## Decision 049: Fractional Water Does Not Break River Identity
+
+Status: implemented, provisional atlas acceptance
+
+Decision:
+Keep fractional standing-water occupancy, physical channel support, hydraulic
+connectivity, and cartographic continuity as separate fields and decisions.
+
+- Any positive lake or wetland fraction remains persisted as subgrid water.
+- A coarse parent is process-excluded only when standing water occupies at
+  least half of it. Smaller fractions do not erase river identity, physical
+  vector support, or parent terrain.
+- A registered lake/spill control crossing, the routed edge exiting a
+  contiguous unresolved-fill region, or an edge requiring an unresolved uphill
+  hydraulic step of at least one minimum depression depth is a zero-width
+  hydraulic connector. It carries reach identity, discharge, and
+  source-to-terminal topology but no physical bed, incision, or sediment
+  process at this scale. The rest of the depression path is not categorically
+  erased.
+- Sparse refined terrain retains its parent-mean elevation. A vector crossing a
+  priority-flood depression gets a separate `channel_surface_prior_m` from its
+  filled hydraulic control surface; a registered lake surface overrides that
+  prior where available. On a physical reach entering that control, the same
+  surface extends upstream only across child samples that fall below the
+  receiving surface, stopping at the first emerged sample. This backwater rule
+  prevents refinement interpolation from inserting a false kilometre-deep
+  shoreline ramp. It includes locally dry coarse members where hydraulically
+  required, prevents buried basin floors from leaking into the bed profile,
+  and never changes raster terrain.
+- The atlas begins with major physical channels, completes their upstream and
+  downstream graph paths, and draws intervening connector geometry. Connector
+  stroke width is cartographic and never becomes physical channel width.
+- Fractional lakes contribute area-proportional color mass in the atlas. The
+  visual must not paint every supporting coarse cell as a full lake.
+
+Validation reports hydrologic and physical source-to-terminal lengths
+separately, their ratio, and basin counts above `3000`, `4000`, and `5000 km`.
+The Earthlike longest-path diagnostic is `4000-8000 km`; it is a profile check,
+not a universal constraint on archipelago, water, or other scenario classes.
+
+Reason:
+Treating every fractional lake cell as wholly non-river made major channels
+appear to die at the first depression. Treating every such cell as a physical
+channel created the opposite error: priority-flood routes inherited kilometre-
+deep basin floors and demanded multi-kilometre prospective incision through
+ordinary downstream terrain. The split representation preserves long rivers
+without pretending that coarse terrain resolves their banks or lake passages.
+
+## Decision 050: L2 Regional Handoff Is A Conditional Package
+
+Status: implemented
+
+Decision:
+Build the first literal L2 product as a selected regional handoff package, not
+as a globally dense replay and not as an independent world generation.
+
+The canonical face-128 globe is the roughly `72 km` L0 parent state. Existing
+stage names and older prose that call those cells L2 describe semantic map-unit
+fields, not literal spatial resolution. A factor-16 child realization has a
+face-2048-equivalent cell area of roughly `20 km2` and width of roughly `4.5
+km`; that is the first literal L2 terrain support.
+
+The package contract is:
+
+- select one complete drainage basin by stable `BasinID` and include a
+  configurable number of L0 neighbor rings as boundary context;
+- realize every selected parent into deterministic, parent-mean-conserving L2
+  child terrain using the established refinement kernel;
+- place ocean, lake, and wetland occupancy among child cells by terrain rank,
+  conserving each source parent's fractional areas and never exceeding unit
+  surface occupancy;
+- persist all other grid-shaped tectonic, geological, climate, hydrologic,
+  material, soil, biosphere, and biome values as parent priors joined through
+  stable parent IDs; do not relabel repeated parent values as downscaled L2
+  physics;
+- preserve inherited river identity as graph and vector tables. L2 terrain
+  does not discover tributaries or apply channel incision;
+- write chunked Zarr arrays, Parquet graph/catalog tables, a preview, a
+  validation report, and a checksummed manifest;
+- identify basin core, required reach-path support, halo, source artifacts,
+  software/config versions, selection, topology, resolution, units, and
+  approximation semantics explicitly.
+
+The package is accepted only when child area and parent-mean terrain conserve
+their parents, surface fractions conserve parent ocean/lake/wetland area,
+surface occupancy closes, river paths reference packaged children, source
+checksums are complete, and a repeated export is deterministic.
+
+Reason:
+L3 cannot safely refine directly from a `72 km` global cell, while a globally
+dense 2-5 km planet would force the current whole-array pipeline beyond its
+memory and storage architecture. A selected, chunked L2 bridge gives L3 stable
+terrain, boundary context, causal priors, and vector identities without
+inventing precision or committing to a global high-resolution solve.

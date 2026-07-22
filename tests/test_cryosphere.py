@@ -26,6 +26,8 @@ def _kernel_arguments(face_resolution: int = 4) -> dict[str, object]:
         "firn_to_ice_out": np.empty(monthly_shape, dtype=np.float32),
         "glacier_melt_out": np.empty(monthly_shape, dtype=np.float32),
         "glacier_ice_out": np.empty(monthly_shape, dtype=np.float32),
+        "sea_ice_fraction_out": np.empty(monthly_shape, dtype=np.float32),
+        "sea_ice_thickness_m_out": np.empty(monthly_shape, dtype=np.float32),
         "runoff_out": np.empty(monthly_shape, dtype=np.float32),
         "annual_mass_balance_out": np.empty(shape, dtype=np.float32),
         "annual_flow_export_out": np.empty(shape, dtype=np.float32),
@@ -47,6 +49,12 @@ def _kernel_arguments(face_resolution: int = 4) -> dict[str, object]:
         "glacier_flow_activation_mm": 1_000.0,
         "glacier_flow_fraction_year": 0.08,
         "glacier_reference_thickness_mm": 100_000.0,
+        "sea_ice_freezing_temperature_c": -1.8,
+        "sea_ice_melt_temperature_c": -0.2,
+        "sea_ice_freeze_rate_mm_c_month": 80.0,
+        "sea_ice_melt_rate_mm_c_month": 180.0,
+        "sea_ice_reference_thickness_mm": 1_000.0,
+        "sea_ice_maximum_thickness_mm": 5_000.0,
         "runoff_base_fraction": 0.35,
         "areas": grid.cell_areas,
         "neighbors": grid.neighbor_indices,
@@ -76,12 +84,30 @@ def test_cryosphere_retains_firn_ice_and_releases_separate_glacier_melt():
     assert metadata["maximum_glacier_ice_water_equivalent_mm"] > 0.0
     assert metadata["land_mean_annual_glacier_melt_mm"] > 0.0
 
+    ocean = ~land
+    sea_ice = np.asarray(arguments["sea_ice_fraction_out"])
+    sea_ice_thickness = np.asarray(arguments["sea_ice_thickness_m_out"])
+    assert np.all(sea_ice[:, land] == 0.0)
+    assert np.all(sea_ice_thickness[:, land] == 0.0)
+    assert np.max(sea_ice[:, ocean]) > 0.0
+    assert np.max(sea_ice_thickness[:, ocean]) > 0.0
+    assert np.all((sea_ice >= 0.0) & (sea_ice <= 1.0))
+    assert metadata["maximum_sea_ice_ocean_area_fraction"] > 0.0
+    assert metadata["maximum_sea_ice_thickness_m"] > 0.0
+
 
 def test_cryosphere_config_and_ffi_reject_invalid_controls_and_buffers():
     with pytest.raises(ValueError, match="Unknown cryosphere controls"):
         CryosphereConfig.from_mapping({"paint_glaciers": True})
     with pytest.raises(ValueError, match="relief_elevation_multiplier"):
         CryosphereConfig.from_mapping({"relief_elevation_multiplier": 7.0})
+    with pytest.raises(ValueError, match="sea_ice_melt_temperature_c"):
+        CryosphereConfig.from_mapping(
+            {
+                "sea_ice_freezing_temperature_c": -1.0,
+                "sea_ice_melt_temperature_c": -2.0,
+            }
+        )
 
     invalid = _kernel_arguments()
     invalid["snowpack_out"] = np.empty((12, 6, 4, 3), dtype=np.float32)

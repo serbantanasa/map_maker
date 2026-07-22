@@ -2,19 +2,20 @@
 
 ## Status
 
-The canonical cubed-sphere path implements a first conservative fluvial pass in
-`basin_erosion` for one sparse refined basin. The older `erosion` stage remains
-a rectangular compatibility prototype and is not the scientific implementation
-described here.
+The canonical cubed-sphere path implements a conservative prospective fluvial
+constraint pass in `basin_erosion` for one sparse refined basin. It does not
+apply physical terrain erosion. The older `erosion` stage remains a rectangular
+compatibility prototype and is not the scientific implementation described
+here.
 
 ## Scientific Intent
 
 Erosion changes subgrid landforms and moves solid material from source to sink.
 An ordinary river does not lower an entire regional cell by its channel depth.
-The first pass therefore solves a channel-bed constraint, converts only the
-physical channel cut into sediment volume, routes that volume through the
-registered reach graph, and applies overbank deposition only to allocated
-floodplain support.
+The sparse pass therefore solves a candidate channel-bed constraint and routes
+the prospective channel-prism volume through the registered reach graph, while
+leaving applied terrain erosion and deposition at zero. A future regional pass
+at roughly `100-250 m` owns physical valley realization.
 
 This is structural realism rather than a geological-time landscape evolution
 model. It establishes correct topology and budgets before adding lithology,
@@ -52,28 +53,34 @@ Connectors have no physical bed. A channel component on either side of an
 unresolved lake or depression is graded independently until local waterbody and
 outlet geometry replaces the connector.
 
-## Incision And Terrain Feedback
+## Candidate Incision And Terrain Ownership
 
 For every physical centerline membership:
 
 ```text
-incision_depth = terrain_prior - channel_bed
-eroded_volume = channel_width * in_cell_reach_length * incision_depth
+candidate_depth = terrain_prior - candidate_channel_bed
+prospective_volume = channel_width * in_cell_reach_length * candidate_depth
 ```
 
-The channel bed is a subgrid feature. The full cell mean changes only by net
-physical volume divided by full cell area:
+The candidate bed is a vector constraint, not a raster elevation. At the
+canonical factor-16 resolution, children are still about `4.5 km` across, so
+even a volume-correct cell mean would attach channel morphology to the wrong
+spatial support. This stage therefore enforces:
 
 ```text
-cell_mean_delta = (deposited_volume - eroded_volume) / cell_area
+applied_terrain_erosion = 0
+applied_terrain_deposition = 0
+cell_mean_delta = 0
+terrain_after = terrain_prior
 ```
 
-This preserves both the narrow channel morphology and a restriction-compatible
-terrain response without creating cell-wide trenches.
+Hydrology retains the inherited trunk receiver graph. Regional refinement must
+discover smaller tributaries and realize channel, bank, valley, and floodplain
+morphology against a finer terrain and material state.
 
 ## Sediment Routing
 
-Newly eroded solid volume is routed upstream-to-downstream through every reach.
+Prospective solid volume is routed upstream-to-downstream through every reach.
 Physical reaches may retain a bounded fraction on their allocated floodplain
 support. The provisional retention fraction increases with floodplain-to-valley
 support and decreases with inherited reach slope; deposition is capped by a
@@ -85,7 +92,9 @@ inventory. At an ocean terminal it is exported to the future delta/shelf model.
 The following identity is a hard gate:
 
 ```text
-eroded = floodplain_deposited + terminal_deposited + ocean_exported
+prospective_excavation = prospective_floodplain_deposition
+                         + prospective_terminal_deposition
+                         + prospective_ocean_export
 ```
 
 The inherited `sediment_load` field is an instantaneous flux diagnostic. It is
@@ -98,10 +107,10 @@ eroded historical volume.
   incision depths, lengths, and eroded volumes.
 - `FluvialRiverReachCatalog`: inherited reach data plus local, incoming,
   deposited, transferred, terminal, and exported sediment budgets.
-- `ErodedBasinCellCatalog`: sparse process volumes and volume-derived terrain
-  mean feedback for every refined child.
-- `BasinErosionParentCatalog`: child process volumes restricted to each coarse
-  parent.
+- `ErodedBasinCellCatalog`: prospective process budgets, explicit zero applied
+  process fields, and unchanged terrain for every refined child.
+- `BasinErosionParentCatalog`: prospective child budgets restricted to each
+  coarse parent, plus zero applied parent feedback.
 - `BasinErosionMetadata`: profile, connector, exclusion, and conservation gates
   plus canonical totals.
 
@@ -114,8 +123,8 @@ eroded historical volume.
 - Connectors have no bed, incision, support deposition, or local sediment.
 - No process volume enters a preserved-depression parent.
 - Membership volumes equal width times length times incision depth.
-- Cell-mean and parent-restricted changes reproduce physical volumes.
-- All newly eroded sediment is deposited at a registered support/sink or
+- Applied cell-mean and parent-restricted changes remain exactly zero.
+- All prospective sediment is deposited at a registered support/sink or
   exported through a registered ocean terminal.
 
 ## Current Limits
@@ -127,9 +136,9 @@ eroded historical volume.
   settling, competence, or grain-size model.
 - Sediment provenance, lithology, suspended/bed-load partition, transport time,
   avulsion, meander migration, deltas, shelves, and compaction are absent.
-- The sparse Hydrology Pass 2 consumes the altered terrain distribution and
-  solved channel beds, and the surface-water stage now solves monthly local
-  balance. Global refined hydrology and the requested local outlet-incision
-  feedback remain future work.
+- Sparse Hydrology Pass 2 uses unchanged terrain plus fixed vector trunk
+  receivers. Surface materials consume only explicitly applied process fields.
+- The bounded lake-outlet correction is a separate hydraulic repair and does
+  not authorize coarse trunk or bank erosion.
 - Repeated geological-time erosion, uplift, sediment loading, flexure, and
   isostatic response remain future passes.

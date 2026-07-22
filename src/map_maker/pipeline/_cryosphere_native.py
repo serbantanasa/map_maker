@@ -18,6 +18,12 @@ typedef struct {
     float maximum_glacier_ice_water_equivalent_mm;
     float land_mean_annual_glacier_melt_mm;
     float land_mean_annual_glacier_calving_mm;
+    float minimum_sea_ice_ocean_area_fraction;
+    float maximum_sea_ice_ocean_area_fraction;
+    float mean_sea_ice_ocean_area_fraction;
+    float perennial_sea_ice_ocean_area_fraction;
+    float seasonal_sea_ice_ocean_area_fraction;
+    float maximum_sea_ice_thickness_m;
 } CryosphereStats;
 
 uint32_t cryosphere_native_abi_version(void);
@@ -35,6 +41,12 @@ int32_t cryosphere_run(
     double glacier_flow_activation_mm,
     double glacier_flow_fraction_year,
     double glacier_reference_thickness_mm,
+    double sea_ice_freezing_temperature_c,
+    double sea_ice_melt_temperature_c,
+    double sea_ice_freeze_rate_mm_c_month,
+    double sea_ice_melt_rate_mm_c_month,
+    double sea_ice_reference_thickness_mm,
+    double sea_ice_maximum_thickness_mm,
     double runoff_base_fraction,
     const double* areas,
     const int32_t* neighbors,
@@ -50,6 +62,8 @@ int32_t cryosphere_run(
     float* firn_to_ice,
     float* glacier_melt,
     float* glacier_ice,
+    float* sea_ice_fraction,
+    float* sea_ice_thickness_m,
     float* runoff,
     float* annual_mass_balance,
     float* annual_flow_export,
@@ -70,7 +84,7 @@ def _read_array(array: np.ndarray, *, name: str, dtype: np.dtype) -> np.ndarray:
         raise ValueError(f"{name} must be contiguous")
     if not value.flags["ALIGNED"]:
         raise ValueError(f"{name} must be aligned")
-    return value  # type: ignore[no-any-return]
+    return value
 
 
 def _write_float32(array: np.ndarray, *, name: str) -> np.ndarray:
@@ -111,6 +125,12 @@ def run_cryosphere(
     glacier_flow_activation_mm: float,
     glacier_flow_fraction_year: float,
     glacier_reference_thickness_mm: float,
+    sea_ice_freezing_temperature_c: float,
+    sea_ice_melt_temperature_c: float,
+    sea_ice_freeze_rate_mm_c_month: float,
+    sea_ice_melt_rate_mm_c_month: float,
+    sea_ice_reference_thickness_mm: float,
+    sea_ice_maximum_thickness_mm: float,
     runoff_base_fraction: float,
     areas: np.ndarray,
     neighbors: np.ndarray,
@@ -126,6 +146,8 @@ def run_cryosphere(
     firn_to_ice_out: np.ndarray,
     glacier_melt_out: np.ndarray,
     glacier_ice_out: np.ndarray,
+    sea_ice_fraction_out: np.ndarray,
+    sea_ice_thickness_m_out: np.ndarray,
     runoff_out: np.ndarray,
     annual_mass_balance_out: np.ndarray,
     annual_flow_export_out: np.ndarray,
@@ -177,6 +199,8 @@ def run_cryosphere(
             "firn_to_ice_out": firn_to_ice_out,
             "glacier_melt_out": glacier_melt_out,
             "glacier_ice_out": glacier_ice_out,
+            "sea_ice_fraction_out": sea_ice_fraction_out,
+            "sea_ice_thickness_m_out": sea_ice_thickness_m_out,
             "runoff_out": runoff_out,
             "annual_mass_balance_out": annual_mass_balance_out,
             "annual_flow_export_out": annual_flow_export_out,
@@ -193,6 +217,8 @@ def run_cryosphere(
         "firn_to_ice_out",
         "glacier_melt_out",
         "glacier_ice_out",
+        "sea_ice_fraction_out",
+        "sea_ice_thickness_m_out",
         "runoff_out",
     }
     for name, value in outputs.items():
@@ -217,6 +243,12 @@ def run_cryosphere(
             float(glacier_flow_activation_mm),
             float(glacier_flow_fraction_year),
             float(glacier_reference_thickness_mm),
+            float(sea_ice_freezing_temperature_c),
+            float(sea_ice_melt_temperature_c),
+            float(sea_ice_freeze_rate_mm_c_month),
+            float(sea_ice_melt_rate_mm_c_month),
+            float(sea_ice_reference_thickness_mm),
+            float(sea_ice_maximum_thickness_mm),
             float(runoff_base_fraction),
             _ffi.cast("double*", _ffi.from_buffer("double[]", inputs["areas"])),
             _ffi.cast("int32_t*", _ffi.from_buffer("int32_t[]", inputs["neighbors"])),
@@ -240,6 +272,8 @@ def run_cryosphere(
                     "firn_to_ice_out",
                     "glacier_melt_out",
                     "glacier_ice_out",
+                    "sea_ice_fraction_out",
+                    "sea_ice_thickness_m_out",
                     "runoff_out",
                     "annual_mass_balance_out",
                     "annual_flow_export_out",
@@ -270,6 +304,20 @@ def run_cryosphere(
         ),
         "land_mean_annual_glacier_melt_mm": float(stats.land_mean_annual_glacier_melt_mm),
         "land_mean_annual_glacier_calving_mm": float(stats.land_mean_annual_glacier_calving_mm),
+        "minimum_sea_ice_ocean_area_fraction": float(
+            stats.minimum_sea_ice_ocean_area_fraction
+        ),
+        "maximum_sea_ice_ocean_area_fraction": float(
+            stats.maximum_sea_ice_ocean_area_fraction
+        ),
+        "mean_sea_ice_ocean_area_fraction": float(stats.mean_sea_ice_ocean_area_fraction),
+        "perennial_sea_ice_ocean_area_fraction": float(
+            stats.perennial_sea_ice_ocean_area_fraction
+        ),
+        "seasonal_sea_ice_ocean_area_fraction": float(
+            stats.seasonal_sea_ice_ocean_area_fraction
+        ),
+        "maximum_sea_ice_thickness_m": float(stats.maximum_sea_ice_thickness_m),
     }
 
 

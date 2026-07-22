@@ -98,6 +98,13 @@ stage_overrides:
     glacier_flow_fraction_year: 0.025
     # Display/cover scaling only; ice mass still comes from conserved snowfall.
     glacier_reference_thickness_mm: 40000.0
+    # Earthlike seawater freeze/melt envelope; configurable for later planet profiles.
+    sea_ice_freezing_temperature_c: -1.8
+    sea_ice_melt_temperature_c: -0.2
+    sea_ice_freeze_rate_mm_c_month: 50.0
+    sea_ice_melt_rate_mm_c_month: 320.0
+    sea_ice_reference_thickness_mm: 1800.0
+    sea_ice_maximum_thickness_mm: 3500.0
     runoff_base_fraction: 0.35
     maximum_mass_balance_relative_error: 0.00001
   hydrology:
@@ -106,9 +113,13 @@ stage_overrides:
     endorheic_aridity_threshold: 0.35
     maximum_fill_time_years: 50000.0
     lake_seepage_mm_year: 30.0
-    subgrid_relief_scale: 1.0
-    subgrid_connected_basin_fraction: 0.85
-    breach_score_threshold: 0.58
+    # Coarse-cell terrain relief is not a 1:1 lake-bowl depth. Reserve most relief
+    # for unresolved hills/valleys and connect only the low part of a depression.
+    subgrid_relief_scale: 0.25
+    # Face-128 reference occupancy; the stage scales it with global cell area.
+    subgrid_connected_basin_fraction: 0.30
+    # Sustained overflow preferentially opens weak, deep, high-discharge outlets.
+    breach_score_threshold: 0.50
     maximum_breach_incision_m: 800.0
     breach_length_cells: 4
     river_discharge_threshold_m3s: 300.0
@@ -122,6 +133,9 @@ stage_overrides:
     maximum_deposition_fraction: 0.35
     deposition_slope_scale: 0.001
     maximum_deposition_depth_m: 10.0
+    # Earthlike candidate-profile guard; prospective canyon depth is not applied
+    # to coarse terrain and physical incision occurs in regional refinement.
+    hard_maximum_channel_incision_m: 2200.0
   hydrology_pass2:
     minimum_depression_depth_m: 5.0
     maximum_receiver_change_fraction: 0.15
@@ -164,6 +178,7 @@ stage_overrides:
   surface_water_final:
     maximum_outlet_incision_rounds: 20
     require_soil_readiness: true
+    defer_residual_outlets_to_regional_refinement: true
   lake_hydrographs:
     maximum_balance_relative_error: 0.000000001
     maximum_negative_discharge_m3s: 0.000001

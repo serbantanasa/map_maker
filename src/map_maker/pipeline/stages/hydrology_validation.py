@@ -33,8 +33,15 @@ EARTH_REFERENCE_PROFILE = (
         "reference_id": "hydrolakes_2016",
         "title": "HydroLAKES global natural-lake inventory",
         "url": "https://doi.org/10.1038/ncomms13603",
-        "supports": ["global_lake_land_area_fraction"],
-        "summary": "Natural lakes at least 0.1 km2 cover about 1.8% of global land.",
+        "supports": [
+            "global_lake_land_area_fraction",
+            "global_lake_volume_km3",
+            "global_lake_area_weighted_mean_depth_m",
+        ],
+        "summary": (
+            "Natural lakes at least 0.1 km2 cover about 1.8% of global land, store "
+            "about 181,900 km3, and have an area-weighted mean depth near 64 m."
+        ),
     },
     {
         "reference_id": "verpoorter_2014",
@@ -70,6 +77,20 @@ EARTH_REFERENCE_PROFILE = (
         "url": "https://doi.org/10.1038/sdata.2018.309",
         "supports": ["floodplain_inundation_implemented"],
         "summary": "A global geomorphic floodplain reference exists for later spatial validation.",
+    },
+    {
+        "reference_id": "nsidc_sea_ice_index_v4",
+        "title": "NSIDC Sea Ice Index, Version 4",
+        "url": "https://nsidc.org/data/g02135/versions/4",
+        "supports": [
+            "global_minimum_sea_ice_ocean_area_fraction",
+            "global_maximum_sea_ice_ocean_area_fraction",
+            "global_mean_sea_ice_ocean_area_fraction",
+        ],
+        "summary": (
+            "Monthly Arctic and Antarctic concentration and extent climatologies provide "
+            "the structural seasonal envelope; model metrics are area-equivalent concentration."
+        ),
     },
 )
 
@@ -289,6 +310,95 @@ def _reach_metrics(
     }
 
 
+def _global_river_length_metrics(reaches: pa.Table) -> dict[str, float | int]:
+    reach_ids = np.asarray(reaches["reach_id"], dtype=np.int64)
+    downstream_ids = np.asarray(reaches["downstream_reach_id"], dtype=np.int64)
+    basin_ids = np.asarray(reaches["basin_id"], dtype=np.int64)
+    reach_kinds = np.asarray(reaches["reach_kind"].to_pylist(), dtype=object)
+    upstream_ids = reaches["upstream_reach_ids"].to_pylist()
+    row_by_id = {int(reach_id): row for row, reach_id in enumerate(reach_ids)}
+    graph_issue_count = int(len(row_by_id) != len(reach_ids))
+
+    reach_lengths_km = np.zeros(len(reaches), dtype=np.float64)
+    for row, polyline in enumerate(reaches["polyline_on_cubed_sphere"].to_pylist()):
+        xyz = np.asarray(polyline, dtype=np.float64)
+        if len(xyz) < 2:
+            continue
+        segment_angles = np.arccos(np.clip(np.sum(xyz[:-1] * xyz[1:], axis=1), -1.0, 1.0))
+        reach_lengths_km[row] = float(np.sum(segment_angles) * EARTH_RADIUS_KM)
+
+    memo: dict[int, tuple[float, float]] = {}
+    active: set[int] = set()
+
+    def path_to_terminal(row: int) -> tuple[float, float]:
+        nonlocal graph_issue_count
+        if row in memo:
+            return memo[row]
+        if row in active:
+            graph_issue_count += 1
+            return (0.0, 0.0)
+        active.add(row)
+        downstream_row = row_by_id.get(int(downstream_ids[row]))
+        downstream_length = (0.0, 0.0)
+        if downstream_ids[row] >= 0:
+            if downstream_row is None:
+                graph_issue_count += 1
+            else:
+                downstream_length = path_to_terminal(downstream_row)
+        active.remove(row)
+        local_channel_length = reach_lengths_km[row] if reach_kinds[row] == "channel" else 0.0
+        result = (
+            reach_lengths_km[row] + downstream_length[0],
+            local_channel_length + downstream_length[1],
+        )
+        memo[row] = result
+        return result
+
+    source_rows = [row for row, upstream in enumerate(upstream_ids) if not upstream]
+    basin_longest_path: dict[int, float] = {}
+    basin_longest_channel: dict[int, float] = {}
+    source_paths: list[tuple[float, float]] = []
+    for row in source_rows:
+        path_length, channel_length = path_to_terminal(row)
+        source_paths.append((path_length, channel_length))
+        basin_id = int(basin_ids[row])
+        basin_longest_path[basin_id] = max(basin_longest_path.get(basin_id, 0.0), path_length)
+        basin_longest_channel[basin_id] = max(
+            basin_longest_channel.get(basin_id, 0.0), channel_length
+        )
+
+    longest_path, channel_on_longest_path = max(
+        source_paths, key=lambda values: (values[0], values[1]), default=(0.0, 0.0)
+    )
+    longest_channel = max((channel for _, channel in source_paths), default=0.0)
+    return {
+        "global_reach_graph_issue_count": graph_issue_count,
+        "global_source_reach_count": len(source_rows),
+        "global_total_reach_length_km": float(np.sum(reach_lengths_km)),
+        "global_longest_source_to_terminal_path_km": longest_path,
+        "global_longest_source_to_terminal_channel_km": longest_channel,
+        "global_longest_river_channel_fraction": channel_on_longest_path / max(longest_path, 1e-12),
+        "global_basin_count_with_3000km_path": sum(
+            length >= 3_000.0 for length in basin_longest_path.values()
+        ),
+        "global_basin_count_with_4000km_path": sum(
+            length >= 4_000.0 for length in basin_longest_path.values()
+        ),
+        "global_basin_count_with_5000km_path": sum(
+            length >= 5_000.0 for length in basin_longest_path.values()
+        ),
+        "global_basin_count_with_3000km_channel": sum(
+            length >= 3_000.0 for length in basin_longest_channel.values()
+        ),
+        "global_basin_count_with_4000km_channel": sum(
+            length >= 4_000.0 for length in basin_longest_channel.values()
+        ),
+        "global_basin_count_with_5000km_channel": sum(
+            length >= 5_000.0 for length in basin_longest_channel.values()
+        ),
+    }
+
+
 KPI_SCHEMA = pa.schema(
     [
         ("kpi_id", pa.string()),
@@ -456,7 +566,7 @@ def _reach_loss_catalog(
         "HydrologyReachLossCatalog",
         "HydrologyValidationMetadata",
     ),
-    version="v9",
+    version="v14",
 )
 def hydrology_validation_stage(
     context: PipelineContext,
@@ -476,6 +586,7 @@ def hydrology_validation_stage(
     lake_adjustments = _artifact_table(deps["lake_hydrographs"], "LakeHydrographAdjustmentCatalog")
     cryosphere_metadata = _artifact_metadata(deps["cryosphere"], "CryosphereMetadata")
     hydrology_metadata = _artifact_metadata(deps["hydrology"], "HydrologyMetadata")
+    global_reaches = _artifact_table(deps["hydrology"], "RiverReachCatalog")
     depression_catalog = _artifact_table(deps["hydrology"], "DepressionCatalog")
     parents = _artifact_table(deps["basin_refinement"], "RefinedBasinParentCatalog")
     planet_metadata = _artifact_metadata(deps["planet"], "PlanetMetadata")
@@ -543,6 +654,7 @@ def hydrology_validation_stage(
         major_discharge_threshold_m3s=config.major_river_discharge_threshold_m3s,
         maximum_drop_fraction=config.maximum_downstream_discharge_drop_fraction,
     )
+    global_river_metrics = _global_river_length_metrics(global_reaches)
     (
         reach_loss_catalog,
         accounted_reach_loss_count,
@@ -737,13 +849,35 @@ def hydrology_validation_stage(
         note="Monthly discharge may decrease only across an identified registered storage node.",
     )
     add(
+        "outlet_resolution_contract_satisfied",
+        "topology",
+        "selected_basin",
+        int(
+            surface_metadata.get(
+                "outlet_resolution_contract_satisfied",
+                _metadata_int(surface_metadata, "outlet_correction_converged"),
+            )
+        ),
+        "boolean",
+        gate_kind="hard_invariant",
+        minimum=1.0,
+        note="Residual coarse outlet feedback must converge or be explicitly handed to regional refinement.",
+    )
+    add(
         "outlet_correction_converged",
         "topology",
         "selected_basin",
         _metadata_int(surface_metadata, "outlet_correction_converged"),
         "boolean",
-        gate_kind="hard_invariant",
-        minimum=1.0,
+        note="Diagnostic distinguishes physical coarse convergence from a bounded scale handoff.",
+    )
+    add(
+        "regional_refinement_deferred_outlet_candidate_count",
+        "topology",
+        "selected_basin",
+        int(surface_metadata.get("regional_refinement_deferred_outlet_candidate_count", 0)),
+        "count",
+        note="Round-limited moving spill edges retained as standing water for regional realization.",
     )
 
     add(
@@ -757,6 +891,30 @@ def hydrology_validation_stage(
         maximum=0.037,
         reference_scope="global Earth land; inventory threshold dependent",
         reference_ids=("hydrolakes_2016", "verpoorter_2014"),
+    )
+    add(
+        "global_lake_volume_km3",
+        "surface_water",
+        "global",
+        _metadata_float(hydrology_metadata, "lake_volume_km3"),
+        "km3",
+        gate_kind="earth_diagnostic",
+        minimum=150_000.0,
+        maximum=250_000.0,
+        reference_scope="global Earth lakes at least 0.1 km2; broad Earth-like tolerance",
+        reference_ids=("hydrolakes_2016",),
+    )
+    add(
+        "global_lake_area_weighted_mean_depth_m",
+        "surface_water",
+        "global",
+        _metadata_float(hydrology_metadata, "mean_lake_depth_m"),
+        "m",
+        gate_kind="earth_diagnostic",
+        minimum=40.0,
+        maximum=100.0,
+        reference_scope="global Earth lakes at least 0.1 km2; broad Earth-like tolerance",
+        reference_ids=("hydrolakes_2016",),
     )
     add(
         "selected_basin_standing_water_area_fraction",
@@ -849,6 +1007,60 @@ def hydrology_validation_stage(
         "m3/s",
     )
     add(
+        "global_longest_source_to_terminal_river_path_km",
+        "river_morphology",
+        "global",
+        global_river_metrics["global_longest_source_to_terminal_path_km"],
+        "km",
+        gate_kind="earth_diagnostic",
+        minimum=4_000.0,
+        maximum=8_000.0,
+        reference_scope="Earthlike globe; broad longest-river morphology envelope",
+        note="Includes registered lake connectors so a river is not truncated at standing water.",
+    )
+    add(
+        "global_longest_source_to_terminal_channel_km",
+        "river_morphology",
+        "global",
+        global_river_metrics["global_longest_source_to_terminal_channel_km"],
+        "km",
+        note="Counts physical vector-channel reaches and excludes lake connectors.",
+    )
+    add(
+        "global_longest_river_channel_fraction",
+        "river_morphology",
+        "global",
+        global_river_metrics["global_longest_river_channel_fraction"],
+        "fraction",
+        note="Diagnostic for major trunks being dominated by lake connectors.",
+    )
+    for threshold_km in (3_000, 4_000, 5_000):
+        add(
+            f"global_basin_count_with_{threshold_km}km_river_path",
+            "river_morphology",
+            "global",
+            global_river_metrics[f"global_basin_count_with_{threshold_km}km_path"],
+            "basin_count",
+            note="Counts each drainage basin once using its longest source-to-terminal path.",
+        )
+        add(
+            f"global_basin_count_with_{threshold_km}km_channel",
+            "river_morphology",
+            "global",
+            global_river_metrics[f"global_basin_count_with_{threshold_km}km_channel"],
+            "basin_count",
+            note="Same basin-level count after excluding registered lake connectors.",
+        )
+    add(
+        "global_river_reach_graph_issue_count",
+        "river_continuity",
+        "global",
+        global_river_metrics["global_reach_graph_issue_count"],
+        "count",
+        gate_kind="hard_invariant",
+        maximum=0.0,
+    )
+    add(
         "monthly_downstream_discharge_regression_count",
         "river_continuity",
         "selected_basin",
@@ -924,6 +1136,43 @@ def hydrology_validation_stage(
         "fraction",
         note="Area-equivalent glacier cover derived from the coarse-cell ice reservoir.",
     )
+    sea_ice_reference = ("nsidc_sea_ice_index_v4",)
+    add(
+        "global_minimum_sea_ice_ocean_area_fraction",
+        "cryosphere",
+        "global",
+        _metadata_float(cryosphere_metadata, "minimum_sea_ice_ocean_area_fraction"),
+        "fraction",
+        gate_kind="earth_diagnostic",
+        minimum=0.02,
+        maximum=0.08,
+        reference_scope="Earth ocean; area-equivalent concentration rather than extent",
+        reference_ids=sea_ice_reference,
+    )
+    add(
+        "global_maximum_sea_ice_ocean_area_fraction",
+        "cryosphere",
+        "global",
+        _metadata_float(cryosphere_metadata, "maximum_sea_ice_ocean_area_fraction"),
+        "fraction",
+        gate_kind="earth_diagnostic",
+        minimum=0.05,
+        maximum=0.12,
+        reference_scope="Earth ocean; area-equivalent concentration rather than extent",
+        reference_ids=sea_ice_reference,
+    )
+    add(
+        "global_mean_sea_ice_ocean_area_fraction",
+        "cryosphere",
+        "global",
+        _metadata_float(cryosphere_metadata, "mean_sea_ice_ocean_area_fraction"),
+        "fraction",
+        gate_kind="earth_diagnostic",
+        minimum=0.035,
+        maximum=0.09,
+        reference_scope="Earth ocean; broad combined-hemisphere seasonal envelope",
+        reference_ids=sea_ice_reference,
+    )
     add(
         "selected_basin_snowmelt_liquid_input_fraction",
         "cryosphere",
@@ -981,6 +1230,16 @@ def hydrology_validation_stage(
         gate_kind="capability",
         note="Age-tracked firn/ice storage has monthly melt and parameterized downslope transfer.",
     )
+    add(
+        "seasonal_sea_ice_implemented",
+        "capability",
+        "global",
+        _metadata_float(cryosphere_metadata, "sea_ice_implemented"),
+        "boolean",
+        gate_kind="capability",
+        reference_ids=("nsidc_sea_ice_index_v4",),
+        note="Monthly thermodynamic concentration and thickness persist through the annual cycle.",
+    )
     for kpi_id, note, reference_ids in (
         (
             "floodplain_inundation_implemented",
@@ -1023,7 +1282,7 @@ def hydrology_validation_stage(
     ]
     metadata = {
         **asdict(config),
-        "model": "scale_aware_hydrology_kpi_profile_v1",
+        "model": "scale_aware_hydrology_kpi_profile_v4",
         "reference_profile_version": "earth_hydrology_v1",
         "references": list(EARTH_REFERENCE_PROFILE),
         "kpi_count": len(rows),

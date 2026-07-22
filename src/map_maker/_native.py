@@ -13,6 +13,7 @@ NATIVE_ABI_VERSION = 2
 NATIVE_ABI_OVERRIDES = {
     "biosphere_envelope_native": 3,
     "climate_native": 3,
+    "cryosphere_native": 3,
     "derived_biomes_native": 1,
     "fluvial_native": 4,
     "functional_vegetation_native": 1,

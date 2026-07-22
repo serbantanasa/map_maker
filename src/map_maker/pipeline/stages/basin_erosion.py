@@ -1,4 +1,4 @@
-"""Conservative fluvial incision and sediment routing for one refined basin."""
+"""Prospective fluvial profiles and sediment routing for one refined basin."""
 
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ class BasinErosionConfig:
     maximum_deposition_fraction: float = 0.35
     deposition_slope_scale: float = 0.001
     maximum_deposition_depth_m: float = 10.0
-    bank_incision_fraction: float = 0.35
+    bank_incision_fraction: float = 0.0
+    hard_maximum_channel_incision_m: float = 2_000.0
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> "BasinErosionConfig":
@@ -53,8 +54,16 @@ class BasinErosionConfig:
         ):
             raise ValueError("maximum_deposition_depth_m must be finite and non-negative")
         bank_incision_fraction = values["bank_incision_fraction"]
-        if not np.isfinite(bank_incision_fraction) or not (0.0 <= bank_incision_fraction <= 1.0):
-            raise ValueError("bank_incision_fraction must be finite and in [0, 1]")
+        if not np.isfinite(bank_incision_fraction) or bank_incision_fraction != 0.0:
+            raise ValueError(
+                "bank_incision_fraction must be 0 in the sparse coarse-scale stage; "
+                "physical bank erosion belongs to regional refinement"
+            )
+        if (
+            not np.isfinite(values["hard_maximum_channel_incision_m"])
+            or values["hard_maximum_channel_incision_m"] <= 0.0
+        ):
+            raise ValueError("hard_maximum_channel_incision_m must be finite and positive")
         return cls(**values)
 
 
@@ -114,9 +123,10 @@ def _reach_table(source: pa.Table, records: np.ndarray) -> pa.Table:
         "minimum_realized_slope",
         "maximum_incision_depth_m",
     ):
+        values = records[name]
         table = table.append_column(
             name,
-            pa.array(records[name], mask=~has_bed, type=pa.float64()),
+            pa.array(values, mask=~has_bed | ~np.isfinite(values), type=pa.float64()),
         )
     for name in (
         "upstream_input_volume_m3",
@@ -136,8 +146,8 @@ def _cell_table(source: pa.Table, records: np.ndarray) -> tuple[pa.Table, dict[s
     fine_ids = np.asarray(source["fine_cell_id"], dtype=np.int32)
     areas_m2 = np.asarray(source["area_km2"], dtype=np.float64) * 1_000_000.0
     terrain = np.asarray(source["terrain_elevation_m"], dtype=np.float32)
-    eroded = np.zeros(source.num_rows, dtype=np.float64)
-    deposited = np.zeros(source.num_rows, dtype=np.float64)
+    prospective_excavation = np.zeros(source.num_rows, dtype=np.float64)
+    prospective_deposition = np.zeros(source.num_rows, dtype=np.float64)
     maximum_incision = np.zeros(source.num_rows, dtype=np.float64)
     if len(records):
         rows = _lookup_rows(fine_ids, records["fine_cell_id"], label="fluvial cell budget")
@@ -146,27 +156,42 @@ def _cell_table(source: pa.Table, records: np.ndarray) -> tuple[pa.Table, dict[s
             records["parent_cell_id"],
         ):
             raise RuntimeError("fluvial cell budget changed parent identity")
-        eroded[rows] = records["eroded_volume_m3"]
-        deposited[rows] = records["deposited_volume_m3"]
+        prospective_excavation[rows] = records["eroded_volume_m3"]
+        prospective_deposition[rows] = records["deposited_volume_m3"]
         maximum_incision[rows] = records["maximum_incision_depth_m"]
-    mean_delta = (deposited - eroded) / areas_m2
-    terrain_after = terrain.astype(np.float64) + mean_delta
-    table = source.append_column("subgrid_eroded_volume_m3", pa.array(eroded, type=pa.float64()))
-    table = table.append_column(
-        "floodplain_deposited_volume_m3", pa.array(deposited, type=pa.float64())
+    applied_erosion = np.zeros(source.num_rows, dtype=np.float64)
+    applied_deposition = np.zeros(source.num_rows, dtype=np.float64)
+    mean_delta = np.zeros(source.num_rows, dtype=np.float64)
+    terrain_after = terrain.astype(np.float64)
+    table = source.append_column(
+        "prospective_channel_excavation_volume_m3",
+        pa.array(prospective_excavation, type=pa.float64()),
     )
     table = table.append_column(
-        "maximum_channel_incision_m", pa.array(maximum_incision, type=pa.float64())
+        "prospective_floodplain_deposition_volume_m3",
+        pa.array(prospective_deposition, type=pa.float64()),
+    )
+    table = table.append_column(
+        "prospective_maximum_channel_incision_m",
+        pa.array(maximum_incision, type=pa.float64()),
+    )
+    table = table.append_column(
+        "applied_terrain_erosion_volume_m3", pa.array(applied_erosion, type=pa.float64())
+    )
+    table = table.append_column(
+        "applied_terrain_deposition_volume_m3",
+        pa.array(applied_deposition, type=pa.float64()),
     )
     table = table.append_column("terrain_mean_delta_m", pa.array(mean_delta, type=pa.float64()))
     table = table.append_column(
         "terrain_elevation_after_m", pa.array(terrain_after, type=pa.float64())
     )
     represented_delta_volume = float(np.sum(mean_delta * areas_m2))
-    expected_delta_volume = float(np.sum(deposited) - np.sum(eroded))
+    expected_delta_volume = float(np.sum(applied_deposition) - np.sum(applied_erosion))
     return table, {
         "maximum_absolute_cell_mean_delta_m": float(np.max(np.abs(mean_delta), initial=0.0)),
         "cell_mean_volume_relation_residual_m3": represented_delta_volume - expected_delta_volume,
+        "raster_terrain_feedback_applied": 0,
     }
 
 
@@ -174,31 +199,47 @@ def _parent_table(source: pa.Table, cells: pa.Table) -> tuple[pa.Table, dict[str
     parent_ids = np.asarray(source["parent_cell_id"], dtype=np.int32)
     child_parent_ids = np.asarray(cells["parent_cell_id"], dtype=np.int32)
     parent_rows = _lookup_rows(parent_ids, child_parent_ids, label="eroded child parent")
-    eroded = np.zeros(source.num_rows, dtype=np.float64)
-    deposited = np.zeros(source.num_rows, dtype=np.float64)
+    prospective_excavation = np.zeros(source.num_rows, dtype=np.float64)
+    prospective_deposition = np.zeros(source.num_rows, dtype=np.float64)
     np.add.at(
-        eroded,
+        prospective_excavation,
         parent_rows,
-        np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64),
+        np.asarray(cells["prospective_channel_excavation_volume_m3"], dtype=np.float64),
     )
     np.add.at(
-        deposited,
+        prospective_deposition,
         parent_rows,
-        np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64),
+        np.asarray(cells["prospective_floodplain_deposition_volume_m3"], dtype=np.float64),
     )
-    area_m2 = np.asarray(source["parent_area_km2"], dtype=np.float64) * 1_000_000.0
-    mean_delta = (deposited - eroded) / area_m2
-    table = source.append_column("child_eroded_volume_m3", pa.array(eroded, type=pa.float64()))
-    table = table.append_column("child_deposited_volume_m3", pa.array(deposited, type=pa.float64()))
+    applied_erosion = np.zeros(source.num_rows, dtype=np.float64)
+    applied_deposition = np.zeros(source.num_rows, dtype=np.float64)
+    mean_delta = np.zeros(source.num_rows, dtype=np.float64)
+    table = source.append_column(
+        "prospective_child_channel_excavation_volume_m3",
+        pa.array(prospective_excavation, type=pa.float64()),
+    )
+    table = table.append_column(
+        "prospective_child_floodplain_deposition_volume_m3",
+        pa.array(prospective_deposition, type=pa.float64()),
+    )
+    table = table.append_column(
+        "applied_child_terrain_erosion_volume_m3",
+        pa.array(applied_erosion, type=pa.float64()),
+    )
+    table = table.append_column(
+        "applied_child_terrain_deposition_volume_m3",
+        pa.array(applied_deposition, type=pa.float64()),
+    )
     table = table.append_column(
         "restricted_terrain_mean_delta_m", pa.array(mean_delta, type=pa.float64())
     )
-    child_net = float(
-        np.sum(np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64))
-        - np.sum(np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64))
+    prospective_child_net = float(
+        np.sum(np.asarray(cells["prospective_floodplain_deposition_volume_m3"], dtype=np.float64))
+        - np.sum(np.asarray(cells["prospective_channel_excavation_volume_m3"], dtype=np.float64))
     )
     return table, {
-        "parent_budget_residual_m3": float(np.sum(deposited - eroded)) - child_net,
+        "parent_budget_residual_m3": float(np.sum(prospective_deposition - prospective_excavation))
+        - prospective_child_net,
         "maximum_absolute_parent_mean_delta_m": float(np.max(np.abs(mean_delta), initial=0.0)),
     }
 
@@ -268,9 +309,7 @@ def _profile_audit(
     )
     reach_edge_sources = sort_order[:-1][edge_mask]
     reach_edge_targets = sort_order[1:][edge_mask]
-    edge_pairs = np.column_stack(
-        (cell_ids[reach_edge_sources], cell_ids[reach_edge_targets])
-    )
+    edge_pairs = np.column_stack((cell_ids[reach_edge_sources], cell_ids[reach_edge_targets]))
     if len(edge_pairs):
         _, unique_edge_indices = np.unique(edge_pairs, axis=0, return_index=True)
         edge_sources = reach_edge_sources[unique_edge_indices]
@@ -297,9 +336,7 @@ def _profile_audit(
     return {
         "emitted_physical_edge_count": int(len(edge_sources)),
         "emitted_reach_edge_count": int(len(reach_edge_sources)),
-        "shared_directed_edge_occurrence_count": int(
-            len(reach_edge_sources) - len(edge_sources)
-        ),
+        "shared_directed_edge_occurrence_count": int(len(reach_edge_sources) - len(edge_sources)),
         "emitted_minimum_realized_slope": minimum_slope,
         "maximum_junction_bed_error_m": _maximum_junction_error(profiles),
         "maximum_bed_above_terrain_error_m": float(
@@ -334,8 +371,10 @@ def _budget_audit(
     profile_by_cell = _group_sums(
         fine_ids, profile_cell_ids, profile_volume, label="profile erosion cell"
     )
-    cell_eroded = np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64)
-    cell_deposited = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
+    cell_eroded = np.asarray(cells["prospective_channel_excavation_volume_m3"], dtype=np.float64)
+    cell_deposited = np.asarray(
+        cells["prospective_floodplain_deposition_volume_m3"], dtype=np.float64
+    )
     reach_deposited = np.asarray(reaches["floodplain_deposition_volume_m3"], dtype=np.float64)
 
     upstream_input = np.asarray(reaches["upstream_input_volume_m3"], dtype=np.float64)
@@ -360,10 +399,14 @@ def _budget_audit(
     deposited_by_parent = _group_sums(
         parent_ids, cell_parent_ids, cell_deposited, label="cell deposition parent"
     )
-    published_parent_eroded = np.asarray(parents["child_eroded_volume_m3"], dtype=np.float64)
-    published_parent_deposited = np.asarray(parents["child_deposited_volume_m3"], dtype=np.float64)
+    published_parent_eroded = np.asarray(
+        parents["prospective_child_channel_excavation_volume_m3"], dtype=np.float64
+    )
+    published_parent_deposited = np.asarray(
+        parents["prospective_child_floodplain_deposition_volume_m3"], dtype=np.float64
+    )
 
-    # Channel prism is profile-accounted; bank carve is reach-accounted; cells hold both.
+    # These volumes audit the candidate vector profile; none is applied to raster terrain here.
     total_channel_eroded = float(np.sum(profile_volume))
     total_bank_eroded = float(np.sum(bank_eroded))
     total_process_eroded = total_channel_eroded + total_bank_eroded
@@ -537,16 +580,19 @@ def _local_dem_low_audit(
     cell_faces = np.asarray(cells["face"], dtype=np.int32)
     cell_rows = np.asarray(cells["row"], dtype=np.int32)
     cell_cols = np.asarray(cells["col"], dtype=np.int32)
-    terrain_after = np.asarray(cells["terrain_elevation_after_m"], dtype=np.float64)
+    surface_column = (
+        "channel_surface_prior_m"
+        if "channel_surface_prior_m" in cells.column_names
+        else "terrain_elevation_after_m"
+    )
+    terrain_after = np.asarray(cells[surface_column], dtype=np.float64)
     terrain_by_id = {
         int(cell_id): float(elevation)
         for cell_id, elevation in zip(fine_ids, terrain_after, strict=True)
     }
     coordinate_by_id = {
         int(cell_id): (int(face), int(row), int(col))
-        for cell_id, face, row, col in zip(
-            fine_ids, cell_faces, cell_rows, cell_cols, strict=True
-        )
+        for cell_id, face, row, col in zip(fine_ids, cell_faces, cell_rows, cell_cols, strict=True)
     }
 
     membership_reach = np.asarray(memberships["reach_id"], dtype=np.int32)
@@ -581,9 +627,7 @@ def _local_dem_low_audit(
         face, row, col = centerline_coordinate
         bank_elevations: list[float] = []
         for candidate_path in range(int(path_order) - 1, int(path_order) + 2):
-            for lateral_cell in laterals_by_reach_path.get(
-                (int(reach_id), candidate_path), ()
-            ):
+            for lateral_cell in laterals_by_reach_path.get((int(reach_id), candidate_path), ()):
                 coordinate = coordinate_by_id.get(lateral_cell)
                 if coordinate is None:
                     continue
@@ -651,8 +695,8 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
     net_col = placements[face, 1] * display_resolution + display_col
     image[net_row, net_col] = colors
 
-    incision = np.asarray(cells["maximum_channel_incision_m"], dtype=np.float64)
-    deposition = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
+    incision = np.asarray(cells["prospective_maximum_channel_incision_m"], dtype=np.float64)
+    deposition = np.asarray(cells["prospective_floodplain_deposition_volume_m3"], dtype=np.float64)
     positive_incision = incision[incision > 0.0]
     incision_scale = (
         float(np.percentile(positive_incision, 95.0)) if len(positive_incision) else 1.0
@@ -831,7 +875,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "BasinErosionParentCatalog",
         "BasinErosionMetadata",
     ),
-    version="v3",
+    version="v8",
     native_libraries=("fluvial_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -893,13 +937,22 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
         raise RuntimeError("refined reach support enters a process-excluded parent")
     planet = deps["planet"].artifact_records["PlanetMetadata"].value
     radius_m = float(planet["planet_radius_earth"]) * EARTH_RADIUS_M
-    controls = {**asdict(config), "planet_radius_m": radius_m}
+    controls = {
+        "planet_radius_m": radius_m,
+        "minimum_bed_slope": config.minimum_bed_slope,
+        "maximum_deposition_fraction": config.maximum_deposition_fraction,
+        "deposition_slope_scale": config.deposition_slope_scale,
+        "maximum_deposition_depth_m": config.maximum_deposition_depth_m,
+        # Coarse child cells are still about 4.5 km across at the canonical
+        # factor. Physical bank and valley erosion belongs to regional terrain.
+        "bank_incision_fraction": 0.0,
+    }
     with context.timed("conservative_fluvial_erosion_kernel"):
         profile_records, reach_records, cell_records, metadata = run_fluvial_erosion(
             controls=controls,
             cell_ids=_column(cells, "fine_cell_id", np.dtype(np.int32)),
             cell_parent_ids=_column(cells, "parent_cell_id", np.dtype(np.int32)),
-            cell_terrain_m=_column(cells, "terrain_elevation_m", np.dtype(np.float32)),
+            cell_terrain_m=_column(cells, "channel_surface_prior_m", np.dtype(np.float32)),
             cell_areas_km2=_column(cells, "area_km2", np.dtype(np.float64)),
             cell_xyz=_fixed_list_column(cells, "xyz", 3),
             reach_ids=reach_ids,
@@ -953,14 +1006,17 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
     total_eroded_m3 = float(budget_audit["independent_total_eroded_volume_m3"])
     total_bank_m3 = float(budget_audit["independent_total_bank_eroded_volume_m3"])
     total_channel_m3 = float(budget_audit["independent_total_channel_eroded_volume_m3"])
-    valley_support = np.asarray(memberships["valley_fraction"], dtype=np.float64)
-    channel_support = np.asarray(memberships["channel_fraction"], dtype=np.float64)
-    bank_capable = bool(np.any(valley_support > channel_support + 1e-12))
-    bank_carve_valid = bool(
-        (not bank_capable)
-        or config.bank_incision_fraction <= 0.0
-        or total_channel_m3 <= 0.0
-        or total_bank_m3 > 0.0
+    bank_carve_valid = bool(total_bank_m3 == 0.0)
+    incision_plausibility_valid = bool(
+        float(metadata["maximum_incision_depth_m"]) <= config.hard_maximum_channel_incision_m
+    )
+    raster_feedback_valid = bool(
+        cell_metadata["maximum_absolute_cell_mean_delta_m"] == 0.0
+        and parent_metadata["maximum_absolute_parent_mean_delta_m"] == 0.0
+        and np.array_equal(
+            np.asarray(eroded_cells["terrain_elevation_after_m"], dtype=np.float64),
+            np.asarray(eroded_cells["terrain_elevation_m"], dtype=np.float64),
+        )
     )
     native_catalog_residuals = {
         "native_total_eroded_catalog_residual_m3": float(metadata["total_eroded_volume_m3"])
@@ -1000,8 +1056,15 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
             "process_exclusion_valid": int(process_exclusion_valid),
             "connector_process_valid": int(connector_process_valid),
             "bank_carve_valid": int(bank_carve_valid),
+            "incision_plausibility_valid": int(incision_plausibility_valid),
+            "raster_feedback_valid": int(raster_feedback_valid),
+            "bank_carve_enabled": 0,
             "potential_incised_volume_km3": potential_volume_m3 / 1_000_000_000.0,
             "actual_to_potential_incision_ratio": total_eroded_m3 / max(potential_volume_m3, 1e-12),
+            "prospective_total_excavation_volume_km3": total_eroded_m3 / 1_000_000_000.0,
+            "prospective_channel_excavation_volume_km3": total_channel_m3 / 1_000_000_000.0,
+            "applied_terrain_erosion_volume_km3": 0.0,
+            "applied_terrain_deposition_volume_km3": 0.0,
             "total_eroded_volume_km3": total_eroded_m3 / 1_000_000_000.0,
             "total_channel_eroded_volume_km3": total_channel_m3 / 1_000_000_000.0,
             "total_bank_eroded_volume_km3": total_bank_m3 / 1_000_000_000.0,
@@ -1017,13 +1080,18 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
                 budget_audit["independent_total_exported_sediment_volume_m3"]
             )
             / 1_000_000_000.0,
-            "profile_semantics": "least_incision_downstream_monotone_bedrock_envelope",
+            "profile_semantics": "prospective_least_incision_vector_constraint",
+            "profile_surface_prior_semantics": (
+                "priority_flood_control_surface_over_unresolved_fill_with_registered_"
+                "water_surface_override_else_refined_terrain"
+            ),
             "incision_semantics": (
-                "subgrid_channel_prism_plus_valley_bank_carve_with_cell_mean_volume_feedback"
+                "prospective_channel_prism_without_bank_carve_or_raster_terrain_feedback"
             ),
             "vector_semantics": "polyline_vertices_with_channel_width_and_bed_elevation",
-            "sediment_semantics": "newly_eroded_solid_volume_routed_source_to_sink",
+            "sediment_semantics": "prospective_solid_volume_budget_routed_source_to_sink",
             "inherited_sediment_load_semantics": "preserved_flux_diagnostic_not_mixed_with_history_volume",
+            "regional_refinement_owns_physical_incision": 1,
         }
     )
     tolerance_m3 = 1e-8 * max(total_eroded_m3, 1.0)
@@ -1044,9 +1112,15 @@ def basin_erosion_stage(context, deps, config_mapping: Mapping[str, object]):
     if vector_audit["vector_minimum_bed_slope"] < config.minimum_bed_slope - 1e-12:
         raise RuntimeError("fluvial river vectors violate the configured downstream grade")
     if not bank_carve_valid:
+        raise RuntimeError("sparse coarse-scale fluvial stage applied forbidden bank erosion")
+    if not incision_plausibility_valid:
         raise RuntimeError(
-            "fluvial bank carve produced zero valley erosion despite valley support and incision"
+            "fluvial incision exceeds the configured physical plausibility envelope: "
+            f"channel={metadata['maximum_incision_depth_m']:.1f} m / "
+            f"{config.hard_maximum_channel_incision_m:.1f} m"
         )
+    if not raster_feedback_valid:
+        raise RuntimeError("sparse coarse-scale fluvial stage changed raster terrain")
     if (
         metadata["sediment_conservation_valid"] != 1
         or abs(metadata["sediment_conservation_residual_m3"]) > tolerance_m3

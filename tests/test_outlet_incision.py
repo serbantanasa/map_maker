@@ -224,6 +224,8 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
     assert outlet_metadata["independent_receiver_changed_area_fraction"] <= 0.15
     assert final_metadata["outlet_erosion_required_count"] == 0
     assert final_metadata["outlet_correction_converged"] == 1
+    assert final_metadata["outlet_resolution_contract_satisfied"] == 1
+    assert final_metadata["regional_refinement_deferred_outlet_candidate_count"] == 0
     assert final_metadata["surface_water_ready_for_soils"] == 1
     assert iterations["residual_feedback_candidate_count"][-1].as_py() == 0
     assert len(cells.column_names) == len(set(cells.column_names))
@@ -260,12 +262,24 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
         for row in kpis.select(["kpi_id", "value", "gate_kind", "comparison_status"]).to_pylist()
     }
     assert kpi_by_id["candidate_graph_valid"]["comparison_status"] == "hard_pass"
+    assert kpi_by_id["global_river_reach_graph_issue_count"]["comparison_status"] == "hard_pass"
+    assert kpi_by_id["global_longest_source_to_terminal_river_path_km"]["value"] > 0.0
+    assert kpi_by_id["global_longest_source_to_terminal_channel_km"]["value"] > 0.0
     assert kpi_by_id["seasonal_snow_storage_implemented"]["value"] == 1.0
     assert kpi_by_id["glacier_mass_balance_implemented"]["value"] == 1.0
+    assert kpi_by_id["seasonal_sea_ice_implemented"]["value"] == 1.0
+    assert kpi_by_id["global_mean_sea_ice_ocean_area_fraction"]["comparison_status"] in {
+        "within_reference",
+        "outside_reference",
+    }
     assert kpi_by_id["lake_reach_hydrograph_coupling_implemented"]["value"] == 1.0
     assert kpi_by_id["floodplain_inundation_implemented"]["value"] == 0.0
     assert soil_metadata["surface_materials_ready_for_biomes"] == 1
-    assert soil_metadata["refined_surface_projection"] == "conservative_child_area_km2_v2"
+    assert (
+        soil_metadata["refined_surface_projection"]
+        == "conservative_applied_child_process_area_km2_v3"
+    )
+    assert soil_metadata["coarse_prospective_fluvial_budgets_consumed"] == 0
     assert 0.0 <= soil_metadata["effective_lake_land_area_fraction"] <= 1.0
     assert 0.0 <= soil_metadata["effective_wetland_land_area_fraction"] <= 1.0
     assert soil_metadata["material_balance_max_error"] <= 1e-5
@@ -341,6 +355,40 @@ def test_final_surface_water_converges_with_bounded_persistent_outlets(tmp_path:
         "hydrology_validation"
     ]
     assert cached_validation.stats is not None and cached_validation.stats.cache_hit
+
+
+def test_final_surface_water_defers_round_limited_outlets_to_regional_refinement(
+    tmp_path: Path,
+):
+    config = _config(tmp_path, "outlet-resolution-deferral")
+    overrides = {name: dict(values) for name, values in config.stage_overrides.items()}
+    overrides["surface_water_final"]["maximum_outlet_incision_rounds"] = 1
+    config.stage_overrides = overrides
+
+    results = ExecutionEngine(config).run(["surface_water_final", "hydrology_validation"])
+    result = results["surface_water_final"]
+    metadata = result.artifact_records["SurfaceWaterMetadata"].value
+    candidates = _table(result, "SurfaceWaterCandidateCatalog")
+    iterations = _table(result, "OutletIncisionIterationCatalog")
+    validation_metadata = (
+        results["hydrology_validation"].artifact_records["HydrologyValidationMetadata"].value
+    )
+    validation_kpis = _table(results["hydrology_validation"], "HydrologyKpiCatalog")
+
+    assert metadata["regional_refinement_deferred_outlet_candidate_count"] > 0
+    assert metadata["regional_refinement_deferred_outlet_mean_water_area_km2"] > 0.0
+    assert metadata["outlet_erosion_required_count"] == 0
+    assert metadata["outlet_correction_converged"] == 0
+    assert metadata["outlet_resolution_contract_satisfied"] == 1
+    assert metadata["surface_water_ready_for_soils"] == 1
+    assert iterations["residual_feedback_candidate_count"][-1].as_py() > 0
+    assert "regional_refinement_deferred" in candidates["classification_reason"].to_pylist()
+    assert validation_metadata["hard_gate_pass"] == 1
+    kpi_by_id = {
+        row["kpi_id"]: row for row in validation_kpis.select(["kpi_id", "value"]).to_pylist()
+    }
+    assert kpi_by_id["outlet_resolution_contract_satisfied"]["value"] == 1.0
+    assert kpi_by_id["outlet_correction_converged"]["value"] == 0.0
 
 
 def test_final_surface_water_accepts_a_zero_correction_world(tmp_path: Path):

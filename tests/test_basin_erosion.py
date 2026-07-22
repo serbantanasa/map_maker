@@ -73,7 +73,6 @@ def _config(
                     "maximum_deposition_fraction": 0.35,
                     "deposition_slope_scale": 0.001,
                     "maximum_deposition_depth_m": 10.0,
-                    "bank_incision_fraction": 0.35,
                 },
             },
         }
@@ -149,9 +148,14 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
     assert metadata["emitted_minimum_realized_slope"] >= metadata["minimum_bed_slope"] - 1e-12
     assert metadata["total_eroded_volume_km3"] > 0.0
     assert metadata["bank_carve_valid"] == 1
+    assert metadata["bank_carve_enabled"] == 0
+    assert metadata["incision_plausibility_valid"] == 1
+    assert metadata["raster_feedback_valid"] == 1
+    assert metadata["raster_terrain_feedback_applied"] == 0
+    assert metadata["regional_refinement_owns_physical_incision"] == 1
     assert metadata["local_dem_low_valid"] == 1
     assert metadata["vector_uphill_segment_count"] == 0
-    assert metadata["total_bank_eroded_volume_m3"] > 0.0
+    assert metadata["total_bank_eroded_volume_m3"] == 0.0
 
     vectors = _table(result, "FluvialRiverVectorCatalog")
     assert vectors.num_rows == profiles.num_rows > 0
@@ -173,6 +177,17 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
     assert np.all(np.isfinite(bed))
     assert np.all(bed <= terrain + 1e-5)
     assert np.allclose(depth, terrain - bed, atol=1e-4)
+    refined_ids = np.asarray(cells["fine_cell_id"], dtype=np.int32)
+    row_by_id = {int(cell_id): row for row, cell_id in enumerate(refined_ids)}
+    profile_rows = np.asarray(
+        [row_by_id[int(cell_id)] for cell_id in profiles["fine_cell_id"].to_pylist()],
+        dtype=np.int64,
+    )
+    np.testing.assert_allclose(
+        terrain,
+        np.asarray(cells["channel_surface_prior_m"], dtype=np.float64)[profile_rows],
+        atol=1e-5,
+    )
     width_by_reach = dict(
         zip(
             np.asarray(reaches["reach_id"], dtype=np.int32),
@@ -212,11 +227,25 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
     assert np.all(np.asarray(reaches["local_erosion_volume_m3"])[connector] == 0.0)
     assert np.all(np.asarray(reaches["floodplain_deposition_volume_m3"])[connector] == 0.0)
 
-    eroded = np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64)
-    deposited = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
+    eroded = np.asarray(cells["prospective_channel_excavation_volume_m3"], dtype=np.float64)
+    deposited = np.asarray(cells["prospective_floodplain_deposition_volume_m3"], dtype=np.float64)
+    applied_eroded = np.asarray(cells["applied_terrain_erosion_volume_m3"], dtype=np.float64)
+    applied_deposited = np.asarray(cells["applied_terrain_deposition_volume_m3"], dtype=np.float64)
     area_m2 = np.asarray(cells["area_km2"], dtype=np.float64) * 1_000_000.0
     mean_delta = np.asarray(cells["terrain_mean_delta_m"], dtype=np.float64)
-    assert np.allclose(mean_delta * area_m2, deposited - eroded, rtol=1e-12, atol=1e-5)
+    assert np.array_equal(mean_delta, np.zeros_like(mean_delta))
+    assert np.array_equal(applied_eroded, np.zeros_like(applied_eroded))
+    assert np.array_equal(applied_deposited, np.zeros_like(applied_deposited))
+    assert np.array_equal(
+        np.asarray(cells["terrain_elevation_after_m"], dtype=np.float64),
+        np.asarray(cells["terrain_elevation_m"], dtype=np.float64),
+    )
+    assert np.allclose(
+        mean_delta * area_m2,
+        applied_deposited - applied_eroded,
+        rtol=0.0,
+        atol=0.0,
+    )
     assert np.sum(eroded) == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-9)
     assert np.sum(deposited) == pytest.approx(
         metadata["total_floodplain_deposition_volume_m3"], rel=1e-9
@@ -227,12 +256,15 @@ def test_basin_erosion_profiles_and_routes_conservatively(tmp_path: Path):
         + metadata["total_exported_sediment_volume_m3"]
     ) == pytest.approx(metadata["total_eroded_volume_m3"], rel=1e-9)
 
-    assert np.sum(np.asarray(parents["child_eroded_volume_m3"])) == pytest.approx(
-        np.sum(eroded), rel=1e-12
-    )
-    assert np.sum(np.asarray(parents["child_deposited_volume_m3"])) == pytest.approx(
-        np.sum(deposited), rel=1e-12
-    )
+    assert np.sum(
+        np.asarray(parents["prospective_child_channel_excavation_volume_m3"])
+    ) == pytest.approx(np.sum(eroded), rel=1e-12)
+    assert np.sum(
+        np.asarray(parents["prospective_child_floodplain_deposition_volume_m3"])
+    ) == pytest.approx(np.sum(deposited), rel=1e-12)
+    assert np.all(np.asarray(parents["applied_child_terrain_erosion_volume_m3"]) == 0.0)
+    assert np.all(np.asarray(parents["applied_child_terrain_deposition_volume_m3"]) == 0.0)
+    assert np.all(np.asarray(parents["restricted_terrain_mean_delta_m"]) == 0.0)
     assert (engine.context.config.run_visual_dir() / "basin_erosion" / "eroded_basin.png").is_file()
     assert (
         engine.context.config.run_visual_dir() / "basin_erosion" / "longitudinal_profile.png"
@@ -274,6 +306,18 @@ def test_basin_erosion_config_rejects_unknown_and_invalid_controls():
         BasinErosionConfig.from_mapping({"deposition_slope_scale": 0.0})
     with pytest.raises(ValueError, match="bank_incision_fraction"):
         BasinErosionConfig.from_mapping({"bank_incision_fraction": 1.5})
+    with pytest.raises(ValueError, match="hard_maximum_channel_incision_m"):
+        BasinErosionConfig.from_mapping({"hard_maximum_channel_incision_m": 0.0})
+
+
+def test_stage_rejects_incision_outside_configured_envelope(tmp_path: Path):
+    config = _config(tmp_path, "implausible-incision")
+    overrides = {name: dict(values) for name, values in config.stage_overrides.items()}
+    overrides["basin_erosion"]["hard_maximum_channel_incision_m"] = 1.0
+    config.stage_overrides = overrides
+
+    with pytest.raises(RuntimeError, match="physical plausibility envelope"):
+        ExecutionEngine(config).run(["basin_erosion"])
 
 
 def test_native_layout_round_trips_double_precision_profile_fields():
@@ -379,7 +423,6 @@ def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: 
                         "maximum_deposition_fraction": 0.35,
                         "deposition_slope_scale": 0.001,
                         "maximum_deposition_depth_m": 10.0,
-                        "bank_incision_fraction": 0.35,
                     },
                 },
             }
@@ -409,8 +452,8 @@ def test_pipeline_fixture_exercises_connectors_and_process_exclusions(tmp_path: 
 
     excluded = np.asarray(cells["process_excluded"])
     assert np.any(excluded)
-    assert np.all(np.asarray(cells["subgrid_eroded_volume_m3"])[excluded] == 0.0)
-    assert np.all(np.asarray(cells["floodplain_deposited_volume_m3"])[excluded] == 0.0)
+    assert np.all(np.asarray(cells["prospective_channel_excavation_volume_m3"])[excluded] == 0.0)
+    assert np.all(np.asarray(cells["prospective_floodplain_deposition_volume_m3"])[excluded] == 0.0)
     assert np.array_equal(
         np.asarray(cells["terrain_elevation_after_m"])[excluded],
         np.asarray(cells["terrain_elevation_m"])[excluded],

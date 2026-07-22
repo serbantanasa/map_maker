@@ -224,8 +224,12 @@ def _refined_surface_fields(
     ):
         raise RuntimeError("refined surface-water parent has invalid physical area")
 
-    eroded_volume = np.asarray(cells["subgrid_eroded_volume_m3"], dtype=np.float64)
-    deposited_volume = np.asarray(cells["floodplain_deposited_volume_m3"], dtype=np.float64)
+    eroded_volume = np.asarray(
+        cells["applied_terrain_erosion_volume_m3"], dtype=np.float64
+    )
+    deposited_volume = np.asarray(
+        cells["applied_terrain_deposition_volume_m3"], dtype=np.float64
+    )
     eroded_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     deposited_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     np.add.at(eroded_parent, parent_ids, eroded_volume)
@@ -447,7 +451,7 @@ def _visualizer(
         *EFFECTIVE_SURFACE_WATER_OUTPUTS,
         "SurfaceMaterialsMetadata",
     ),
-    version="v4",
+    version="v5",
     native_libraries=("surface_materials_native",),
     visualizer=_visualizer,
 )
@@ -728,7 +732,8 @@ def surface_materials_stage(
             "refined_surface_water_parent_count": int(
                 np.count_nonzero(refined["refined_mask"] >= 0.5)
             ),
-            "refined_surface_projection": "conservative_child_area_km2_v2",
+            "refined_surface_projection": "conservative_applied_child_process_area_km2_v3",
+            "coarse_prospective_fluvial_budgets_consumed": 0,
             "effective_lake_land_area_fraction": land_mean("EffectiveLakeFraction"),
             "effective_wetland_land_area_fraction": land_mean("EffectiveWetlandFraction"),
             "hydrology_hard_gate_pass": 1,

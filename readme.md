@@ -77,7 +77,7 @@ climate/orographic precipitation. The first depression-aware hydrology pass now
 writes fractional lake and wetland coverage, spill outlets, breaches, conservative
 drainage basins, monthly discharge, sparse waterbody membership, and vector river
 reaches. Explicit geological event history, spherical global erosion and
-sediment feedback, ecosystem dynamics, and complete regional terrain remain
+sediment feedback, ecosystem dynamics, and physically evolved regional terrain remain
 implementation milestones. The canonical path now also
 publishes fractional L2 surface materials, initial mineral-soil properties, and
 a conservative monthly soil-water partition. Atmospheric composition and
@@ -88,24 +88,20 @@ The Rust-backed `potential_biosphere` stage converts that envelope into bounded
 potential NPP, cover, biomass, growing season, adaptation pressure, rooting,
 canopy, leaf-area, and fuel-continuity fields while deliberately withholding
 species, functional types, and biome labels. A first sparse basin-refinement
-stage now realizes one inherited trunk network at approximately 5 km scale,
-preserves parent terrain means and convergent reach junctions, and stores physical
-channel, valley, and floodplain fractions without carving whole cells. It also
-closes coarse extraction gaps with zero-width hydrologic connectors, verifies
-source-to-sink readiness, and conserves broad valley and floodplain support in
-nearby fine cells. The downstream sparse erosion pass now solves shared-junction
-bed profiles, applies volume-based subgrid incision, routes newly eroded sediment
-through connectors, deposits only on allocated floodplain support, and restricts
-terrain-volume feedback to coarse parents. Its morphology and retention
-parameters remain provisional. The bounded sparse Hydrology Pass 2 now consumes
-the volume-adjusted cell means and float64 channel beds, preserves the accepted
-trunk and connector identities, reroutes local child drainage, and persists
-before/after depression candidates without labeling them all as lakes. The
-refined seasonal surface-water stage now conserves inherited monthly runoff,
-solves fractional fill/spill states, and separates accepted standing water from
-systems requiring outlet incision. The bounded outlet stage cuts narrow subgrid
-beds by physical volume, preserves ordinary-cell and physical-trunk identities,
-reruns routing in Rust, and repeats monthly balance to a zero-feedback gate.
+stage realizes one inherited major-trunk vector network at approximately 5 km
+scale, closes graph gaps with zero-width hydrologic connectors, and stores
+fractional channel, valley, and floodplain support without carving whole cells.
+The downstream sparse fluvial pass solves prospective shared-junction bed
+profiles and conserves prospective sediment, while applied erosion, deposition,
+and terrain-mean feedback remain zero. Hydrology Pass 2 routes the unchanged
+raster terrain prior while preserving accepted vector receivers. Physical
+banks, meanders, and valley excavation belong to deterministic finer local
+refinement; river vectors and the reach graph remain canonical even where a
+large river is raster-visible. The refined seasonal surface-water stage
+conserves inherited monthly runoff, solves fractional fill/spill states, and
+separates accepted standing water from systems requiring outlet correction.
+The bounded outlet stage remains a volume-accounted hydraulic topology repair
+and explicitly defers unresolved moving spill edges to regional refinement.
 Final lake coupling keeps losses on their owning branch and records unresolved
 coarse/fine discharge mismatch instead of borrowing flow from a sibling
 tributary. The canonical state now has a first projected physical-atlas export;
@@ -169,6 +165,31 @@ significant rivers at world-map scale. Atlas styling and projection do not alter
 or invalidate simulation artifacts. See `docs/specs/11_physical_atlas_export.md`
 for the export contract and current source-resolution limits.
 
+Export the matching categorical drainage-basin atlas with:
+
+```bash
+uv run map-maker basin-atlas
+```
+
+This writes a color presentation map, an integer Basin-ID GeoTIFF, and a JSON
+basin/color catalog beside the physical atlas.
+
+Export the first literal L2 selected-basin handoff with:
+
+```bash
+uv run map-maker regional-handoff
+```
+
+The checked-in `configs/l2_regional_handoff.yaml` selects a complete drainage
+basin, adds two L0 context rings, and writes deterministic factor-16 terrain,
+conservative ocean/lake/wetland occupancy, inherited parent priors, and river
+graph/vector tables under
+`out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2/`. Arrays use
+chunked Zarr, graph and catalog data use Parquet, and a checksummed manifest and
+hard validation report state which fields are true L2 realizations versus L0
+priors. The package deliberately does not invent tributaries, downscale climate
+or soils, or apply river incision.
+
 Run the previous procedural generator for comparison:
 
 ```bash
@@ -201,7 +222,7 @@ uv run map-maker-pipeline --stage atmosphere --config configs/cubed_sphere_crust
 # Canonical seasonal temperature, wind, precipitation, and evaporation
 uv run map-maker-pipeline --stage climate --config configs/cubed_sphere_crust_state.yaml
 
-# Seasonal snow, firn/ice mass balance, glacier melt, and canonical runoff
+# Seasonal snow, land/sea ice, glacier melt, and canonical runoff
 uv run map-maker-pipeline --stage cryosphere --config configs/cubed_sphere_crust_state.yaml
 
 # Canonical lakes, breaches, drainage graph, basins, and vector river reaches
@@ -210,10 +231,10 @@ uv run map-maker-pipeline --stage hydrology --config configs/cubed_sphere_crust_
 # One sparse face-2048 basin with connected trunks and conserved corridor support
 uv run map-maker-pipeline --stage basin_refinement --config configs/cubed_sphere_crust_state.yaml
 
-# Junction-consistent subgrid incision and conservative sediment routing
+# Junction-consistent candidate profiles and prospective sediment routing
 uv run map-maker-pipeline --stage basin_erosion --config configs/cubed_sphere_crust_state.yaml
 
-# Bounded local rerouting and depression stability after erosion
+# Bounded local routing over unchanged terrain plus depression candidates
 uv run map-maker-pipeline --stage hydrology_pass2 --config configs/cubed_sphere_crust_state.yaml
 
 # Monthly fractional lakes, wetlands, transient storage, and outlet feedback
@@ -269,7 +290,9 @@ explicit native build, or point `MAP_MAKER_NATIVE_LIB_DIR` at compatible librari
 
 ## Design
 
+- [Documentation index](docs/README.md)
 - [Planet engine specification](docs/PLANET_ENGINE_SPEC.md)
 - [Decision log](docs/DECISIONS.md)
+- [Current roadmap](docs/ROADMAP.md)
 - [Validation gates](docs/VALIDATION.md)
-- [Working notes](docs/NOTES.md)
+- [Documentation archive](docs/archive/README.md)

@@ -6,18 +6,20 @@ Implemented provisional stabilization pass following `basin_erosion`.
 
 ## Objective
 
-Consume the selected basin's volume-adjusted terrain and solved subgrid channel
-beds, recompute local child drainage without changing the accepted trunk graph,
-and measure whether erosion materially changed receivers or depression
-candidates. The pass is bounded: accepted corrections are persisted once;
-large-scale instability rejects the result.
+Consume the selected basin's unchanged terrain prior plus accepted vector trunk
+graph, recompute local child drainage without changing that graph, and publish
+local receiver and depression candidates. The pass is bounded: accepted
+topological constraints are persisted once; large-scale instability rejects
+the result.
 
-## Dual Routing Surface
+## Routing Surface
 
-The full-cell terrain after erosion is the routing surface for ordinary cells.
-Physical centerline cells instead expose the solved channel bed to routing while
-retaining their separately conserved full-cell mean. This preserves narrow
-rivers without turning a 10-100 metre channel into a multi-kilometre trench.
+Every child uses the unchanged sparse terrain prior as its raster routing
+surface. Physical centerline cells retain fixed downstream receivers from the
+accepted vector profile, but the candidate channel-bed elevation is not
+substituted for raster terrain. This preserves trunk topology without turning a
+10-100 metre channel into a multi-kilometre trench or implying completed
+erosion.
 
 Preserved-depression children and outside-basin boundary children are terminal
 anchors. Connector reaches remain graph handoffs with no physical bed or local
@@ -27,8 +29,9 @@ process support.
 
 The Rust `hydrology_pass2_native` kernel builds sparse cubed-sphere D4 adjacency
 without allocating a global refined raster. It runs deterministic multi-source
-priority floods on the pre-erosion and post-erosion surfaces. Physical channel
-cells, preserved waterbody support, and inherited ocean support are anchors.
+priority floods on the same unchanged terrain surface for baseline and
+stabilized audits. Physical channel cells, preserved waterbody support, and
+inherited ocean support are anchors.
 
 Ordinary cells receive the priority-flood parent as their local receiver.
 Physical channel receivers are then restored from the accepted bed-profile DAG.
@@ -48,9 +51,9 @@ seasonal, wetland, or no surface water.
 
 ## Persistent Outputs
 
-- `StabilizedBasinCellCatalog`: dual surfaces, pre/post receivers, hydrologic
-  elevations, fill depths, flow slope and direction, contributing area,
-  depression IDs, and change flags.
+- `StabilizedBasinCellCatalog`: unchanged routing surface,
+  baseline/stabilized receivers, hydrologic elevations, fill depths, flow slope
+  and direction, contributing area, depression IDs, and change flags.
 - `StabilizedRiverReachCatalog`: accepted reaches plus Pass-2 preservation
   status.
 - `LocalDepressionCandidateCatalog`: aggregated post-erosion candidates and
@@ -63,6 +66,7 @@ seasonal, wetland, or no surface water.
 ## Hard Gates
 
 - Every active child routes to the fixed trunk or an inherited terminal.
+- The routing raster exactly equals the sparse terrain prior.
 - The stabilized receiver graph is acyclic.
 - Every physical trunk receiver exactly matches the bed-profile DAG.
 - Preserved-depression interiors remain process excluded.
@@ -74,9 +78,9 @@ seasonal, wetland, or no surface water.
 ## Current Limits
 
 - D4 routing is retained to match the accepted topology contract.
-- The downstream surface-water stage now runs monthly balance for local
-  depression candidates. Outlet-incision feedback from that balance still
-  requires another bounded terrain and routing correction.
+- The downstream surface-water stage runs monthly balance for local depression
+  candidates. Its separately bounded outlet-spill correction is a hydraulic
+  topology repair, not physical major-trunk or valley erosion.
 - Preserved coarse waterbodies still require bathymetric refinement before their
   inlet, lake-crossing, and outlet geometry becomes physical.
 - The pass stabilizes one selected basin, not the entire planet at refined

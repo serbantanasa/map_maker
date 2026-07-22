@@ -1,0 +1,11 @@
+format_version: 1
+world_config: cubed_sphere_crust_state.yaml
+output_dir: ../out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2
+region:
+  # Auto selects the largest basin with a represented physical channel network.
+  basin_id: auto
+  # L0 context needed by downstream regional climate and hydrology recomputation.
+  halo_parent_rings: 2
+  # Face-128 x 16 is face-2048-equivalent: about 4.5 km cell width on Earth.
+  refinement_factor: 16
+  chunk_rows: 65536

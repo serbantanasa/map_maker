@@ -13,11 +13,17 @@ pub struct CryosphereStats {
     pub maximum_glacier_ice_water_equivalent_mm: f32,
     pub land_mean_annual_glacier_melt_mm: f32,
     pub land_mean_annual_glacier_calving_mm: f32,
+    pub minimum_sea_ice_ocean_area_fraction: f32,
+    pub maximum_sea_ice_ocean_area_fraction: f32,
+    pub mean_sea_ice_ocean_area_fraction: f32,
+    pub perennial_sea_ice_ocean_area_fraction: f32,
+    pub seasonal_sea_ice_ocean_area_fraction: f32,
+    pub maximum_sea_ice_thickness_m: f32,
 }
 
 #[no_mangle]
 pub extern "C" fn cryosphere_native_abi_version() -> u32 {
-    2
+    3
 }
 
 struct Inputs<'a> {
@@ -38,6 +44,8 @@ struct Outputs<'a> {
     firn_to_ice: &'a mut [f32],
     glacier_melt: &'a mut [f32],
     glacier_ice: &'a mut [f32],
+    sea_ice_fraction: &'a mut [f32],
+    sea_ice_thickness_m: &'a mut [f32],
     runoff: &'a mut [f32],
     annual_mass_balance: &'a mut [f32],
     annual_flow_export: &'a mut [f32],
@@ -61,6 +69,12 @@ struct Controls {
     glacier_flow_activation_mm: f64,
     glacier_flow_fraction_year: f64,
     glacier_reference_thickness_mm: f64,
+    sea_ice_freezing_temperature_c: f64,
+    sea_ice_melt_temperature_c: f64,
+    sea_ice_freeze_rate_mm_c_month: f64,
+    sea_ice_melt_rate_mm_c_month: f64,
+    sea_ice_reference_thickness_mm: f64,
+    sea_ice_maximum_thickness_mm: f64,
     runoff_base_fraction: f64,
 }
 
@@ -100,6 +114,19 @@ fn update_snow_reservoir(
     let requested_sublimation = *snow * sublimation_fraction;
     remove_snow(snow, snow_age_mass, requested_sublimation);
     (converted, melted)
+}
+
+fn update_sea_ice(thickness_mm: &mut f64, temperature_c: f64, controls: Controls) -> f64 {
+    if temperature_c < controls.sea_ice_freezing_temperature_c {
+        let freezing_degree = controls.sea_ice_freezing_temperature_c - temperature_c;
+        let insulation = 1.0 + *thickness_mm / controls.sea_ice_reference_thickness_mm;
+        *thickness_mm += controls.sea_ice_freeze_rate_mm_c_month * freezing_degree / insulation;
+    } else if temperature_c > controls.sea_ice_melt_temperature_c {
+        let melt_degree = temperature_c - controls.sea_ice_melt_temperature_c;
+        *thickness_mm -= controls.sea_ice_melt_rate_mm_c_month * melt_degree;
+    }
+    *thickness_mm = thickness_mm.clamp(0.0, controls.sea_ice_maximum_thickness_mm);
+    (1.0 - (-*thickness_mm / controls.sea_ice_reference_thickness_mm).exp()).clamp(0.0, 1.0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -177,6 +204,8 @@ fn run_model(
     outputs.firn_to_ice.fill(0.0);
     outputs.glacier_melt.fill(0.0);
     outputs.glacier_ice.fill(0.0);
+    outputs.sea_ice_fraction.fill(0.0);
+    outputs.sea_ice_thickness_m.fill(0.0);
     outputs.runoff.fill(0.0);
     outputs.annual_mass_balance.fill(0.0);
     outputs.annual_flow_export.fill(0.0);
@@ -190,6 +219,7 @@ fn run_model(
     let mut highland_snow = vec![0.0f64; total];
     let mut highland_snow_age_mass = vec![0.0f64; total];
     let mut ice = vec![0.0f64; total];
+    let mut sea_ice_thickness_mm = vec![0.0f64; total];
     let mut final_start_ice = vec![0.0f64; total];
     let monthly_firn_fraction =
         1.0 - (1.0 - controls.firn_conversion_fraction_year).powf(1.0 / MONTHS as f64);
@@ -234,8 +264,19 @@ fn run_model(
                     highland_snow[cell] = 0.0;
                     highland_snow_age_mass[cell] = 0.0;
                     ice[cell] = 0.0;
+                    let concentration = update_sea_ice(
+                        &mut sea_ice_thickness_mm[cell],
+                        f64::from(inputs.temperature[offset]),
+                        controls,
+                    );
+                    if persist {
+                        outputs.sea_ice_fraction[offset] = concentration as f32;
+                        outputs.sea_ice_thickness_m[offset] =
+                            (sea_ice_thickness_mm[cell] / 1_000.0) as f32;
+                    }
                     continue;
                 }
+                sea_ice_thickness_mm[cell] = 0.0;
                 let temperature_c = f64::from(inputs.temperature[offset]);
                 let relief_m = f64::from(inputs.relief[cell]);
                 // Climate temperature already reflects cell-mean elevation.
@@ -402,8 +443,28 @@ fn run_model(
     let mut glacier_melt_area = 0.0;
     let mut calving_area = 0.0;
     let mut maximum_ice = 0.0f32;
+    let mut ocean_area = 0.0;
+    let mut monthly_sea_ice_area = [0.0f64; MONTHS];
+    let mut perennial_sea_ice_area = 0.0;
+    let mut seasonal_sea_ice_area = 0.0;
+    let mut maximum_sea_ice_thickness_m = 0.0f32;
     for cell in 0..total {
         if inputs.ocean[cell] >= 0.5 {
+            let area = inputs.areas[cell];
+            ocean_area += area;
+            let mut minimum_fraction = 1.0f32;
+            let mut maximum_fraction = 0.0f32;
+            for month in 0..MONTHS {
+                let offset = month * total + cell;
+                let fraction = outputs.sea_ice_fraction[offset];
+                monthly_sea_ice_area[month] += area * f64::from(fraction);
+                minimum_fraction = minimum_fraction.min(fraction);
+                maximum_fraction = maximum_fraction.max(fraction);
+                maximum_sea_ice_thickness_m =
+                    maximum_sea_ice_thickness_m.max(outputs.sea_ice_thickness_m[offset]);
+            }
+            perennial_sea_ice_area += area * f64::from(minimum_fraction);
+            seasonal_sea_ice_area += area * f64::from(maximum_fraction - minimum_fraction);
             continue;
         }
         let area = inputs.areas[cell];
@@ -430,6 +491,20 @@ fn run_model(
         glacier_melt_area += area * f64::from(annual_melt);
         calving_area += area * f64::from(outputs.annual_calving[cell]);
     }
+    let minimum_sea_ice_fraction = monthly_sea_ice_area
+        .iter()
+        .copied()
+        .reduce(f64::min)
+        .unwrap_or(0.0)
+        / ocean_area.max(f64::EPSILON);
+    let maximum_sea_ice_fraction = monthly_sea_ice_area
+        .iter()
+        .copied()
+        .reduce(f64::max)
+        .unwrap_or(0.0)
+        / ocean_area.max(f64::EPSILON);
+    let mean_sea_ice_fraction =
+        monthly_sea_ice_area.iter().sum::<f64>() / (MONTHS as f64 * ocean_area.max(f64::EPSILON));
     CryosphereStats {
         seasonal_snow_land_area_fraction: (seasonal_snow_area / land_area) as f32,
         perennial_snow_land_area_fraction: (perennial_snow_area / land_area) as f32,
@@ -438,6 +513,14 @@ fn run_model(
         maximum_glacier_ice_water_equivalent_mm: maximum_ice,
         land_mean_annual_glacier_melt_mm: (glacier_melt_area / land_area) as f32,
         land_mean_annual_glacier_calving_mm: (calving_area / land_area) as f32,
+        minimum_sea_ice_ocean_area_fraction: minimum_sea_ice_fraction as f32,
+        maximum_sea_ice_ocean_area_fraction: maximum_sea_ice_fraction as f32,
+        mean_sea_ice_ocean_area_fraction: mean_sea_ice_fraction as f32,
+        perennial_sea_ice_ocean_area_fraction: (perennial_sea_ice_area
+            / ocean_area.max(f64::EPSILON)) as f32,
+        seasonal_sea_ice_ocean_area_fraction: (seasonal_sea_ice_area / ocean_area.max(f64::EPSILON))
+            as f32,
+        maximum_sea_ice_thickness_m,
     }
 }
 
@@ -466,6 +549,12 @@ pub unsafe extern "C" fn cryosphere_run(
     glacier_flow_activation_mm: f64,
     glacier_flow_fraction_year: f64,
     glacier_reference_thickness_mm: f64,
+    sea_ice_freezing_temperature_c: f64,
+    sea_ice_melt_temperature_c: f64,
+    sea_ice_freeze_rate_mm_c_month: f64,
+    sea_ice_melt_rate_mm_c_month: f64,
+    sea_ice_reference_thickness_mm: f64,
+    sea_ice_maximum_thickness_mm: f64,
     runoff_base_fraction: f64,
     area_ptr: *const f64,
     neighbor_ptr: *const i32,
@@ -481,6 +570,8 @@ pub unsafe extern "C" fn cryosphere_run(
     firn_to_ice_ptr: *mut f32,
     glacier_melt_ptr: *mut f32,
     glacier_ice_ptr: *mut f32,
+    sea_ice_fraction_ptr: *mut f32,
+    sea_ice_thickness_m_ptr: *mut f32,
     runoff_ptr: *mut f32,
     annual_mass_balance_ptr: *mut f32,
     annual_flow_export_ptr: *mut f32,
@@ -504,6 +595,8 @@ pub unsafe extern "C" fn cryosphere_run(
         && !firn_to_ice_ptr.is_null()
         && !glacier_melt_ptr.is_null()
         && !glacier_ice_ptr.is_null()
+        && !sea_ice_fraction_ptr.is_null()
+        && !sea_ice_thickness_m_ptr.is_null()
         && !runoff_ptr.is_null()
         && !annual_mass_balance_ptr.is_null()
         && !annual_flow_export_ptr.is_null()
@@ -527,6 +620,12 @@ pub unsafe extern "C" fn cryosphere_run(
         glacier_flow_activation_mm,
         glacier_flow_fraction_year,
         glacier_reference_thickness_mm,
+        sea_ice_freezing_temperature_c,
+        sea_ice_melt_temperature_c,
+        sea_ice_freeze_rate_mm_c_month,
+        sea_ice_melt_rate_mm_c_month,
+        sea_ice_reference_thickness_mm,
+        sea_ice_maximum_thickness_mm,
         runoff_base_fraction,
     };
     let numeric_controls = [
@@ -541,6 +640,12 @@ pub unsafe extern "C" fn cryosphere_run(
         glacier_flow_activation_mm,
         glacier_flow_fraction_year,
         glacier_reference_thickness_mm,
+        sea_ice_freezing_temperature_c,
+        sea_ice_melt_temperature_c,
+        sea_ice_freeze_rate_mm_c_month,
+        sea_ice_melt_rate_mm_c_month,
+        sea_ice_reference_thickness_mm,
+        sea_ice_maximum_thickness_mm,
         runoff_base_fraction,
     ];
     if spinup_years < 2
@@ -556,6 +661,14 @@ pub unsafe extern "C" fn cryosphere_run(
         || glacier_flow_activation_mm < 0.0
         || !(0.0..=1.0).contains(&glacier_flow_fraction_year)
         || glacier_reference_thickness_mm <= 0.0
+        || !(-10.0..=2.0).contains(&sea_ice_freezing_temperature_c)
+        || !(-10.0..=10.0).contains(&sea_ice_melt_temperature_c)
+        || sea_ice_melt_temperature_c < sea_ice_freezing_temperature_c
+        || !(0.1..=2_000.0).contains(&sea_ice_freeze_rate_mm_c_month)
+        || !(0.1..=2_000.0).contains(&sea_ice_melt_rate_mm_c_month)
+        || !(1.0..=10_000.0).contains(&sea_ice_reference_thickness_mm)
+        || !(1.0..=50_000.0).contains(&sea_ice_maximum_thickness_mm)
+        || sea_ice_maximum_thickness_mm < sea_ice_reference_thickness_mm
         || !(0.0..=1.0).contains(&runoff_base_fraction)
     {
         return 2;
@@ -615,6 +728,10 @@ pub unsafe extern "C" fn cryosphere_run(
         firn_to_ice: unsafe { slice::from_raw_parts_mut(firn_to_ice_ptr, monthly_len) },
         glacier_melt: unsafe { slice::from_raw_parts_mut(glacier_melt_ptr, monthly_len) },
         glacier_ice: unsafe { slice::from_raw_parts_mut(glacier_ice_ptr, monthly_len) },
+        sea_ice_fraction: unsafe { slice::from_raw_parts_mut(sea_ice_fraction_ptr, monthly_len) },
+        sea_ice_thickness_m: unsafe {
+            slice::from_raw_parts_mut(sea_ice_thickness_m_ptr, monthly_len)
+        },
         runoff: unsafe { slice::from_raw_parts_mut(runoff_ptr, monthly_len) },
         annual_mass_balance: unsafe { slice::from_raw_parts_mut(annual_mass_balance_ptr, total) },
         annual_flow_export: unsafe { slice::from_raw_parts_mut(annual_flow_export_ptr, total) },
@@ -648,5 +765,37 @@ mod tests {
         assert_eq!(remove_snow(&mut snow, &mut age, 12.0), 10.0);
         assert_eq!(snow, 0.0);
         assert_eq!(age, 0.0);
+    }
+
+    #[test]
+    fn sea_ice_freezes_and_melts_with_bounded_thickness() {
+        let controls = Controls {
+            spinup_years: 2,
+            lapse_rate_c_per_km: 6.5,
+            relief_elevation_multiplier: 1.0,
+            maximum_highland_fraction: 0.4,
+            snow_degree_day_melt_mm_c_month: 12.0,
+            glacier_degree_day_melt_mm_c_month: 16.0,
+            firn_conversion_fraction_year: 0.65,
+            snow_sublimation_fraction_month: 0.004,
+            glacier_sublimation_fraction_month: 0.0002,
+            glacier_flow_activation_mm: 1_000.0,
+            glacier_flow_fraction_year: 0.08,
+            glacier_reference_thickness_mm: 100_000.0,
+            sea_ice_freezing_temperature_c: -1.8,
+            sea_ice_melt_temperature_c: -0.2,
+            sea_ice_freeze_rate_mm_c_month: 80.0,
+            sea_ice_melt_rate_mm_c_month: 180.0,
+            sea_ice_reference_thickness_mm: 1_000.0,
+            sea_ice_maximum_thickness_mm: 5_000.0,
+            runoff_base_fraction: 0.35,
+        };
+        let mut thickness = 0.0;
+        let frozen_fraction = update_sea_ice(&mut thickness, -12.0, controls);
+        assert!(frozen_fraction > 0.0);
+        assert!(thickness > 0.0);
+        let thawed_fraction = update_sea_ice(&mut thickness, 20.0, controls);
+        assert_eq!(thawed_fraction, 0.0);
+        assert_eq!(thickness, 0.0);
     }
 }

@@ -290,6 +290,12 @@ def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
         metadata["independent_receiver_changed_area_km2"]
     )
     assert metadata["new_depression_area_fraction"] <= 0.02
+    assert metadata["maximum_routing_surface_change_m"] == 0.0
+    assert metadata["raster_terrain_feedback_applied"] == 0
+    assert (
+        metadata["routing_semantics"]
+        == "unchanged_terrain_with_vector_trunk_receiver_constraints"
+    )
     assert cells.num_rows == metadata["cell_count"]
     assert reaches.num_rows > 0
 
@@ -306,19 +312,9 @@ def test_hydrology_pass2_stabilizes_real_connector_basin(tmp_path: Path):
     channel_rows = cell_order[np.searchsorted(cell_ids[cell_order], channel_ids)]
     assert np.all(np.asarray(cells["routing_anchor_kind"])[channel_rows] == "channel")
     assert not np.any(excluded[channel_rows])
-    expected_beds = np.array(
-        [
-            np.asarray(profiles["bed_elevation_m"])[
-                np.asarray(profiles["fine_cell_id"]) == cell_id
-            ][0]
-            for cell_id in channel_ids
-        ]
-    )
-    assert np.allclose(
-        np.asarray(cells["routing_surface_after_m"])[channel_rows],
-        expected_beds,
-        rtol=0.0,
-        atol=1e-12,
+    assert np.array_equal(
+        np.asarray(cells["routing_surface_after_m"], dtype=np.float64),
+        np.asarray(cells["terrain_elevation_m"], dtype=np.float64),
     )
     if depressions.num_rows:
         assert np.all(np.asarray(depressions["area_km2"]) > 0.0)

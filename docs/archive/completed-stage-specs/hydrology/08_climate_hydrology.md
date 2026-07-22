@@ -167,6 +167,9 @@ contract for inspection and surrogate training.
 8. Sustained overflow, available head, discharge, weak rock, and low accommodation
    produce a breach score. Accepted breaches carve a short coarse outlet path,
    record gorge incision and a sediment pulse, and trigger a second priority flood.
+   That flood defines the post-breach control surface. A basin that still has
+   resolved head and connected hypsometric area remains a smaller open lake or
+   inland sea; breach acceptance alone never asserts that the whole basin drained.
 
 ### Drainage And Rivers
 
@@ -228,6 +231,8 @@ conservation error, and artifact semantics.
 - Exact and smoothed reach geometries share endpoints and remain on the unit sphere.
 - Lake and wetland fractions are finite, bounded by `[0, 1]`, mutually exclusive,
   and reproduce catalog water area when weighted by physical cell area.
+- Every breach record resolves to either a residual registered open water body or
+  a fully drained depression; the two counts reproduce the breach count exactly.
 - Identical inputs produce byte-identical arrays and Arrow tables.
 
 ### Current Hydrology Limits
@@ -255,7 +260,9 @@ conservation error, and artifact semantics.
 - Groundwater, infiltration, losing/intermittent reaches, glaciers, engineered
   channels, and explicit delta distributary growth are absent or represented only
   by coarse reach attributes.
-- Breach erosion is a basin-scale coarse incision event. The sparse selected-basin
+- Breach erosion is a basin-scale coarse incision event. Post-breach re-flooding
+  preserves residual water but does not simulate time-resolved drawdown, shoreline
+  migration, knickpoint retreat, or sedimentary infill. The sparse selected-basin
   erosion and Hydrology Pass 2 now stabilize one refined basin, but detailed
   gorge evolution and global sediment feedback remain future work. The refined
   surface-water stage now solves monthly local lake balance, but its requested

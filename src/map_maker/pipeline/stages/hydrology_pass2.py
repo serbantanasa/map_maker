@@ -1,4 +1,4 @@
-"""Bounded sparse Hydrology Pass 2 for one eroded refined basin."""
+"""Bounded sparse Hydrology Pass 2 over an unchanged terrain prior."""
 
 from __future__ import annotations
 
@@ -94,9 +94,8 @@ def _trunk_contract(
     profiles: pa.Table,
     reaches: pa.Table,
     cell_ids: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     fixed_receivers = np.full(len(cell_ids), NO_FIXED_RECEIVER, dtype=np.int32)
-    routing_bed = np.full(len(cell_ids), np.nan, dtype=np.float64)
     channel_cells = np.unique(np.asarray(profiles["fine_cell_id"], dtype=np.int32))
     channel_rows = _lookup_rows(cell_ids, channel_cells, label="channel bed")
 
@@ -111,8 +110,6 @@ def _trunk_contract(
     np.maximum.at(maximum_bed, profile_channel_rows, profile_beds)
     if np.any(maximum_bed - minimum_bed > 1e-10):
         raise RuntimeError("shared channel cell has inconsistent persisted bed elevations")
-    routing_bed[channel_rows] = minimum_bed
-
     edge_by_source: dict[int, int] = {}
     last_cell_by_reach: dict[int, int] = {}
     profile_reach_ids = np.asarray(profiles["reach_id"], dtype=np.int32)
@@ -142,7 +139,7 @@ def _trunk_contract(
 
     for cell_id, row in zip(channel_cells, channel_rows, strict=True):
         fixed_receivers[row] = edge_by_source.get(int(cell_id), terminal_by_cell[int(cell_id)])
-    return channel_rows, fixed_receivers, routing_bed
+    return channel_rows, fixed_receivers
 
 
 def _cell_table(source: pa.Table, records: np.ndarray, routing_surface: np.ndarray) -> pa.Table:
@@ -594,7 +591,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "HydrologyCorrectionCatalog",
         "HydrologyPass2Metadata",
     ),
-    version="v3",
+    version="v4",
     native_libraries=("hydrology_pass2_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -614,7 +611,7 @@ def hydrology_pass2_stage(context, deps, config_mapping: Mapping[str, object]):
     memberships = _artifact_table(refinement, "RefinedReachCellCatalog")
     cell_ids = _column(cells, "fine_cell_id", np.dtype(np.int32))
     parent_ids = _column(cells, "parent_cell_id", np.dtype(np.int32))
-    channel_rows, fixed_receivers, routing_bed = _trunk_contract(profiles, reaches, cell_ids)
+    channel_rows, fixed_receivers = _trunk_contract(profiles, reaches, cell_ids)
     parent_catalog_ids = _column(parents, "parent_cell_id", np.dtype(np.int32))
     parent_rows = _lookup_rows(parent_catalog_ids, parent_ids, label="child parent")
     inside = np.asarray(parents["inside_selected_basin"])[parent_rows]
@@ -626,8 +623,8 @@ def hydrology_pass2_stage(context, deps, config_mapping: Mapping[str, object]):
     anchor_kinds[excluded] = ANCHOR_EXCLUDED
     anchor_kinds[~inside] = ANCHOR_OUTSIDE
     anchor_kinds[channel_rows] = ANCHOR_CHANNEL
-    routing_surface = _column(cells, "terrain_elevation_after_m", np.dtype(np.float64)).copy()
-    routing_surface[channel_rows] = routing_bed[channel_rows]
+    terrain_prior = _column(cells, "terrain_elevation_m", np.dtype(np.float64))
+    routing_surface = terrain_prior.copy()
     planet = deps["planet"].artifact_records["PlanetMetadata"].value
     radius_m = float(planet["planet_radius_earth"]) * EARTH_RADIUS_M
     controls = {
@@ -639,7 +636,7 @@ def hydrology_pass2_stage(context, deps, config_mapping: Mapping[str, object]):
         records, metadata = run_hydrology_pass2(
             controls=controls,
             cell_ids=cell_ids,
-            terrain_before_m=_column(cells, "terrain_elevation_m", np.dtype(np.float64)),
+            terrain_before_m=terrain_prior,
             routing_surface_after_m=routing_surface,
             cell_areas_km2=_column(cells, "area_km2", np.dtype(np.float64)),
             cell_xyz=_fixed_list_column(cells, "xyz", 3),
@@ -710,14 +707,20 @@ def hydrology_pass2_stage(context, deps, config_mapping: Mapping[str, object]):
                 graph_metadata["independent_receiver_changed_cell_count"] > 0
             ),
             "additional_erosion_correction_required": int(additional_erosion_correction_required),
-            "routing_semantics": "volume_adjusted_means_with_subgrid_channel_bed_anchors",
+            "routing_semantics": "unchanged_terrain_with_vector_trunk_receiver_constraints",
             "depression_semantics": "topographic_storage_candidates_not_waterbody_labels",
-            "trunk_semantics": "pass1_reach_and_connector_identities_preserved",
+            "trunk_semantics": "pass1_vector_reach_topology_preserved_without_raster_bed_carve",
+            "maximum_routing_surface_change_m": float(
+                np.max(np.abs(routing_surface - terrain_prior), initial=0.0)
+            ),
+            "raster_terrain_feedback_applied": 0,
         }
     )
     area_tolerance = 1e-8 * max(active_area_km2, 1.0)
     if metadata["graph_valid"] != 1 or graph_metadata["independent_graph_valid"] != 1:
         raise RuntimeError("Hydrology Pass 2 produced a cyclic or uncovered receiver graph")
+    if metadata["maximum_routing_surface_change_m"] != 0.0:
+        raise RuntimeError("Hydrology Pass 2 changed coarse raster terrain")
     if metadata["trunk_preserved_valid"] != 1 or graph_metadata["trunk_receiver_mismatch_count"]:
         raise RuntimeError("Hydrology Pass 2 changed the accepted physical trunk graph")
     if (

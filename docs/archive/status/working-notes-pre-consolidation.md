@@ -1,7 +1,8 @@
 # Planet Engine Notes
 
 Working notes, unresolved questions, and speculative ideas. Promote stable
-items to `PLANET_ENGINE_SPEC.md` or `DECISIONS.md` after discussion.
+items to the current [product spec](../../PLANET_ENGINE_SPEC.md) or
+[decision log](../../DECISIONS.md) after discussion.
 
 ## Project Identity
 

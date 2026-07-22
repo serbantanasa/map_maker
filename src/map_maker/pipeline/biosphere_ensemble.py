@@ -14,6 +14,7 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from PIL import Image, ImageDraw
 import yaml  # type: ignore[import-untyped]
 
+from .atlas import AtlasStyleConfig, render_physical_atlas_preview
 from .config import GridInfo, PipelineConfig, ResolutionSet
 from .execution import ExecutionEngine
 from .models import StageResult
@@ -26,7 +27,6 @@ from .stages.derived_biomes_validation import (
 )
 from .stages.derived_biomes import dominant_landscape_rgb
 from .stages.sea_level import _equirectangular_rgb, _hypsometric_rgb
-
 
 ENSEMBLE_METRIC_SCHEMA = pa.schema(
     [
@@ -284,6 +284,7 @@ class BiosphereEnsembleResult:
     biome_profile_pass: bool = True
     biome_gallery_path: Path | None = None
     surface_geography_gallery_path: Path | None = None
+    physical_atlas_gallery_path: Path | None = None
 
 
 def _integer(value: object, *, name: str) -> int:
@@ -964,10 +965,11 @@ def _write_seed_gallery(
         row, column = divmod(index, columns)
         x = column * thumb_width
         y = row * (thumb_height + label_height)
-        preview = Image.fromarray(preview_rgb, mode="RGB").resize(
-            (thumb_width, thumb_height), resampling
-        )
-        canvas.paste(preview, (x, y))
+        preview = Image.fromarray(preview_rgb, mode="RGB")
+        preview.thumbnail((thumb_width, thumb_height), resampling)
+        preview_x = x + (thumb_width - preview.width) // 2
+        preview_y = y + (thumb_height - preview.height) // 2
+        canvas.paste(preview, (preview_x, preview_y))
         draw.text((x + 8, y + thumb_height + 7), f"Seed {seed}", fill="white")
     output_path.parent.mkdir(parents=True, exist_ok=True)
     canvas.save(output_path)
@@ -981,6 +983,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
     reports: list[BiosphereSeedReport] = []
     biome_previews: list[tuple[int, np.ndarray]] = []
     surface_geography_previews: list[tuple[int, np.ndarray]] = []
+    physical_atlas_previews: list[tuple[int, np.ndarray]] = []
     execution_failures: dict[int, str] = {}
     for seed in config.seeds:
         world = _world_config(base, config, seed)
@@ -1013,6 +1016,15 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
                 seed,
                 _equirectangular_rgb(
                     dominant_landscape_rgb(_array(derived_biomes, "DominantLandscapeCode"))
+                ),
+            )
+        )
+        physical_atlas_previews.append(
+            (
+                seed,
+                render_physical_atlas_preview(
+                    results,
+                    AtlasStyleConfig(width_px=1024, coastline_width_px=1),
                 ),
             )
         )
@@ -1088,6 +1100,13 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
             surface_geography_gallery_path,
             resampling=Image.Resampling.LANCZOS,
         )
+    physical_atlas_gallery_path = config.output_dir / "physical_atlas_gallery.png"
+    if physical_atlas_previews:
+        _write_seed_gallery(
+            physical_atlas_previews,
+            physical_atlas_gallery_path,
+            resampling=Image.Resampling.LANCZOS,
+        )
     report_path = config.output_dir / "report.json"
     report: dict[str, Any] = {
         "format_version": 1,
@@ -1113,6 +1132,10 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
             surface_geography_gallery_path.name if surface_geography_previews else None
         ),
         "human_surface_geography_gallery_review_required": True,
+        "physical_atlas_gallery": (
+            physical_atlas_gallery_path.name if physical_atlas_previews else None
+        ),
+        "human_physical_atlas_gallery_review_required": True,
         "requested_seed_count": len(config.seeds),
         "successful_seed_count": len(reports),
         "execution_failures": [
@@ -1134,6 +1157,7 @@ def run_biosphere_ensemble(config: BiosphereEnsembleConfig) -> BiosphereEnsemble
         evaluation.biome_profile_pass,
         biome_gallery_path if biome_previews else None,
         surface_geography_gallery_path if surface_geography_previews else None,
+        physical_atlas_gallery_path if physical_atlas_previews else None,
     )
 
 

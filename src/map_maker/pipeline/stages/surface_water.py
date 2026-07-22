@@ -98,6 +98,7 @@ class SurfaceWaterConfig:
 class SurfaceWaterFinalConfig:
     maximum_outlet_incision_rounds: int = 12
     require_soil_readiness: bool = False
+    defer_residual_outlets_to_regional_refinement: bool = True
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> "SurfaceWaterFinalConfig":
@@ -115,11 +116,17 @@ class SurfaceWaterFinalConfig:
             "require_soil_readiness",
             cls.__dataclass_fields__["require_soil_readiness"].default,
         )
+        raw_defer = mapping.get(
+            "defer_residual_outlets_to_regional_refinement",
+            cls.__dataclass_fields__["defer_residual_outlets_to_regional_refinement"].default,
+        )
         if not isinstance(raw_required, bool):
             raise ValueError("require_soil_readiness must be a boolean")
+        if not isinstance(raw_defer, bool):
+            raise ValueError("defer_residual_outlets_to_regional_refinement must be a boolean")
         if not 1 <= maximum_rounds <= 32:
             raise ValueError("maximum_outlet_incision_rounds must be in [1, 32]")
-        return cls(maximum_rounds, raw_required)
+        return cls(maximum_rounds, raw_required, raw_defer)
 
 
 def _artifact_table(result, name: str) -> pa.Table:
@@ -324,6 +331,7 @@ def _outlet_erosion_feedback(
     rock_strength: np.ndarray,
     accommodation: np.ndarray,
     suppressed_outlet_spill_cell_ids: set[int] | None = None,
+    deferred_outlet_spill_cell_ids: set[int] | None = None,
 ) -> tuple[
     np.ndarray,
     np.ndarray,
@@ -371,16 +379,25 @@ def _outlet_erosion_feedback(
     pre_adjustment_codes = candidate_records["class_code"]
     lake_like = (pre_adjustment_codes == 2) | (pre_adjustment_codes == 3)
     suppressed_spill_ids = suppressed_outlet_spill_cell_ids or set()
+    deferred_spill_ids = deferred_outlet_spill_cell_ids or set()
+    if deferred_spill_ids:
+        regional_refinement_deferred = lake_like & np.isin(
+            np.asarray(candidates["spill_cell_id"], dtype=np.int32),
+            np.fromiter(deferred_spill_ids, dtype=np.int32),
+        )
+    else:
+        regional_refinement_deferred = np.zeros(len(candidates), dtype=bool)
     if suppressed_spill_ids:
         bounded_outlet_resolved = lake_like & np.isin(
             np.asarray(candidates["spill_cell_id"], dtype=np.int32),
             np.fromiter(suppressed_spill_ids, dtype=np.int32),
-        )
+        ) & ~regional_refinement_deferred
     else:
         bounded_outlet_resolved = np.zeros(len(candidates), dtype=bool)
     erosion_required = (
         lake_like
         & ~bounded_outlet_resolved
+        & ~regional_refinement_deferred
         & (mean_overflow_m3s > 0.0)
         & (mean_overflow_m3s >= config.minimum_outlet_erosion_discharge_m3s)
         & (erosion_score >= config.outlet_erosion_score_threshold)
@@ -395,6 +412,7 @@ def _outlet_erosion_feedback(
     reasons = np.select(
         [
             erosion_required,
+            regional_refinement_deferred,
             bounded_outlet_resolved,
             pre_adjustment_codes == 0,
             pre_adjustment_codes == 1,
@@ -404,6 +422,7 @@ def _outlet_erosion_feedback(
         ],
         [
             "outlet_erosion_feedback",
+            "regional_refinement_deferred",
             "bounded_outlet_feedback_resolved",
             "no_material_water",
             "short_hydroperiod",
@@ -420,6 +439,12 @@ def _outlet_erosion_feedback(
         "bounded_outlet_feedback_resolved_count": int(np.count_nonzero(bounded_outlet_resolved)),
         "bounded_outlet_feedback_resolved_mean_water_area_km2": float(
             np.sum(mean_area[bounded_outlet_resolved])
+        ),
+        "regional_refinement_deferred_outlet_count": int(
+            np.count_nonzero(regional_refinement_deferred)
+        ),
+        "regional_refinement_deferred_outlet_mean_water_area_km2": float(
+            np.sum(mean_area[regional_refinement_deferred])
         ),
         "maximum_outlet_erosion_score": float(np.max(erosion_score)),
         "maximum_recommended_outlet_incision_m": float(np.max(recommended_incision_m)),
@@ -662,7 +687,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "SurfaceWaterMonthlyStateCatalog",
         "SurfaceWaterMetadata",
     ),
-    version="v5",
+    version="v6",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -766,6 +791,12 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
             for value in pass2_metadata.get(
                 "outlet_feedback_suppressed_spill_cell_ids",
                 pass2_metadata.get("grade_blocked_spill_cell_ids", []),
+            )
+        },
+        {
+            int(value)
+            for value in pass2_metadata.get(
+                "regional_refinement_deferred_outlet_spill_cell_ids", []
             )
         },
     )
@@ -975,7 +1006,7 @@ def surface_water_stage(context, deps, config_mapping: Mapping[str, object]):
         "FinalPostIncisionDepressionCandidateCatalog",
         "FinalOutletIncisionMetadata",
     ),
-    version="v4",
+    version="v5",
     native_libraries=("surface_water_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -988,6 +1019,15 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
         return SimpleNamespace(
             artifact_records={name: SimpleNamespace(value=value) for name, value in output.items()}
         )
+
+    def with_pass2_metadata(result, updates: Mapping[str, object]):
+        values = {
+            name: record.value for name, record in result.artifact_records.items()
+        }
+        metadata = dict(values["HydrologyPass2Metadata"])
+        metadata.update(updates)
+        values["HydrologyPass2Metadata"] = metadata
+        return memory_result(values)
 
     def with_iteration(table: pa.Table, iteration: int) -> pa.Table:
         return table.append_column(
@@ -1089,6 +1129,54 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
         )
         record_iteration(iteration, outlet_metadata, output["SurfaceWaterMetadata"])
 
+    deferred_spill_ids: list[int] = []
+    deferred_candidate_count = 0
+    deferred_mean_water_area_km2 = 0.0
+    if (
+        int(output["SurfaceWaterMetadata"]["outlet_erosion_required_count"]) > 0
+        and final_config.defer_residual_outlets_to_regional_refinement
+    ):
+        residual_candidates = output["SurfaceWaterCandidateCatalog"]
+        residual_mask = np.asarray(residual_candidates["outlet_erosion_required"], dtype=bool)
+        deferred_candidate_count = int(np.count_nonzero(residual_mask))
+        deferred_spill_ids = sorted(
+            {
+                int(value)
+                for value in np.asarray(
+                    residual_candidates["spill_cell_id"], dtype=np.int32
+                )[residual_mask]
+            }
+        )
+        deferred_mean_water_area_km2 = float(
+            np.sum(
+                np.asarray(residual_candidates["mean_water_area_km2"], dtype=np.float64)[
+                    residual_mask
+                ]
+            )
+        )
+        current_hydrology = with_pass2_metadata(
+            current_hydrology,
+            {
+                "regional_refinement_deferred_outlet_spill_cell_ids": deferred_spill_ids,
+                "regional_refinement_deferred_outlet_candidate_count": deferred_candidate_count,
+            },
+        )
+        output = dict(
+            surface_water_stage(
+                context,
+                {
+                    "hydrology_pass2": current_hydrology,
+                    "climate": deps["climate"],
+                    "cryosphere": deps["cryosphere"],
+                    "geology": deps["geology"],
+                    "basin_refinement": deps["basin_refinement"],
+                },
+                surface_controls,
+            )
+        )
+        if int(output["SurfaceWaterMetadata"]["outlet_erosion_required_count"]) != 0:
+            raise RuntimeError("regional outlet deferral did not resolve coarse feedback")
+
     metadata = dict(output["SurfaceWaterMetadata"])
     metadata.update(
         {
@@ -1107,8 +1195,21 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
             "total_outlet_eroded_volume_m3": float(
                 sum(row["eroded_volume_m3"] for row in iteration_rows)
             ),
-            "outlet_correction_converged": int(metadata["outlet_erosion_required_count"] == 0),
-            "model": "bounded_iterative_outlet_candidate_monthly_balance_v1",
+            "outlet_correction_converged": int(
+                metadata["outlet_erosion_required_count"] == 0
+                and deferred_candidate_count == 0
+            ),
+            "outlet_resolution_contract_satisfied": int(
+                metadata["outlet_erosion_required_count"] == 0
+            ),
+            "regional_refinement_deferred_outlet_candidate_count": (
+                deferred_candidate_count
+            ),
+            "regional_refinement_deferred_outlet_mean_water_area_km2": (
+                deferred_mean_water_area_km2
+            ),
+            "regional_refinement_deferred_outlet_spill_cell_ids": deferred_spill_ids,
+            "model": "bounded_iterative_outlet_candidate_monthly_balance_v2",
         }
     )
     output["SurfaceWaterMetadata"] = metadata
@@ -1137,7 +1238,19 @@ def surface_water_final_stage(context, deps, config_mapping: Mapping[str, object
     output["FinalPostIncisionDepressionCandidateCatalog"] = _artifact_table(
         current_hydrology, "PostIncisionDepressionCandidateCatalog"
     )
-    output["FinalOutletIncisionMetadata"] = dict(outlet_metadata)
+    final_outlet_metadata = dict(outlet_metadata)
+    final_outlet_metadata.update(
+        {
+            "regional_refinement_deferred_outlet_candidate_count": (
+                deferred_candidate_count
+            ),
+            "regional_refinement_deferred_outlet_mean_water_area_km2": (
+                deferred_mean_water_area_km2
+            ),
+            "regional_refinement_deferred_outlet_spill_cell_ids": deferred_spill_ids,
+        }
+    )
+    output["FinalOutletIncisionMetadata"] = final_outlet_metadata
     if final_config.require_soil_readiness and not metadata["surface_water_ready_for_soils"]:
         raise RuntimeError(
             "bounded outlet-incision rounds ended with residual surface-water feedback"

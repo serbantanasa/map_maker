@@ -3,9 +3,9 @@
 ## Status
 
 Implemented prototype following Hydrology Pass 1. This stage proves the
-cross-resolution river and terrain contract consumed by the first sparse
-fluvial erosion pass. It does not generate new tributaries or replace Hydrology
-Pass 2.
+cross-resolution river and terrain contract consumed by the sparse trunk-profile
+pass. It does not generate new tributaries, physically evolve valleys, or
+replace Hydrology Pass 2.
 
 ## Objective
 
@@ -141,8 +141,12 @@ reaches therefore have no `RefinedReachCellCatalog` records.
 - Lake and wetland fractions are not yet spatially realized inside refined
   parents.
 - Potential incision remains a diagnostic comparison rather than a mandatory
-  fine-scale cut. `basin_erosion` now solves the actual least-incision bed
-  envelope and routes the resulting sediment volume.
+  fine-scale cut. `basin_erosion` solves a prospective least-incision vector
+  envelope and routes its prospective sediment budget, but applies no bank
+  carve or raster terrain change at this resolution.
+- At the canonical factor 16, a child is still about `20.3 km2` or `4.5 km`
+  across. Regional refinement, initially around `100-250 m`, owns tributary
+  discovery and physical valley, floodplain, bank, and incision morphology.
 - The prototype refines one basin per stage run and stores Arrow catalogs rather
   than chunked regional rasters.
 - Coarse connectors are topological placeholders. Refined inlet, lake-crossing,
