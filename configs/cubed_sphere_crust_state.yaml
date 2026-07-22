@@ -128,6 +128,7 @@ stage_overrides:
   basin_refinement:
     refinement_factor: 16
     terrain_noise_fraction: 0.45
+    maximum_parent_boundary_residual_p95_ratio: 1.35
   basin_erosion:
     minimum_bed_slope: 0.00001
     maximum_deposition_fraction: 0.35

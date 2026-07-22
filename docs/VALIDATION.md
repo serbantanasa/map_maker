@@ -46,8 +46,20 @@ uv run map-maker regional-handoff
 Its validation report gates parent area and terrain-mean conservation,
 sea-level-relative surface-mean conservation, exact parent surface-fraction
 reconstruction, bounded child occupancy, stable child/parent identity, and
-complete refined river-path references. Its manifest records source, config,
-software, and native-library fingerprints plus checksums for every output.
+complete refined river-path references. It also rejects a p95 parent-boundary
+terrain residual larger than the configured ratio to ordinary interior edge
+jumps. Its manifest records source, config, software, and native-library
+fingerprints plus checksums for every output.
+
+The first L3 target selection is validated with:
+
+```bash
+uv run map-maker l3-target
+```
+
+The target must be a complete upstream closure with one outlet, available
+context rings, unique referenced L2 children, a passing source handoff, and a
+base-grid estimate inside the configured workstation budget.
 
 ## Gate Classes
 
@@ -74,6 +86,7 @@ software, and native-library fingerprints plus checksums for every output.
 | Materials and ecology | Finite nonnegative state, bounded fractions, exact mixture/partition closure within declared tolerance, and no terrestrial state over unsupported ocean area. |
 | Atlas | Rendering consumes immutable truth artifacts, records provenance, and never feeds cartographic width, projection, or style into simulation state. |
 | L2 handoff | Sparse child terrain and surface occupancy conserve L0 parents; inherited parent priors are not presented as L2 physics; every vector path references packaged children; package publication follows validation. |
+| L3 target | The selected coarse catchment has one outlet, complete upstream ownership and context, a seam-valid L2 source, stable indexes, and bounded estimated base-grid cost. |
 
 For coarse and sparse fluvial products, applied trunk erosion, deposition, and
 cell-mean terrain change remain zero. The separately bounded outlet-spill

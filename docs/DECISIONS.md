@@ -2519,3 +2519,35 @@ dense 2-5 km planet would force the current whole-array pipeline beyond its
 memory and storage architecture. A selected, chunked L2 bridge gives L3 stable
 terrain, boundary context, causal priors, and vector identities without
 inventing precision or committing to a global high-resolution solve.
+
+## Decision 051: First L3 Slice Is A Bounded Complete Catchment
+
+Status: approved; target selected
+
+Decision:
+Use the seed-42 `temperate-highland-catchment` ending at parent cell `80324` as
+the first L3 vertical slice. Select its complete upstream L0 closure, include
+two context rings from the L2 handoff, and retain one explicit outlet. The
+target is roughly `102,000 km2`, cool and wet, carries strong runoff, and spans
+upland to lower terrain without requiring an entire continental basin.
+
+Use a `200 m` base grid with deterministic adaptive `25-50 m` river corridors.
+The base grid is capped at three million cells. Terrain arrays are chunked;
+graphs and vectors remain canonical and live in Parquet. L0 physical and
+ecological values remain priors until an L3 process recomputes them.
+
+L3 V0 owns seamless conditioned terrain, conservative runoff forcing,
+depression-aware routing, tributary discovery, vector channel geometry, and
+physically supported fluvial incision and deposition. Narrow channels remain
+vectors with fractional support until adaptive refinement resolves their banks.
+The acceptance contract is `docs/specs/13_l3_vertical_slice.md`.
+
+This decision supersedes Decision 045 only for this bounded regional slice.
+New global hydrology, biosphere, and resource stages remain frozen.
+
+Reason:
+Refining all roughly eight million square kilometres of basin 395 would require
+about `128-800 million` cells at `250-100 m` before process layers. The selected
+catchment is large enough to exercise a real hierarchy, floodplains, lakes, and
+seasonality while keeping the first implementation and validation cycle within
+the 32 GB workstation budget.

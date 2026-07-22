@@ -6,26 +6,27 @@ authority when this summary and the decision log differ.
 ## Controlling Milestone
 
 [Decision 045](DECISIONS.md#decision-045-freeze-late-simulation-work-until-global-map-export)
-freezes new simulation features after derived biomes until the first global
-map-export milestone is accepted. Hydrology, biosphere, regional refinement,
-and resource-system work is limited to regressions, broken invariants, artifact
-contract corrections, and blockers for the map milestone.
+continues to freeze new global hydrology, biosphere, and resource-system stages.
+[Decision 051](DECISIONS.md#decision-051-first-l3-slice-is-a-bounded-complete-catchment)
+explicitly opens only the bounded first L3 vertical slice. It does not authorize
+another global-stage expansion.
 
 ## Current Work
 
-1. Review the implemented seed-42 L2 regional handoff package, its preview,
-   manifest, and validation report.
-2. Choose the first L3 target and define the 100-250 m vertical-slice acceptance
-   contract without treating inherited L0 priors as downscaled physics.
+1. Implement seamless `200 m` conditioned terrain for the selected
+   `temperate-highland-catchment`, using chunked storage and the `24 GB` memory
+   ceiling in the L3 contract.
+2. Add conservative regional runoff forcing and depression-aware routing over
+   that terrain, preserving the sole target outlet and inherited trunk identity.
 3. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
 review. A connected-river `physical_atlas_v5` release candidate and six-seed
 gallery now exist, but the overall milestone remains open until the projected
-physical map receives explicit user acceptance. The first selected-basin L2
-handoff package is implemented as a bounded export and contract milestone; it
-does not thaw new regional process simulation. Detailed earlier evidence is retained in the
+physical map receives explicit user acceptance. The selected-basin L2 handoff
+now passes a quantitative terrain-seam gate. The first L3 catchment, resolution,
+budget, and acceptance contract are selected in Decision 051. Detailed earlier evidence is retained in the
 [archived validation baseline](archive/validation/2026-07-canonical-validation-baseline.md).
 
 ## Thaw Gate

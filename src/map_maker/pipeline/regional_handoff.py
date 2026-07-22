@@ -421,7 +421,14 @@ def _render_preview(
     ).astype(np.uint8)
 
     canvas = np.full((height, width, 3), (239, 240, 235), dtype=np.uint8)
-    for delta_y, delta_x in ((0, 0), (0, 1), (1, 0), (1, 1), (0, -1), (-1, 0)):
+    point_radius = int(np.clip(round(math.sqrt(width * height / max(len(x), 1)) * 0.5), 1, 6))
+    point_offsets = [
+        (delta_y, delta_x)
+        for delta_y in range(-point_radius, point_radius + 1)
+        for delta_x in range(-point_radius, point_radius + 1)
+        if delta_x * delta_x + delta_y * delta_y <= point_radius * point_radius + 1
+    ]
+    for delta_y, delta_x in point_offsets:
         target_x = np.clip(x + delta_x, 0, width - 1)
         target_y = np.clip(y + delta_y, 0, height - 1)
         canvas[target_y, target_x] = colors
@@ -841,6 +848,21 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 refinement_metadata["maximum_parent_elevation_error_m"]
             ),
             "maximum_parent_surface_elevation_mean_error_m": (maximum_surface_elevation_error_m),
+            "terrain_parent_boundary_jump_p95_m": float(
+                refinement_metadata["terrain_parent_boundary_jump_p95_m"]
+            ),
+            "terrain_parent_boundary_residual_p95_m": float(
+                refinement_metadata["terrain_parent_boundary_residual_p95_m"]
+            ),
+            "terrain_parent_boundary_residual_p95_ratio": float(
+                refinement_metadata["terrain_parent_boundary_residual_p95_ratio"]
+            ),
+            "maximum_parent_boundary_residual_p95_ratio": float(
+                refinement_metadata["maximum_parent_boundary_residual_p95_ratio"]
+            ),
+            "terrain_parent_boundary_continuity_valid": int(
+                refinement_metadata["terrain_parent_boundary_continuity_valid"]
+            ),
             "maximum_surface_fraction_error": max(surface_errors.values()),
             "surface_fraction_errors": surface_errors,
             "maximum_child_surface_occupancy": float(np.max(total_water, initial=0.0)),
@@ -856,6 +878,7 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             validation["maximum_parent_area_relative_error"] <= 1e-9
             and validation["maximum_parent_terrain_mean_error_m"] <= 1e-3
             and validation["maximum_parent_surface_elevation_mean_error_m"] <= 1e-3
+            and validation["terrain_parent_boundary_continuity_valid"] == 1
             and validation["maximum_surface_fraction_error"] <= 1e-6
             and validation["maximum_child_surface_occupancy"] <= 1.0 + 1e-6
             and validation["minimum_child_surface_occupancy"] >= -1e-7

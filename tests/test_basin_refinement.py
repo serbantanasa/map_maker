@@ -110,6 +110,9 @@ def test_refines_complete_basin_without_cell_wide_rivers(tmp_path: Path):
     assert metadata["reach_cell_count"] == memberships.num_rows > 0
     assert metadata["maximum_parent_area_relative_error"] < 1e-10
     assert metadata["maximum_parent_elevation_error_m"] < 1e-3
+    assert metadata["terrain_parent_boundary_edge_count"] > 0
+    assert metadata["terrain_parent_boundary_continuity_valid"] == 1
+    assert metadata["terrain_parent_boundary_residual_p95_ratio"] <= 2.0
 
     assert len(set(cells["fine_cell_id"].to_pylist())) == cells.num_rows
     assert np.max(np.abs(np.asarray(parents["area_relative_error"]))) < 1e-10
@@ -293,6 +296,8 @@ def test_refinement_config_rejects_invalid_controls():
         BasinRefinementConfig.from_mapping({"terrain_noise_fraction": 1.1})
     with pytest.raises(ValueError, match="halo_parent_rings"):
         BasinRefinementConfig.from_mapping({"halo_parent_rings": 9})
+    with pytest.raises(ValueError, match="maximum_parent_boundary"):
+        BasinRefinementConfig.from_mapping({"maximum_parent_boundary_residual_p95_ratio": 0.0})
 
 
 def test_parent_halo_expands_over_topology_neighbors():

@@ -31,6 +31,11 @@ children retain global face-2048-equivalent IDs, cubed-sphere face/row/column,
 XYZ center, physical area, parent ID, parent row, core/halo role, terrain
 elevation, terrain offset, and hydraulic surface priors.
 
+The residual terrain field is smoothed across selected parent boundaries.
+Relief amplitude is interpolated across those boundaries, and a smooth interior
+correction preserves each parent mean without applying a constant edge step.
+Validation compares p95 boundary residuals with ordinary interior edge jumps.
+
 ## Surface Realization
 
 Within each parent, children are ordered by terrain elevation with stable child
@@ -98,5 +103,6 @@ and `336` context parents, and realizes `492,288` factor-16 children. The
 package contains `178` inherited parent-prior fields and occupies approximately
 `20 MB` with the current compressors. Its validation report passes area,
 terrain-mean, surface-mean, occupancy, child-ID, parent-membership, and refined
-river-graph gates. Re-running the same source and handoff configurations must
-produce an identical manifest and output checksums.
+river-graph gates. Its parent-boundary residual p95 ratio is `1.09` against a
+hard maximum of `1.35`. Re-running the same source and handoff configurations
+must produce an identical manifest and output checksums.

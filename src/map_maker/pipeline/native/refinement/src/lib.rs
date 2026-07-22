@@ -7,6 +7,7 @@ use topology_native::{
 };
 
 const D4_NEIGHBORS: usize = 4;
+const TERRAIN_NOISE_GAIN: f64 = 2.0;
 const ROUTING_ANCHOR_UNAVAILABLE: i32 = 50;
 const ROUTING_BOUNDARY_UNAVAILABLE: i32 = 51;
 const ROUTING_TARGETS_EMPTY: i32 = 52;
@@ -367,29 +368,27 @@ fn generate_children(
         .iter()
         .map(|cell| signed_noise(inputs.config.terrain_seed, cell.fine_cell_id))
         .collect::<Vec<_>>();
+    // The residual field must cross L0 parent boundaries. Restricting this
+    // stencil to one parent creates a visible factor-by-factor tile imprint.
     for _ in 0..3 {
         let previous = noise.clone();
-        for &(start, end, _) in ranges.values() {
-            for local in start..end {
-                let cell = cells[local];
-                let mut sum = previous[local] * 2.0;
-                let mut weight = 2.0;
-                for slot in 0..D4_NEIGHBORS {
-                    let Some(neighbor_id) =
-                        cubed_sphere_neighbor_index(cell.fine_cell_id as usize, slot, fine)
-                    else {
-                        continue;
-                    };
-                    let Some(&neighbor_local) = local_by_id.get(&(neighbor_id as i32)) else {
-                        continue;
-                    };
-                    if cells[neighbor_local].parent_cell_id == cell.parent_cell_id {
-                        sum += previous[neighbor_local];
-                        weight += 1.0;
-                    }
-                }
-                noise[local] = sum / weight;
+        for local in 0..cells.len() {
+            let cell = cells[local];
+            let mut sum = previous[local] * 2.0;
+            let mut weight = 2.0;
+            for slot in 0..D4_NEIGHBORS {
+                let Some(neighbor_id) =
+                    cubed_sphere_neighbor_index(cell.fine_cell_id as usize, slot, fine)
+                else {
+                    continue;
+                };
+                let Some(&neighbor_local) = local_by_id.get(&(neighbor_id as i32)) else {
+                    continue;
+                };
+                sum += previous[neighbor_local];
+                weight += 1.0;
             }
+            noise[local] = sum / weight;
         }
     }
 
@@ -398,41 +397,31 @@ fn generate_children(
             .iter()
             .map(|cell| cell.area_km2)
             .sum::<f64>();
-        let mean = cells[start..end]
-            .iter()
-            .zip(&noise[start..end])
-            .map(|(cell, value)| cell.area_km2 * value)
-            .sum::<f64>()
-            / total_area;
-        for value in &mut noise[start..end] {
-            *value -= mean;
-        }
-        let maximum = noise[start..end]
-            .iter()
-            .map(|value| value.abs())
-            .fold(0.0f64, f64::max)
-            .max(f64::EPSILON);
-        let amplitude = inputs.parent_relief_m[parent_index] as f64
-            * inputs.config.terrain_noise_fraction as f64;
         let parent_id = inputs.parent_ids[parent_index];
         let parent_elevation = inputs.parent_elevation_m[parent_index] as f64;
-        let neighbor_elevation = |slot: usize| -> f64 {
+        let neighbor_value = |values: &[f32], slot: usize, fallback: f64| -> f64 {
             cubed_sphere_neighbor_index(parent_id as usize, slot, coarse)
                 .and_then(|neighbor| parent_input_by_id.get(&(neighbor as i32)).copied())
-                .map_or(parent_elevation, |index| {
-                    inputs.parent_elevation_m[index] as f64
-                })
+                .map_or(fallback, |index| values[index] as f64)
         };
-        let north = neighbor_elevation(0);
-        let south = neighbor_elevation(1);
-        let west = neighbor_elevation(2);
-        let east = neighbor_elevation(3);
+        let north = neighbor_value(inputs.parent_elevation_m, 0, parent_elevation);
+        let south = neighbor_value(inputs.parent_elevation_m, 1, parent_elevation);
+        let west = neighbor_value(inputs.parent_elevation_m, 2, parent_elevation);
+        let east = neighbor_value(inputs.parent_elevation_m, 3, parent_elevation);
+        let parent_relief = inputs.parent_relief_m[parent_index] as f64;
+        let north_relief = neighbor_value(inputs.parent_relief_m, 0, parent_relief);
+        let south_relief = neighbor_value(inputs.parent_relief_m, 1, parent_relief);
+        let west_relief = neighbor_value(inputs.parent_relief_m, 2, parent_relief);
+        let east_relief = neighbor_value(inputs.parent_relief_m, 3, parent_relief);
         let mut offsets = Vec::with_capacity(end - start);
+        let mut correction_weights = Vec::with_capacity(end - start);
         for local in start..end {
             let local_row = cells[local].row as usize % factor;
             let local_col = cells[local].col as usize % factor;
-            let y = (local_row as f64 + 0.5) / factor as f64 - 0.5;
-            let x = (local_col as f64 + 0.5) / factor as f64 - 0.5;
+            let unit_y = (local_row as f64 + 0.5) / factor as f64;
+            let unit_x = (local_col as f64 + 0.5) / factor as f64;
+            let y = unit_y - 0.5;
+            let x = unit_x - 0.5;
             let horizontal = if x >= 0.0 {
                 (east - parent_elevation) * x
             } else {
@@ -443,7 +432,24 @@ fn generate_children(
             } else {
                 (parent_elevation - north) * y
             };
-            offsets.push(horizontal + vertical + noise[local] / maximum * amplitude);
+            let relief_horizontal = if x >= 0.0 {
+                (east_relief - parent_relief) * x
+            } else {
+                (parent_relief - west_relief) * x
+            };
+            let relief_vertical = if y >= 0.0 {
+                (south_relief - parent_relief) * y
+            } else {
+                (parent_relief - north_relief) * y
+            };
+            let local_relief = (parent_relief + relief_horizontal + relief_vertical).max(0.0);
+            let residual = (noise[local] * TERRAIN_NOISE_GAIN).clamp(-1.0, 1.0)
+                * local_relief
+                * inputs.config.terrain_noise_fraction as f64;
+            offsets.push(horizontal + vertical + residual);
+            correction_weights.push(
+                (std::f64::consts::PI * unit_x).sin() * (std::f64::consts::PI * unit_y).sin(),
+            );
         }
         let offset_mean = cells[start..end]
             .iter()
@@ -451,8 +457,19 @@ fn generate_children(
             .map(|(cell, offset)| cell.area_km2 * offset)
             .sum::<f64>()
             / total_area;
-        for (cell, offset) in cells[start..end].iter_mut().zip(offsets) {
-            let corrected_offset = offset - offset_mean;
+        let correction_weight_mean = cells[start..end]
+            .iter()
+            .zip(&correction_weights)
+            .map(|(cell, weight)| cell.area_km2 * weight)
+            .sum::<f64>()
+            / total_area;
+        for ((cell, offset), correction_weight) in cells[start..end]
+            .iter_mut()
+            .zip(offsets)
+            .zip(correction_weights)
+        {
+            let corrected_offset =
+                offset - offset_mean * correction_weight / correction_weight_mean;
             cell.terrain_elevation_m = (parent_elevation + corrected_offset) as f32;
             cell.terrain_offset_m = cell.terrain_elevation_m - parent_elevation as f32;
         }

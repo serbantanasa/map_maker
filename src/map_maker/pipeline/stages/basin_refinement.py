@@ -27,6 +27,7 @@ class BasinRefinementConfig:
     basin_id: int | None = None
     terrain_noise_fraction: float = 0.45
     halo_parent_rings: int = 0
+    maximum_parent_boundary_residual_p95_ratio: float = 2.0
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, object]) -> "BasinRefinementConfig":
@@ -41,6 +42,12 @@ class BasinRefinementConfig:
             mapping.get("terrain_noise_fraction", cls.terrain_noise_fraction)
         )
         halo_parent_rings = int(mapping.get("halo_parent_rings", cls.halo_parent_rings))
+        maximum_boundary_ratio = float(
+            mapping.get(
+                "maximum_parent_boundary_residual_p95_ratio",
+                cls.maximum_parent_boundary_residual_p95_ratio,
+            )
+        )
         if factor < 2 or factor > 32 or factor & (factor - 1):
             raise ValueError("refinement_factor must be a power of two in [2, 32]")
         if basin_id is not None and basin_id < 0:
@@ -49,11 +56,16 @@ class BasinRefinementConfig:
             raise ValueError("terrain_noise_fraction must be finite and in [0, 1]")
         if not 0 <= halo_parent_rings <= 8:
             raise ValueError("halo_parent_rings must be in [0, 8]")
+        if not np.isfinite(maximum_boundary_ratio) or maximum_boundary_ratio <= 0.0:
+            raise ValueError(
+                "maximum_parent_boundary_residual_p95_ratio must be finite and positive"
+            )
         return cls(
             refinement_factor=factor,
             basin_id=basin_id,
             terrain_noise_fraction=terrain_noise_fraction,
             halo_parent_rings=halo_parent_rings,
+            maximum_parent_boundary_residual_p95_ratio=maximum_boundary_ratio,
         )
 
 
@@ -180,6 +192,74 @@ def _cell_table(records: np.ndarray) -> pa.Table:
             "parent_relief_m": pa.array(records["parent_relief_m"], type=pa.float32()),
         }
     )
+
+
+def _terrain_seam_metadata(
+    records: np.ndarray,
+    parent_ids: np.ndarray,
+    parent_elevation_m: np.ndarray,
+    fine_resolution: int,
+    factor: int,
+) -> dict[str, int | float]:
+    """Measure same-face fine edges without constructing a dense fine topology."""
+
+    fine_ids = np.asarray(records["fine_cell_id"], dtype=np.int32)
+    order = np.argsort(fine_ids)
+    sorted_ids = fine_ids[order]
+    rows = np.arange(len(records), dtype=np.int32)
+    source_rows = np.concatenate(
+        (
+            rows[np.asarray(records["col"], dtype=np.int32) + 1 < fine_resolution],
+            rows[np.asarray(records["row"], dtype=np.int32) + 1 < fine_resolution],
+        )
+    )
+    neighbor_ids = np.concatenate(
+        (
+            fine_ids[np.asarray(records["col"], dtype=np.int32) + 1 < fine_resolution] + 1,
+            fine_ids[np.asarray(records["row"], dtype=np.int32) + 1 < fine_resolution]
+            + fine_resolution,
+        )
+    )
+    positions = np.searchsorted(sorted_ids, neighbor_ids)
+    valid = positions < len(sorted_ids)
+    valid[valid] &= sorted_ids[positions[valid]] == neighbor_ids[valid]
+    source_rows = source_rows[valid]
+    target_rows = order[positions[valid]]
+    if source_rows.size == 0:
+        raise RuntimeError("refined terrain contains no measurable adjacent child edges")
+
+    terrain = np.asarray(records["terrain_elevation_m"], dtype=np.float64)
+    child_parent = np.asarray(records["parent_cell_id"], dtype=np.int32)
+    boundary = child_parent[source_rows] != child_parent[target_rows]
+    interior_jump = np.abs(terrain[target_rows[~boundary]] - terrain[source_rows[~boundary]])
+    boundary_delta = terrain[target_rows[boundary]] - terrain[source_rows[boundary]]
+    source_parent_rows = np.searchsorted(parent_ids, child_parent[source_rows[boundary]])
+    target_parent_rows = np.searchsorted(parent_ids, child_parent[target_rows[boundary]])
+    expected_delta = (
+        np.asarray(parent_elevation_m, dtype=np.float64)[target_parent_rows]
+        - np.asarray(parent_elevation_m, dtype=np.float64)[source_parent_rows]
+    ) / factor
+    boundary_jump = np.abs(boundary_delta)
+    boundary_residual = np.abs(boundary_delta - expected_delta)
+
+    def percentile(values: np.ndarray, quantile: float) -> float:
+        return float(np.percentile(values, quantile)) if values.size else 0.0
+
+    interior_p95 = percentile(interior_jump, 95.0)
+    boundary_p95 = percentile(boundary_jump, 95.0)
+    residual_p95 = percentile(boundary_residual, 95.0)
+    return {
+        "terrain_measured_edge_count": int(len(source_rows)),
+        "terrain_interior_edge_count": int(np.count_nonzero(~boundary)),
+        "terrain_parent_boundary_edge_count": int(np.count_nonzero(boundary)),
+        "terrain_interior_jump_p50_m": percentile(interior_jump, 50.0),
+        "terrain_interior_jump_p95_m": interior_p95,
+        "terrain_parent_boundary_jump_p50_m": percentile(boundary_jump, 50.0),
+        "terrain_parent_boundary_jump_p95_m": boundary_p95,
+        "terrain_parent_boundary_residual_p95_m": residual_p95,
+        "terrain_parent_boundary_jump_p95_ratio": boundary_p95 / max(interior_p95, 1e-9),
+        "terrain_parent_boundary_residual_p95_ratio": residual_p95 / max(interior_p95, 1e-9),
+    }
 
 
 def _parent_channel_surface_prior(
@@ -803,7 +883,7 @@ def _cube_net_visualizer(result, request: VisualizationRequest) -> Visualization
         "RefinedReachCellCatalog",
         "BasinRefinementMetadata",
     ),
-    version="v12",
+    version="v14",
     native_libraries=("refinement_native",),
     visualizer=_cube_net_visualizer,
 )
@@ -924,6 +1004,14 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             incision_m=_column_numpy(selected_reaches, "incision_m", np.dtype(np.float32)),
         )
 
+    seam_metadata = _terrain_seam_metadata(
+        cell_records,
+        parent_ids,
+        parent_elevation,
+        fine_resolution,
+        config.refinement_factor,
+    )
+
     radius_km = radius_m / 1_000.0
     parent_areas_km2 = parent_area_steradians * radius_km * radius_km
     cells = _cell_table(cell_records)
@@ -1003,6 +1091,7 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
     metadata.update(
         {
             **asdict(config),
+            **seam_metadata,
             **terminal_metadata,
             **path_graph_metadata,
             **corridor_area_metadata,
@@ -1034,7 +1123,9 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "maximum_reach_length_conservation_error_m": maximum_length_error,
             "inherited_discharge_relative_error": 0.0,
             "topology": "sparse_selected_basin_on_cubed_sphere",
-            "terrain_semantics": "parent_mean_conserving_unresolved_relief_realization",
+            "terrain_semantics": (
+                "region_continuous_parent_mean_conserving_unresolved_relief_realization"
+            ),
             "channel_surface_prior_semantics": (
                 "priority_flood_control_surface_over_unresolved_fill_with_registered_"
                 "water_surface_override_and_submerged_backwater_approach_else_refined_terrain"
@@ -1046,12 +1137,23 @@ def basin_refinement_stage(context, deps, config_mapping: Mapping[str, object]):
             "incision_semantics": "potential_reach_volume_not_cell_wide_elevation_change",
         }
     )
+    metadata["terrain_parent_boundary_continuity_valid"] = int(
+        seam_metadata["terrain_parent_boundary_residual_p95_ratio"]
+        <= config.maximum_parent_boundary_residual_p95_ratio
+    )
     if metadata["path_topology_valid"] != 1:
         raise RuntimeError("native refinement published an invalid fine reach path")
     if metadata["maximum_parent_area_relative_error"] > 1e-9:
         raise RuntimeError("refined child areas do not conserve their parent areas")
     if metadata["maximum_parent_elevation_error_m"] > 1e-3:
         raise RuntimeError("refined terrain does not conserve parent mean elevation")
+    if metadata["terrain_parent_boundary_continuity_valid"] != 1:
+        raise RuntimeError(
+            "refined terrain retains a parent-boundary seam signal: "
+            f"p95 residual ratio="
+            f"{metadata['terrain_parent_boundary_residual_p95_ratio']:.3f}, "
+            f"maximum={config.maximum_parent_boundary_residual_p95_ratio:.3f}"
+        )
     if maximum_length_error > 1e-4:
         raise RuntimeError("refined path length does not match its spherical geometry")
     if not junctions_valid:

@@ -190,6 +190,19 @@ hard validation report state which fields are true L2 realizations versus L0
 priors. The package deliberately does not invent tributaries, downscale climate
 or soils, or apply river incision.
 
+Select and validate the canonical L3 vertical-slice target with:
+
+```bash
+uv run map-maker l3-target
+```
+
+This writes a checksummed target index and preview under
+`out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment/`.
+The selected complete catchment is approximately `102,000 km2`, has one coarse
+outlet, two context rings, and an estimated `2.54 million` cells at the planned
+`200 m` base resolution. The L3 process contract is
+`docs/specs/13_l3_vertical_slice.md`.
+
 Run the previous procedural generator for comparison:
 
 ```bash

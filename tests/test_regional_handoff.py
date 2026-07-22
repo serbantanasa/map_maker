@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pyarrow.parquet as pq
 import pytest
 import zarr
 
 from map_maker.cli import main
+from map_maker.pipeline.l3_target import L3TargetConfig, export_l3_target
 from map_maker.pipeline.regional_handoff import (
     RegionalHandoffConfig,
     RegionalHandoffResult,
@@ -192,6 +194,11 @@ region:
     assert manifest["software"]["native_libraries"]
     assert validation["passed"]
     assert validation["maximum_surface_fraction_error"] <= 1e-6
+    assert validation["terrain_parent_boundary_continuity_valid"] == 1
+    assert (
+        validation["terrain_parent_boundary_residual_p95_ratio"]
+        <= validation["maximum_parent_boundary_residual_p95_ratio"]
+    )
     assert validation["all_refined_path_cells_packaged"] == 1
     assert validation["context_parent_count"] == (
         validation["reach_path_support_parent_count"] + validation["halo_parent_count"]
@@ -207,3 +214,25 @@ region:
     repeated = export_regional_handoff(config)
     repeated_manifest = json.loads(repeated.manifest_path.read_text(encoding="utf8"))
     assert repeated_manifest == manifest
+
+    basin_table = pq.read_table(result.output_dir / "tables/basins.parquet")
+    basin_rows = np.asarray(basin_table["basin_id"], dtype=np.int32) == result.basin_id
+    outlet = int(np.asarray(basin_table["outlet_cell"], dtype=np.int32)[basin_rows][0])
+    target_config = L3TargetConfig(
+        handoff_dir=result.output_dir,
+        output_dir=tmp_path / "l3-target",
+        target_id="small-world-catchment",
+        outlet_parent_cell_id=outlet,
+        context_parent_rings=0,
+        minimum_area_km2=1.0,
+        maximum_area_km2=1_000_000_000.0,
+        base_cell_size_m=250.0,
+        maximum_base_cell_count=1_000_000_000,
+    )
+    target = export_l3_target(target_config)
+    assert target.validation_path.is_file()
+    assert (target.output_dir / "coarse_drainage.png").is_file()
+    assert target.core_parent_count == result.core_parent_count
+    target_manifest = target.manifest_path.read_text(encoding="utf8")
+    repeated_target = export_l3_target(target_config)
+    assert repeated_target.manifest_path.read_text(encoding="utf8") == target_manifest

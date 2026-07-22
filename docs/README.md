@@ -17,6 +17,7 @@ this index owns document authority and lifecycle.
 | [Elevation And Orogeny](specs/07_elevation.md) | Active bedrock elevation and tectonic-morphology contract. |
 | [Physical Atlas Export](specs/11_physical_atlas_export.md) | Current atlas composition, provenance, export, and visual-acceptance contract. |
 | [L2 Regional Handoff](specs/12_l2_regional_handoff.md) | Selected-basin L2 package, conservative child surfaces, inherited priors, and L3 boundary contract. |
+| [L3 Regional Vertical Slice](specs/13_l3_vertical_slice.md) | Selected catchment, 200 m terrain and hydrology ownership, adaptive river corridors, budgets, and acceptance gates. |
 | [Code Standards](standards.md) | Repository process and contribution rules. |
 
 The product spec owns intent, the decision log owns approved choices, and the

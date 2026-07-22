@@ -155,6 +155,21 @@ def _regional_handoff_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _l3_target_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-target",
+        help="Select and validate the configured L3 vertical-slice catchment.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 target YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override target output directory.")
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -282,6 +297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _atlas_parser(subparsers)
     _basin_atlas_parser(subparsers)
     _regional_handoff_parser(subparsers)
+    _l3_target_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -480,6 +496,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Packaged basin {handoff.basin_id}: {handoff.core_parent_count} core L0 cells, "
             f"{handoff.parent_count - handoff.core_parent_count} context L0 cells, and "
             f"{handoff.child_count} sparse L2 cells."
+        )
+        return 0
+
+    if args.command == "l3-target":
+        try:
+            from .pipeline.l3_target import L3TargetConfig, export_l3_target
+
+            target_config = L3TargetConfig.from_file(args.config, output_dir=args.output_dir)
+            target = export_l3_target(target_config)
+        except (
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 target: {target.output_dir}")
+        print(f"Manifest: {target.manifest_path}")
+        print(f"Validation: {target.validation_path}")
+        print(f"Preview: {target.preview_path}")
+        print(
+            f"Selected {target.target_id} at outlet {target.outlet_parent_cell_id}: "
+            f"{target.core_area_km2:.0f} km2, {target.core_parent_count} core parents, "
+            f"{target.context_parent_count} context parents, and approximately "
+            f"{target.estimated_base_cell_count} base-grid cells."
         )
         return 0
 
