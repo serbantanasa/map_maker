@@ -11,14 +11,16 @@ from map_maker.pipeline.l3_hydrology import (
     L3HydrologyConfig,
     L3HydrologyResult,
     _adjacent_d8,
+    _crop_receiver_grid,
     _d8_neighbors,
     _discharge_continuity_metrics,
     _downscale_monthly,
     _forcing_error,
     _flow_arrow_cells,
     _hillshaded_terrain,
+    _outer_boundary_mask,
     _reach_support_masks,
-    _registered_basin,
+    _refined_target_basin,
     _realize_parent_fraction,
     _topographic_weights,
 )
@@ -38,7 +40,9 @@ def test_cli_reports_process_coverage_honestly(tmp_path: Path, monkeypatch, caps
         preview_path=tmp_path / "hydro/hydrology.png",
         target_id="test-catchment",
         cell_count=1_000,
-        process_cell_count=600,
+        process_cell_count=1_000,
+        display_cell_count=600,
+        hidden_routing_halo_cell_count=400,
         river_reach_count=42,
         lake_count=7,
         validation_passed=True,
@@ -50,7 +54,9 @@ def test_cli_reports_process_coverage_honestly(tmp_path: Path, monkeypatch, caps
 
     assert main(["l3-hydrology", "--config", str(config_path)]) == 0
     output = capsys.readouterr().out
-    assert "Solved hydrology on 600 of 1000 stored terrain cells" in output
+    assert "all 600 displayed cells" in output
+    assert "1000 routed stored cells" in output
+    assert "400 hidden-halo cells" in output
 
 
 def _controls() -> dict[str, int | float]:
@@ -81,6 +87,8 @@ def test_config_accepts_hydrology_controls(tmp_path: Path) -> None:
                 "output_dir: target",
                 "terrain_output_dir: terrain",
                 "hydrology_output_dir: hydro",
+                "grid:",
+                "  display_boundary_halo_l2_cells: 4",
                 "hydrology:",
                 "  river_contributing_area_threshold_km2: 12",
                 "  maximum_routed_to_inherited_area_ratio: 1.2",
@@ -93,22 +101,24 @@ def test_config_accepts_hydrology_controls(tmp_path: Path) -> None:
     )
     config = L3HydrologyConfig.from_file(config_path)
     assert config.river_contributing_area_threshold_km2 == 12.0
+    assert config.display_boundary_halo_l2_cells == 4
     assert config.output_dir == (tmp_path / "hydro").resolve()
 
 
-def test_registered_basin_selects_highest_discharge_outlet_entry() -> None:
+def test_refined_target_basin_selects_most_inherited_overlap() -> None:
     receiver = np.asarray([-1, 4, 4, -1, -1, -1], dtype=np.int32)
     discharge = np.asarray([0.0, 8.0, 12.0, 0.0, 0.0, 0.0], dtype=np.float32)
     basin = np.asarray([3, 7, 8, 7, -1, 8], dtype=np.int32)
     terminal = np.asarray([0, 0, 0, 0, 3, 0], dtype=np.uint8)
-    entry, basin_id, core = _registered_basin(
+    entry, basin_id, core = _refined_target_basin(
         {
             "FlowReceiverID": receiver,
             "MeanDischargeM3s": discharge,
             "BasinID": basin,
         },
-        4,
         terminal,
+        np.asarray([False, False, True, False, False, True]),
+        np.ones(6, dtype=np.float64),
     )
     assert entry == 2
     assert basin_id == 8
@@ -175,6 +185,19 @@ def test_d8_neighbors_include_diagonals_without_edge_wrap() -> None:
     corner = 0
     assert set(map(int, neighbors[corner])) == {0, 1, 4, 5}
     assert 3 not in neighbors[corner]
+
+
+def test_outer_boundary_and_cropped_receivers_keep_hidden_halo_off_map() -> None:
+    rows, columns = np.indices((6, 7), dtype=np.int32)
+    boundary = _outer_boundary_mask(rows.reshape(-1), columns.reshape(-1)).reshape(6, 7)
+    assert np.count_nonzero(boundary) == 22
+    receiver = np.arange(42, dtype=np.int32).reshape(6, 7)
+    receiver[:, :-1] += 1
+    receiver[:, -1] = -1
+    cropped = _crop_receiver_grid(receiver.reshape(-1), 6, 7, slice(1, 5), slice(1, 6))
+    cropped = cropped.reshape(4, 5)
+    assert np.all(cropped[:, :-1] == np.arange(20, dtype=np.int32).reshape(4, 5)[:, :-1] + 1)
+    assert np.all(cropped[:, -1] == -1)
 
 
 def test_fraction_realization_conserves_parent_area() -> None:

@@ -26,6 +26,7 @@ from ._hydrology_native import run_regional_hydrology
 from .l3_terrain import (
     TERRAIN_DIAGNOSTIC_VERTICAL_EXAGGERATION,
     _diagnostic_font,
+    _display_window_masks,
     _file_checksum,
     _fsync_paths,
     _inner_boundary,
@@ -39,7 +40,7 @@ from .l3_terrain import (
 from .regional_handoff import _replace_directory
 
 HYDROLOGY_FORMAT_VERSION = 1
-HYDROLOGY_MODEL_VERSION = "l3_depression_hydrology_v4"
+HYDROLOGY_MODEL_VERSION = "l3_depression_hydrology_v5"
 MONTHS = 12
 SECONDS_PER_YEAR = 365.2425 * 86_400.0
 SECONDS_PER_MONTH = SECONDS_PER_YEAR / MONTHS
@@ -47,7 +48,6 @@ SECONDS_PER_MONTH = SECONDS_PER_YEAR / MONTHS
 TERMINAL_NONE = 0
 TERMINAL_PHYSICAL_OCEAN = 1
 TERMINAL_PROCESS_BOUNDARY = 2
-TERMINAL_REGISTERED_OUTLET = 3
 
 
 @dataclass(frozen=True)
@@ -55,6 +55,7 @@ class L3HydrologyConfig:
     target_dir: Path
     terrain_dir: Path
     output_dir: Path
+    display_boundary_halo_l2_cells: int = 0
     chunk_rows: int = 262_144
     orographic_runoff_weight: float = 0.28
     orographic_precipitation_weight: float = 0.20
@@ -78,6 +79,7 @@ class L3HydrologyConfig:
     maximum_runoff_conservation_relative_error: float = 1e-6
     minimum_inherited_core_retained_fraction: float = 0.80
     minimum_routed_core_inherited_fraction: float = 0.80
+    minimum_dominant_to_second_basin_overlap_ratio: float = 3.0
     minimum_routed_to_inherited_area_ratio: float = 0.80
     maximum_routed_to_inherited_area_ratio: float = 1.20
     maximum_routed_core_process_boundary_contact_fraction: float = 0.001
@@ -106,9 +108,14 @@ class L3HydrologyConfig:
                 "L3 hydrology requires output_dir, terrain_output_dir, and hydrology_output_dir"
             )
         controls = data.get("hydrology", {})
+        grid = data.get("grid", {})
         limits = data.get("limits", {})
-        if not isinstance(controls, Mapping) or not isinstance(limits, Mapping):
-            raise TypeError("L3 hydrology and limits controls must be mappings")
+        if (
+            not isinstance(controls, Mapping)
+            or not isinstance(grid, Mapping)
+            or not isinstance(limits, Mapping)
+        ):
+            raise TypeError("L3 grid, hydrology, and limits controls must be mappings")
         known = {
             "chunk_rows",
             "orographic_runoff_weight",
@@ -133,6 +140,7 @@ class L3HydrologyConfig:
             "maximum_runoff_conservation_relative_error",
             "minimum_inherited_core_retained_fraction",
             "minimum_routed_core_inherited_fraction",
+            "minimum_dominant_to_second_basin_overlap_ratio",
             "minimum_routed_to_inherited_area_ratio",
             "maximum_routed_to_inherited_area_ratio",
             "maximum_routed_core_process_boundary_contact_fraction",
@@ -158,6 +166,7 @@ class L3HydrologyConfig:
                 if output_dir is not None
                 else (source.parent / str(raw_output)).resolve()
             ),
+            display_boundary_halo_l2_cells=int(grid.get("display_boundary_halo_l2_cells", 0)),
             maximum_peak_memory_gb=float(limits.get("maximum_peak_memory_gb", 24.0)),
             maximum_storage_gb=float(limits.get("maximum_hydrology_storage_gb", 4.0)),
             source_config=source,
@@ -167,6 +176,8 @@ class L3HydrologyConfig:
         return config
 
     def validate(self) -> None:
+        if not 0 <= self.display_boundary_halo_l2_cells <= 16:
+            raise ValueError("grid.display_boundary_halo_l2_cells must be in [0, 16]")
         if not 16_384 <= self.chunk_rows <= 1_048_576:
             raise ValueError("hydrology.chunk_rows must be in [16384, 1048576]")
         positive = (
@@ -182,6 +193,7 @@ class L3HydrologyConfig:
             "maximum_forcing_conservation_relative_error",
             "maximum_runoff_conservation_relative_error",
             "maximum_outlet_hydrograph_relative_error",
+            "minimum_dominant_to_second_basin_overlap_ratio",
             "maximum_peak_memory_gb",
             "maximum_storage_gb",
         )
@@ -240,6 +252,8 @@ class L3HydrologyResult:
     target_id: str
     cell_count: int
     process_cell_count: int
+    display_cell_count: int
+    hidden_routing_halo_cell_count: int
     river_reach_count: int
     lake_count: int
     validation_passed: bool
@@ -275,6 +289,8 @@ class _HydrologySources:
     inside_core: np.ndarray
     inside_process_halo: np.ndarray
     outside_process: np.ndarray
+    inside_display_window: np.ndarray
+    inside_hidden_routing_halo: np.ndarray
     l2_ocean_fraction: np.ndarray
     l2_lake_fraction: np.ndarray
     l2_wetland_fraction: np.ndarray
@@ -371,6 +387,15 @@ def _load_sources(config: L3HydrologyConfig) -> _HydrologySources:
     inside_core = np.asarray(terrain["geometry/inside_catchment_core"][:], dtype=bool)
     inside_halo = np.asarray(terrain["geometry/inside_process_halo"][:], dtype=bool)
     outside = np.asarray(terrain["geometry/outside_process_domain"][:], dtype=bool)
+    try:
+        inside_display = np.asarray(terrain["geometry/inside_display_window"][:], dtype=bool)
+        inside_hidden_routing_halo = np.asarray(
+            terrain["geometry/inside_hidden_routing_halo"][:], dtype=bool
+        )
+    except KeyError as exc:
+        raise RuntimeError(
+            "L3 terrain predates the full-display routing contract; regenerate l3-terrain"
+        ) from exc
     cell_count = len(cell_id)
     if any(
         len(values) != cell_count
@@ -385,11 +410,27 @@ def _load_sources(config: L3HydrologyConfig) -> _HydrologySources:
             inside_core,
             inside_halo,
             outside,
+            inside_display,
+            inside_hidden_routing_halo,
         )
     ):
         raise RuntimeError("L3 terrain arrays have inconsistent lengths")
     if np.any(inside_core.astype(np.int8) + inside_halo + outside != 1):
         raise RuntimeError("L3 hydrology requires exhaustive terrain domain roles")
+    refinement_factor = int(terrain.attrs["refinement_factor"])
+    expected_display, expected_hidden_halo, _ = _display_window_masks(
+        row,
+        column,
+        config.display_boundary_halo_l2_cells * refinement_factor,
+    )
+    if not np.array_equal(inside_display, expected_display) or not np.array_equal(
+        inside_hidden_routing_halo, expected_hidden_halo
+    ):
+        raise RuntimeError("L3 terrain and hydrology display-window contracts do not match")
+    if np.any(inside_display & inside_hidden_routing_halo) or not np.all(
+        inside_display | inside_hidden_routing_halo
+    ):
+        raise RuntimeError("L3 display and hidden routing halo masks must partition storage")
 
     target_ids = _column_numpy(target_l2, "fine_cell_id", np.dtype(np.int32))
     target_order = np.argsort(target_ids, kind="stable")
@@ -475,6 +516,8 @@ def _load_sources(config: L3HydrologyConfig) -> _HydrologySources:
         inside_core=np.ascontiguousarray(inside_core),
         inside_process_halo=np.ascontiguousarray(inside_halo),
         outside_process=np.ascontiguousarray(outside),
+        inside_display_window=np.ascontiguousarray(inside_display),
+        inside_hidden_routing_halo=np.ascontiguousarray(inside_hidden_routing_halo),
         l2_ocean_fraction=np.ascontiguousarray(l2_ocean),
         l2_lake_fraction=np.ascontiguousarray(l2_lake),
         l2_wetland_fraction=np.ascontiguousarray(l2_wetland),
@@ -551,6 +594,19 @@ def _spatial_layout(sources: _HydrologySources) -> tuple[np.ndarray, np.ndarray,
     ):
         raise RuntimeError("L3 terrain coordinates do not form a dense row-major window")
     return np.ascontiguousarray(order), inverse, height, width
+
+
+def _outer_boundary_mask(rows: np.ndarray, columns: np.ndarray) -> np.ndarray:
+    rows = np.asarray(rows)
+    columns = np.asarray(columns)
+    if rows.ndim != 1 or columns.ndim != 1 or len(rows) != len(columns) or not len(rows):
+        raise ValueError("outer boundary coordinates must be non-empty equal-length vectors")
+    return np.ascontiguousarray(
+        (rows == np.min(rows))
+        | (rows == np.max(rows))
+        | (columns == np.min(columns))
+        | (columns == np.max(columns))
+    )
 
 
 def _d8_neighbors(height: int, width: int) -> np.ndarray:
@@ -786,9 +842,14 @@ def _initialize_partial(
             "target_id": sources.target_id,
             "run_fingerprint": run_fingerprint,
             "cell_count": cell_count,
+            "display_cell_count": int(np.count_nonzero(sources.inside_display_window)),
+            "hidden_routing_halo_cell_count": int(
+                np.count_nonzero(sources.inside_hidden_routing_halo)
+            ),
             "parent_major_storage": True,
             "source_terrain_dir": str(config.terrain_dir),
             "hydrological_acceptance_scope": "fine routed catchment core only",
+            "routing_scope": "complete stored rectangle; outer halo hidden from map previews",
         }
     )
     geometry = root.require_group("geometry")
@@ -808,14 +869,24 @@ def _initialize_partial(
             "L0-derived target envelope retained for provenance and forcing conservation",
         ),
         (
-            "inside_process_halo",
+            "inside_inherited_process_halo",
             sources.inside_process_halo,
-            "boundary context available to regional routing",
+            "inherited target context retained for provenance; not the V5 routing limit",
         ),
         (
-            "outside_process_domain",
+            "outside_inherited_process_domain",
             sources.outside_process,
-            "continuous terrain excluded from regional routing",
+            "outside the inherited target process domain but included in V5 routing",
+        ),
+        (
+            "inside_display_window",
+            sources.inside_display_window,
+            "visible cells with complete relief and hydrology products",
+        ),
+        (
+            "inside_hidden_routing_halo",
+            sources.inside_hidden_routing_halo,
+            "routed boundary context cropped from visible maps",
         ),
     ):
         dataset = _zarr_dataset(
@@ -833,7 +904,10 @@ def _initialize_partial(
         shape=(cell_count,),
         dtype=bool,
         chunks=chunks,
-        semantics="fine D8 upstream closure of the registered outlet; hydrological acceptance core",
+        semantics=(
+            "natural fine D8 basin with maximum area overlap against the inherited target; "
+            "hydrological acceptance core"
+        ),
     )
     surface = root.require_group("surface")
     for name, semantics in (
@@ -992,14 +1066,16 @@ def _write_forcing(
     )
     terminal_kind = np.full(len(sources.cell_id), TERMINAL_NONE, dtype=np.uint8)
     terminal_kind[physical_ocean >= 0.5] = TERMINAL_PHYSICAL_OCEAN
-    terminal_kind[sources.outside_process] = TERMINAL_PROCESS_BOUNDARY
-    terminal_kind[int(outlet["downstream_cell_row"])] = TERMINAL_REGISTERED_OUTLET
+    outer_boundary = _outer_boundary_mask(sources.row, sources.column)
+    terminal_kind[outer_boundary & (terminal_kind == TERMINAL_NONE)] = TERMINAL_PROCESS_BOUNDARY
     if (
         not sources.inside_core[int(outlet["upstream_cell_row"])]
         or sources.inside_core[int(outlet["downstream_cell_row"])]
     ):
         raise RuntimeError("registered L3 outlet does not cross from core into context")
-    active = sources.inside_core | sources.inside_process_halo
+    active = sources.inside_display_window | sources.inside_hidden_routing_halo
+    if not np.all(active):
+        raise RuntimeError("full-window L3 hydrology requires every stored cell to be active")
     eligible = active & (terminal_kind == TERMINAL_NONE)
     source_rows_by_cell = np.repeat(sources.source_parent_rows_by_l2, children_per_parent)
     if len(source_rows_by_cell) != len(sources.cell_id):
@@ -1076,8 +1152,10 @@ def _write_forcing(
     for path in (
         "geometry/l0_parent_cell_id",
         "geometry/inside_inherited_target_core",
-        "geometry/inside_process_halo",
-        "geometry/outside_process_domain",
+        "geometry/inside_inherited_process_halo",
+        "geometry/outside_inherited_process_domain",
+        "geometry/inside_display_window",
+        "geometry/inside_hidden_routing_halo",
         "forcing/monthly_evaporation_mm",
         "forcing/annual_aridity_index",
         "forcing/rock_strength",
@@ -1096,7 +1174,7 @@ def _write_forcing(
         "physical_ocean_area_km2": float(np.sum(physical_ocean * sources.area_km2)),
         "eligible_process_cell_count": int(np.count_nonzero(eligible)),
         "terminal_counts": {
-            str(kind): int(np.count_nonzero(terminal_kind == kind)) for kind in range(4)
+            str(kind): int(np.count_nonzero(terminal_kind == kind)) for kind in range(3)
         },
     }
 
@@ -1108,7 +1186,8 @@ def _forcing_metrics(
     children_per_parent = int(sources.terrain_manifest["hierarchy"]["children_per_parent"])
     source_rows_by_cell = np.repeat(sources.source_parent_rows_by_l2, children_per_parent)
     terminal = np.asarray(root["routing/terminal_kind"][:], dtype=np.uint8)
-    eligible = (sources.inside_core | sources.inside_process_halo) & (terminal == TERMINAL_NONE)
+    active = sources.inside_display_window | sources.inside_hidden_routing_halo
+    eligible = active & (terminal == TERMINAL_NONE)
     errors = {}
     for name, source in (
         ("monthly_precipitation_mm", sources.monthly_precipitation_mm),
@@ -1132,7 +1211,7 @@ def _forcing_metrics(
         "physical_ocean_area_km2": float(np.sum(ocean * sources.area_km2)),
         "eligible_process_cell_count": int(np.count_nonzero(eligible)),
         "terminal_counts": {
-            str(kind): int(np.count_nonzero(terminal == kind)) for kind in range(4)
+            str(kind): int(np.count_nonzero(terminal == kind)) for kind in range(3)
         },
     }
 
@@ -1329,24 +1408,32 @@ def _inherited_alignment(
     )
 
 
-def _registered_basin(
+def _refined_target_basin(
     outputs: Mapping[str, np.ndarray],
-    downstream_spatial: int,
     terminal_spatial: np.ndarray,
+    inherited_core_spatial: np.ndarray,
+    area_spatial: np.ndarray,
 ) -> tuple[int, int, np.ndarray]:
-    """Locate the generated basin that enters the registered outlet terminal."""
+    """Select the natural fine basin with the most inherited-target overlap."""
 
     receiver = np.asarray(outputs["FlowReceiverID"], dtype=np.int32)
     discharge = np.asarray(outputs["MeanDischargeM3s"], dtype=np.float32)
     basin = np.asarray(outputs["BasinID"], dtype=np.int32)
-    entries = np.flatnonzero(receiver == downstream_spatial)
-    if not len(entries):
+    inherited_core = np.asarray(inherited_core_spatial, dtype=bool)
+    area = np.asarray(area_spatial, dtype=np.float64)
+    candidates = inherited_core & (basin >= 0)
+    if not np.any(candidates):
         return -1, -1, np.zeros(len(receiver), dtype=bool)
-    entry = int(entries[np.argmax(discharge[entries])])
-    basin_id = int(basin[entry])
-    if basin_id < 0:
-        return entry, basin_id, np.zeros(len(receiver), dtype=bool)
+    overlap_area = np.bincount(basin[candidates], weights=area[candidates])
+    basin_id = int(np.argmax(overlap_area))
     mask = (terminal_spatial == TERMINAL_NONE) & (basin == basin_id)
+    valid_receiver = receiver >= 0
+    enters_terminal = np.zeros(len(receiver), dtype=bool)
+    enters_terminal[valid_receiver] = terminal_spatial[receiver[valid_receiver]] > 0
+    entries = np.flatnonzero(mask & enters_terminal)
+    if not len(entries):
+        return -1, basin_id, mask
+    entry = int(entries[np.argmax(discharge[entries])])
     return entry, basin_id, mask
 
 
@@ -1355,7 +1442,6 @@ def _run_routing(
     partial: Path,
     config: L3HydrologyConfig,
     sources: _HydrologySources,
-    outlet: Mapping[str, int | float],
     spatial_order: np.ndarray,
     height: int,
     width: int,
@@ -1370,9 +1456,6 @@ def _run_routing(
     xyz_spatial = np.ascontiguousarray(sources.xyz[spatial_order])
     inherited_core_spatial = np.ascontiguousarray(sources.inside_core[spatial_order])
     l2_spatial = np.ascontiguousarray(sources.parent_l2_cell_id[spatial_order])
-    inverse_spatial = np.empty(len(spatial_order), dtype=np.int32)
-    inverse_spatial[spatial_order] = np.arange(len(spatial_order), dtype=np.int32)
-    downstream_spatial = int(inverse_spatial[int(outlet["downstream_cell_row"])])
     forcing_paths = {
         "runoff": "forcing/monthly_runoff_mm",
         "evaporation": "forcing/monthly_evaporation_mm",
@@ -1427,8 +1510,11 @@ def _run_routing(
                 )
             )
         cumulative_breach_sediment_km3 += float(native_metadata["breach_sediment_pulse_km3"])
-        _, round_basin_id, round_core = _registered_basin(
-            outputs, downstream_spatial, terminal_spatial
+        _, round_basin_id, round_core = _refined_target_basin(
+            outputs,
+            terminal_spatial,
+            inherited_core_spatial,
+            area_spatial,
         )
         lake_area_km2 = float(
             np.sum(outputs["LakeFraction"][round_core] * area_spatial[round_core])
@@ -1441,7 +1527,7 @@ def _run_routing(
                 "breach_count": int(native_metadata["breach_count"]),
                 "lake_count": int(native_metadata["lake_count"]),
                 "core_lake_area_km2": lake_area_km2,
-                "registered_outlet_basin_id": round_basin_id,
+                "refined_target_basin_id": round_basin_id,
                 "routed_core_area_km2": float(np.sum(area_spatial[round_core])),
                 "maximum_cumulative_prospective_incision_m": float(
                     np.max(cumulative_incision, initial=0.0)
@@ -1457,8 +1543,11 @@ def _run_routing(
     outputs["BreachIncisionM"] = np.maximum(elevation_spatial - routing_elevation, 0.0).astype(
         np.float32
     )
-    outlet_entry, registered_basin_id, routed_core_spatial = _registered_basin(
-        outputs, downstream_spatial, terminal_spatial
+    outlet_entry, refined_target_basin_id, routed_core_spatial = _refined_target_basin(
+        outputs,
+        terminal_spatial,
+        inherited_core_spatial,
+        area_spatial,
     )
     if breach_tables:
         breaches = pa.concat_tables(breach_tables, promote_options="default")
@@ -1543,7 +1632,7 @@ def _run_routing(
         np.count_nonzero(terminal_spatial == TERMINAL_NONE)
     )
     native_metadata["registered_outlet_entry_spatial_index"] = outlet_entry
-    native_metadata["registered_outlet_basin_id"] = registered_basin_id
+    native_metadata["refined_target_basin_id"] = refined_target_basin_id
     native_metadata["routed_core_cell_count"] = int(np.count_nonzero(routed_core_spatial))
     native_metadata["inherited_core_overlap_cell_count"] = int(
         np.count_nonzero(routed_core_spatial & inherited_core_spatial)
@@ -1745,25 +1834,54 @@ def _validate_hydrology(
     connector_support = np.asarray(root["routing/waterbody_flow_connector"][:], dtype=bool)[
         spatial_order
     ]
-    downstream_spatial = int(inverse[int(outlet["downstream_cell_row"])])
-    outlet_entries = np.flatnonzero(receiver == downstream_spatial)
+    core_basin_ids = np.unique(basin[core & (basin >= 0)])
+    refined_target_basin = int(core_basin_ids[0]) if len(core_basin_ids) == 1 else -1
+    valid_receiver = receiver >= 0
+    enters_terminal = np.zeros(len(receiver), dtype=bool)
+    enters_terminal[valid_receiver] = terminal[receiver[valid_receiver]] > 0
+    outlet_entries = np.flatnonzero(core & enters_terminal)
     outlet_entry = (
         int(outlet_entries[np.argmax(mean_discharge[outlet_entries])])
         if len(outlet_entries)
         else -1
     )
-    registered_basin = int(basin[outlet_entry]) if outlet_entry >= 0 else -1
     expected_core = (
-        (terminal == TERMINAL_NONE) & (basin == registered_basin)
-        if registered_basin >= 0
+        (terminal == TERMINAL_NONE) & (basin == refined_target_basin)
+        if refined_target_basin >= 0
         else np.zeros(len(core), dtype=bool)
     )
     core_replay_valid = bool(np.array_equal(core, expected_core))
+    display = sources.inside_display_window[spatial_order]
+    leaves_display = np.zeros(len(receiver), dtype=bool)
+    leaves_display[valid_receiver] = ~display[receiver[valid_receiver]]
+    display_outlet_entries = np.flatnonzero(core & display & leaves_display)
+    display_outlet_entry = (
+        int(display_outlet_entries[np.argmax(mean_discharge[display_outlet_entries])])
+        if len(display_outlet_entries)
+        else -1
+    )
+    downstream_spatial = int(inverse[int(outlet["downstream_cell_row"])])
+    inherited_anchor_entries = np.flatnonzero(receiver == downstream_spatial)
+    inherited_anchor_entry = (
+        int(inherited_anchor_entries[np.argmax(mean_discharge[inherited_anchor_entries])])
+        if len(inherited_anchor_entries)
+        else -1
+    )
     local_runoff_volume = np.sum(local_runoff, axis=0) * area
     core_area = float(np.sum(area[core]))
     inherited_area = float(np.sum(area[inherited_core]))
     overlap = core & inherited_core
     overlap_area = float(np.sum(area[overlap]))
+    inherited_basin_cells = inherited_core & (basin >= 0)
+    inherited_overlap_by_basin = np.bincount(
+        basin[inherited_basin_cells],
+        weights=area[inherited_basin_cells],
+    )
+    ranked_inherited_overlap = np.sort(inherited_overlap_by_basin)[::-1]
+    second_basin_overlap_area = (
+        float(ranked_inherited_overlap[1]) if len(ranked_inherited_overlap) > 1 else 0.0
+    )
+    dominant_basin_overlap_ratio = overlap_area / max(second_basin_overlap_area, 1e-12)
     inherited_retained_fraction = overlap_area / max(inherited_area, 1e-12)
     routed_inherited_fraction = overlap_area / max(core_area, 1e-12)
     routed_to_inherited_ratio = core_area / max(inherited_area, 1e-12)
@@ -1773,8 +1891,8 @@ def _validate_hydrology(
     inherited_runoff_retained_fraction = float(
         np.sum(local_runoff_volume[overlap]) / max(inherited_runoff, 1e-12)
     )
-    outside = sources.outside_process[spatial_order].reshape(height, width)
-    boundary_contact = core & _adjacent_d8(outside).reshape(-1)
+    process_boundary = (terminal == TERMINAL_PROCESS_BOUNDARY).reshape(height, width)
+    boundary_contact = core & _adjacent_d8(process_boundary).reshape(-1)
     boundary_contact_area = float(np.sum(area[boundary_contact]))
     boundary_contact_fraction = boundary_contact_area / max(core_area, 1e-12)
     continuity = _discharge_continuity_metrics(
@@ -1853,12 +1971,33 @@ def _validate_hydrology(
         else np.empty(0, dtype=np.float32)
     )
 
-    process_domain = sources.inside_core | sources.inside_process_halo
+    process_domain = sources.inside_display_window | sources.inside_hidden_routing_halo
     process_cell_count = int(np.count_nonzero(process_domain))
-    terrain_context_cell_count = int(np.count_nonzero(sources.outside_process))
+    display_cell_count = int(np.count_nonzero(sources.inside_display_window))
+    hidden_routing_halo_cell_count = int(np.count_nonzero(sources.inside_hidden_routing_halo))
+    display_area_km2 = float(np.sum(sources.area_km2[sources.inside_display_window]))
+    hidden_routing_halo_area_km2 = float(
+        np.sum(sources.area_km2[sources.inside_hidden_routing_halo])
+    )
     process_domain_partition_valid = bool(
-        np.array_equal(process_domain, ~sources.outside_process)
-        and not np.any(sources.inside_core & sources.inside_process_halo)
+        np.all(process_domain)
+        and not np.any(sources.inside_display_window & sources.inside_hidden_routing_halo)
+        and np.all(sources.inside_display_window | sources.inside_hidden_routing_halo)
+    )
+    display_process_boundary_cell_count = int(
+        np.count_nonzero(
+            sources.inside_display_window
+            & (
+                np.asarray(root["routing/terminal_kind"][:], dtype=np.uint8)
+                == TERMINAL_PROCESS_BOUNDARY
+            )
+        )
+    )
+    hydrology_arrays_finite = bool(
+        np.all(np.isfinite(mean_discharge))
+        and np.all(np.isfinite(discharge))
+        and np.all(np.isfinite(lake_fraction))
+        and np.all(np.isfinite(wetland_fraction))
     )
     validation: dict[str, Any] = {
         "format_version": HYDROLOGY_FORMAT_VERSION,
@@ -1866,11 +2005,19 @@ def _validate_hydrology(
         "cell_count": len(sources.cell_id),
         "process_domain_cell_count": process_cell_count,
         "process_domain_fraction_of_stored_window": process_cell_count / len(sources.cell_id),
-        "terrain_context_cell_count": terrain_context_cell_count,
+        "display_cell_count": display_cell_count,
+        "display_area_km2": display_area_km2,
+        "hidden_routing_halo_cell_count": hidden_routing_halo_cell_count,
+        "hidden_routing_halo_area_km2": hidden_routing_halo_area_km2,
+        "display_process_boundary_cell_count": display_process_boundary_cell_count,
+        "display_hydrology_arrays_finite": int(hydrology_arrays_finite),
         "process_domain_partition_valid": int(process_domain_partition_valid),
         "core_cell_count": int(np.count_nonzero(core)),
         "inherited_target_core_cell_count": int(np.count_nonzero(inherited_core)),
-        "process_halo_cell_count": int(np.count_nonzero(sources.inside_process_halo)),
+        "inherited_process_halo_cell_count": int(np.count_nonzero(sources.inside_process_halo)),
+        "outside_inherited_process_domain_cell_count": int(
+            np.count_nonzero(sources.outside_process)
+        ),
         "neighbor_count": 8,
         "native_topology_valid": int(native_metadata["topology_valid"]),
         "native_runoff_conservation_relative_error": float(
@@ -1883,10 +2030,26 @@ def _validate_hydrology(
         "endorheic_depression_count": int(native_metadata["endorheic_count"]),
         "closed_sink_count": int(native_metadata["closed_sink_count"]),
         **forcing_metrics,
-        "registered_outlet_connected": int(outlet_entry >= 0 and registered_basin >= 0),
-        "registered_outlet_basin_id": registered_basin,
-        "registered_outlet_entry_cell_id": (
+        "refined_target_basin_connected": int(outlet_entry >= 0 and refined_target_basin >= 0),
+        "refined_target_basin_id": refined_target_basin,
+        "refined_target_outlet_entry_cell_id": (
             int(sources.cell_id[spatial_order[outlet_entry]]) if outlet_entry >= 0 else -1
+        ),
+        "refined_target_display_exit_cell_id": (
+            int(sources.cell_id[spatial_order[display_outlet_entry]])
+            if display_outlet_entry >= 0
+            else -1
+        ),
+        "refined_target_display_exit_mean_discharge_m3s": (
+            float(mean_discharge[display_outlet_entry]) if display_outlet_entry >= 0 else 0.0
+        ),
+        "inherited_outlet_anchor_crossing_cell_id": (
+            int(sources.cell_id[spatial_order[inherited_anchor_entry]])
+            if inherited_anchor_entry >= 0
+            else -1
+        ),
+        "inherited_outlet_anchor_crossing_mean_discharge_m3s": (
+            float(mean_discharge[inherited_anchor_entry]) if inherited_anchor_entry >= 0 else 0.0
         ),
         "routed_core_replay_matches_graph": int(core_replay_valid),
         "inherited_target_core_area_km2": inherited_area,
@@ -1899,6 +2062,8 @@ def _validate_hydrology(
         "routed_core_inherited_fraction": routed_inherited_fraction,
         "routed_to_inherited_area_ratio": routed_to_inherited_ratio,
         "routed_core_inherited_jaccard": jaccard,
+        "second_basin_inherited_overlap_area_km2": second_basin_overlap_area,
+        "dominant_to_second_basin_inherited_overlap_ratio": dominant_basin_overlap_ratio,
         "routed_core_process_boundary_contact_cell_count": int(np.count_nonzero(boundary_contact)),
         "routed_core_process_boundary_contact_area_km2": boundary_contact_area,
         "routed_core_process_boundary_contact_fraction": boundary_contact_fraction,
@@ -1936,6 +2101,9 @@ def _validate_hydrology(
         "maximum_allowed_runoff_conservation_relative_error": (
             config.maximum_runoff_conservation_relative_error
         ),
+        "minimum_dominant_to_second_basin_overlap_ratio": (
+            config.minimum_dominant_to_second_basin_overlap_ratio
+        ),
         "minimum_inherited_core_retained_fraction": (
             config.minimum_inherited_core_retained_fraction
         ),
@@ -1964,13 +2132,19 @@ def _validate_hydrology(
             <= config.maximum_runoff_conservation_relative_error
         ),
         "process_domain_partition_valid": process_domain_partition_valid,
-        "registered_outlet_connected": validation["registered_outlet_connected"] == 1,
+        "display_hydrology_complete_valid": (
+            display_process_boundary_cell_count == 0 and hydrology_arrays_finite
+        ),
+        "refined_target_basin_connected": (validation["refined_target_basin_connected"] == 1),
         "routed_core_replay_valid": core_replay_valid,
         "inherited_core_retention_valid": (
             inherited_retained_fraction >= config.minimum_inherited_core_retained_fraction
         ),
         "routed_core_overlap_valid": (
             routed_inherited_fraction >= config.minimum_routed_core_inherited_fraction
+        ),
+        "dominant_natural_basin_valid": (
+            dominant_basin_overlap_ratio >= config.minimum_dominant_to_second_basin_overlap_ratio
         ),
         "routed_core_area_ratio_valid": (
             config.minimum_routed_to_inherited_area_ratio
@@ -2140,13 +2314,60 @@ def _draw_flow_arrows(
     return len(source)
 
 
+def _rectangular_mask_slices(mask: np.ndarray) -> tuple[slice, slice]:
+    mask = np.asarray(mask, dtype=bool)
+    if mask.ndim != 2 or not np.any(mask):
+        raise ValueError("display mask must be a non-empty two-dimensional rectangle")
+    rows, columns = np.nonzero(mask)
+    row_slice = slice(int(np.min(rows)), int(np.max(rows)) + 1)
+    column_slice = slice(int(np.min(columns)), int(np.max(columns)) + 1)
+    if not np.all(mask[row_slice, column_slice]) or int(np.count_nonzero(mask)) != (
+        (row_slice.stop - row_slice.start) * (column_slice.stop - column_slice.start)
+    ):
+        raise ValueError("display mask must form one dense rectangle")
+    return row_slice, column_slice
+
+
+def _crop_receiver_grid(
+    receiver: np.ndarray,
+    height: int,
+    width: int,
+    row_slice: slice,
+    column_slice: slice,
+) -> np.ndarray:
+    receiver = np.asarray(receiver, dtype=np.int32)
+    if receiver.shape != (height * width,):
+        raise ValueError("receiver grid does not match the full terrain window")
+    spatial_ids = np.arange(height * width, dtype=np.int32).reshape(height, width)
+    source_ids = spatial_ids[row_slice, column_slice].reshape(-1)
+    target_ids = receiver[source_ids]
+    output = np.full(len(source_ids), -1, dtype=np.int32)
+    valid = target_ids >= 0
+    target_rows = np.zeros(len(source_ids), dtype=np.int32)
+    target_columns = np.zeros(len(source_ids), dtype=np.int32)
+    target_rows[valid], target_columns[valid] = np.divmod(target_ids[valid], width)
+    inside = (
+        valid
+        & (target_rows >= row_slice.start)
+        & (target_rows < row_slice.stop)
+        & (target_columns >= column_slice.start)
+        & (target_columns < column_slice.stop)
+    )
+    cropped_width = column_slice.stop - column_slice.start
+    output[inside] = (
+        (target_rows[inside] - row_slice.start) * cropped_width
+        + target_columns[inside]
+        - column_slice.start
+    )
+    return output
+
+
 def _render_hydrology(
     root: Any,
     sources: _HydrologySources,
     spatial_order: np.ndarray,
     height: int,
     width: int,
-    outlet: Mapping[str, int | float],
     validation: Mapping[str, Any],
     path: Path,
 ) -> None:
@@ -2161,9 +2382,8 @@ def _render_hydrology(
     wetland = np.asarray(root["surface/wetland_fraction"][:], dtype=np.float32)[
         spatial_order
     ].reshape(height, width)
-    process = (sources.inside_core | sources.inside_process_halo)[spatial_order].reshape(
-        height, width
-    )
+    display = sources.inside_display_window[spatial_order].reshape(height, width)
+    display_slices = _rectangular_mask_slices(display)
     ocean_color = np.asarray((30.0, 93.0, 132.0))
     lake_color = np.asarray((45.0, 132.0, 168.0))
     wetland_color = np.asarray((63.0, 126.0, 91.0))
@@ -2171,22 +2391,12 @@ def _render_hydrology(
     colors = colors * (1.0 - lake[..., None]) + lake_color * lake[..., None]
     wetland_blend = np.clip(wetland * 0.70, 0.0, 0.70)
     colors = colors * (1.0 - wetland_blend[..., None]) + wetland_color * wetland_blend[..., None]
-    terrain_context = ~process
-    colors[terrain_context] = (
-        colors[terrain_context] * 0.32 + np.asarray((226.0, 227.0, 222.0)) * 0.68
-    )
-    process_boundary = _inner_boundary(process)
-    colors[process_boundary] = np.asarray((156.0, 100.0, 54.0))
-
     q = np.asarray(root["routing/mean_discharge_m3s"][:], dtype=np.float32)[spatial_order].reshape(
         height, width
     )
-    river = (
-        np.asarray(root["routing/reported_reach_support"][:], dtype=bool)[spatial_order].reshape(
-            height, width
-        )
-        & process
-    )
+    river = np.asarray(root["routing/reported_reach_support"][:], dtype=bool)[
+        spatial_order
+    ].reshape(height, width)
     connector = np.asarray(root["routing/waterbody_flow_connector"][:], dtype=bool)[
         spatial_order
     ].reshape(height, width)
@@ -2214,18 +2424,27 @@ def _render_hydrology(
         support = _dilate(mask, radius) if radius else mask
         colors[support] = np.asarray(color)
 
+    colors = colors[display_slices]
+    river = river[display_slices]
+    q = q[display_slices]
+    map_height, map_width = river.shape
     map_image = Image.fromarray(np.clip(colors, 0, 255).astype(np.uint8), mode="RGB")
     receiver_stable = np.asarray(root["routing/flow_receiver_cell_id"][:], dtype=np.int64)[
         spatial_order
     ]
-    receiver = _stable_receivers_to_local(receiver_stable, sources, height, width)
+    receiver = _crop_receiver_grid(
+        _stable_receivers_to_local(receiver_stable, sources, height, width),
+        height,
+        width,
+        *display_slices,
+    )
     arrow_count = _draw_flow_arrows(map_image, river, q, receiver)
     title_height = 52
     footer_height = 76
     legend_width = 330
     canvas = Image.new(
         "RGB",
-        (width + legend_width, height + title_height + footer_height),
+        (map_width + legend_width, map_height + title_height + footer_height),
         (240, 241, 237),
     )
     canvas.paste(map_image, (0, title_height))
@@ -2233,34 +2452,33 @@ def _render_hydrology(
     title_font = _diagnostic_font(22)
     label_font = _diagnostic_font(17)
     small_font = _diagnostic_font(15)
-    draw.text((18, 13), "L3 catchment hydrology", fill=(25, 30, 27), font=title_font)
-    draw.line((width, 0, width, canvas.height), fill=(178, 181, 174), width=1)
-    legend_x = width + 24
+    draw.text(
+        (18, 13),
+        "L3 regional hydrology - fully routed display",
+        fill=(25, 30, 27),
+        font=title_font,
+    )
+    draw.line((map_width, 0, map_width, canvas.height), fill=(178, 181, 174), width=1)
+    legend_x = map_width + 24
     draw.text((legend_x, 20), "Hydrology coverage", fill=(25, 30, 27), font=title_font)
     y = 70
-    draw.rectangle(
-        (legend_x, y, legend_x + 34, y + 18),
-        fill=(220, 222, 217),
-        outline=(50, 55, 52),
-    )
     draw.text(
-        (legend_x + 48, y - 1),
-        "terrain-only context",
-        fill=(35, 39, 36),
-        font=small_font,
-    )
-    y += 34
-    draw.line((legend_x, y + 8, legend_x + 38, y + 8), fill=(156, 100, 54), width=3)
-    draw.text(
-        (legend_x + 50, y),
-        "hydrology process boundary",
+        (legend_x, y - 1),
+        "All displayed cells are routed",
         fill=(35, 39, 36),
         font=small_font,
     )
     y += 34
     draw.text(
         (legend_x, y),
-        f"{validation['process_domain_fraction_of_stored_window']:.1%} of stored cells routed",
+        f"{validation['display_cell_count']:,} visible cells",
+        fill=(50, 54, 51),
+        font=small_font,
+    )
+    y += 34
+    draw.text(
+        (legend_x, y),
+        f"{validation['hidden_routing_halo_cell_count']:,} hidden halo cells",
         fill=(50, 54, 51),
         font=small_font,
     )
@@ -2317,17 +2535,20 @@ def _render_hydrology(
             f"{validation['endorheic_depression_count']} endorheic sinks"
         ),
         "large-lake connectors hidden",
-        (
-            f"{validation['process_domain_cell_count']:,} process cells / "
-            f"{validation['cell_count']:,} stored"
-        ),
+        (f"{validation['process_domain_cell_count']:,} routed cells total"),
     )
     for line in summary_lines:
         draw.text((legend_x, y), line, fill=(50, 54, 51), font=small_font)
         y += 25
-    downstream_parent_row = int(outlet["downstream_cell_row"])
-    downstream_spatial = int(np.flatnonzero(spatial_order == downstream_parent_row)[0])
-    outlet_y, outlet_x = divmod(downstream_spatial, width)
+    display_exit_id = int(validation["refined_target_display_exit_cell_id"])
+    display_exit_rows = np.flatnonzero(sources.cell_id[spatial_order] == display_exit_id)
+    if len(display_exit_rows) != 1:
+        raise RuntimeError("refined target basin has no unique display exit")
+    outlet_y, outlet_x = divmod(int(display_exit_rows[0]), width)
+    outlet_y -= display_slices[0].start
+    outlet_x -= display_slices[1].start
+    if not (0 <= outlet_y < map_height and 0 <= outlet_x < map_width):
+        raise RuntimeError("registered outlet entry is outside the L3 display window")
     draw.ellipse(
         (
             outlet_x - 5,
@@ -2340,13 +2561,9 @@ def _render_hydrology(
         width=2,
     )
     draw.ellipse((legend_x, y + 4, legend_x + 12, y + 16), fill=(196, 55, 46))
-    outlet_label = (
-        "regional outlet handoff"
-        if physical_ocean_present
-        else "inland regional handoff (not coast)"
-    )
+    outlet_label = "refined target basin exits display"
     draw.text((legend_x + 22, y), outlet_label, fill=(50, 54, 51), font=small_font)
-    _draw_scale(draw, width, height, title_height, sources.actual_cell_size_m)
+    _draw_scale(draw, map_width, map_height, title_height, sources.actual_cell_size_m)
     canvas.save(path, optimize=True)
 
 
@@ -2377,35 +2594,33 @@ def _render_basins(
     core = np.asarray(root["geometry/inside_routed_catchment_core"][:], dtype=bool)[
         spatial_order
     ].reshape(height, width)
-    halo = sources.inside_process_halo[spatial_order].reshape(height, width)
-    process = inherited_core | halo
+    display = sources.inside_display_window[spatial_order].reshape(height, width)
+    display_slices = _rectangular_mask_slices(display)
     colors = np.full((height, width, 3), (218, 220, 215), dtype=np.uint8)
-    valid = process & (basin >= 0)
+    valid = basin >= 0
     colors[valid] = _basin_colors(basin[valid])
-    registered = int(validation["registered_outlet_basin_id"])
-    colors[halo] = np.clip(colors[halo].astype(np.float32) * 0.78 + 48.0, 0, 255).astype(np.uint8)
+    registered = int(validation["refined_target_basin_id"])
     colors[core & (basin == registered)] = (91, 157, 107)
     q = np.asarray(root["routing/mean_discharge_m3s"][:], dtype=np.float32)[spatial_order].reshape(
         height, width
     )
-    river = (
-        np.asarray(root["routing/reported_reach_support"][:], dtype=bool)[spatial_order].reshape(
-            height, width
-        )
-        & process
-    )
+    river = np.asarray(root["routing/reported_reach_support"][:], dtype=bool)[
+        spatial_order
+    ].reshape(height, width)
     colors[river] = (30, 102, 166)
     colors[_dilate(river & (q >= 100.0), 1)] = (14, 68, 128)
     colors[_inner_boundary(inherited_core)] = (181, 101, 57)
     colors[_inner_boundary(core)] = (30, 33, 31)
 
+    colors = colors[display_slices]
+    map_height, map_width = colors.shape[:2]
     map_image = Image.fromarray(colors, mode="RGB")
     title_height = 52
     footer_height = 76
     legend_width = 310
     canvas = Image.new(
         "RGB",
-        (width + legend_width, height + title_height + footer_height),
+        (map_width + legend_width, map_height + title_height + footer_height),
         (240, 241, 237),
     )
     canvas.paste(map_image, (0, title_height))
@@ -2413,15 +2628,20 @@ def _render_basins(
     title_font = _diagnostic_font(22)
     label_font = _diagnostic_font(17)
     small_font = _diagnostic_font(15)
-    draw.text((18, 13), "L3 drainage basins", fill=(25, 30, 27), font=title_font)
-    draw.line((width, 0, width, canvas.height), fill=(178, 181, 174), width=1)
-    legend_x = width + 24
+    draw.text(
+        (18, 13),
+        "L3 drainage basins - fully routed display",
+        fill=(25, 30, 27),
+        font=title_font,
+    )
+    draw.line((map_width, 0, map_width, canvas.height), fill=(178, 181, 174), width=1)
+    legend_x = map_width + 24
     draw.text((legend_x, 20), "Basin roles", fill=(25, 30, 27), font=title_font)
     y = 74
     for color, label in (
-        ((91, 157, 107), "registered outlet basin"),
+        ((91, 157, 107), "refined target basin"),
         ((151, 115, 177), "other explicit basin"),
-        ((218, 220, 215), "outside process domain"),
+        ((218, 220, 215), "terminal / no basin"),
     ):
         draw.rectangle((legend_x, y, legend_x + 34, y + 18), fill=color, outline=(55, 59, 56))
         draw.text((legend_x + 48, y - 1), label, fill=(35, 39, 36), font=small_font)
@@ -2442,13 +2662,13 @@ def _render_basins(
         f"{validation['routed_core_inherited_fraction'] * 100:.1f}% routed overlap",
         f"area ratio {validation['routed_to_inherited_area_ratio']:.3f}",
         (
-            "halo-edge contact "
+            "outer-halo contact "
             f"{validation['routed_core_process_boundary_contact_fraction'] * 100:.3f}%"
         ),
     ):
         draw.text((legend_x, y), line, fill=(50, 54, 51), font=small_font)
         y += 26
-    _draw_scale(draw, width, height, title_height, sources.actual_cell_size_m)
+    _draw_scale(draw, map_width, map_height, title_height, sources.actual_cell_size_m)
     canvas.save(path, optimize=True)
 
 
@@ -2511,6 +2731,8 @@ def _existing_result(
         target_id=str(manifest["target_id"]),
         cell_count=int(summary["cell_count"]),
         process_cell_count=int(summary["process_cell_count"]),
+        display_cell_count=int(summary["display_cell_count"]),
+        hidden_routing_halo_cell_count=int(summary["hidden_routing_halo_cell_count"]),
         river_reach_count=int(summary["river_reach_count"]),
         lake_count=int(summary["lake_count"]),
         validation_passed=True,
@@ -2550,7 +2772,6 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
             partial,
             config,
             sources,
-            outlet,
             spatial_order,
             height,
             width,
@@ -2578,7 +2799,6 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
         spatial_order,
         height,
         width,
-        outlet,
         validation,
         preview_path,
     )
@@ -2596,8 +2816,8 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
     root.attrs.update(
         {
             "status": "complete" if validation["passed"] else "validation_failed",
-            "registered_outlet_cell_id": int(outlet["downstream_cell_id"]),
-            "registered_outlet_basin_id": int(validation["registered_outlet_basin_id"]),
+            "inherited_outlet_anchor_cell_id": int(outlet["downstream_cell_id"]),
+            "refined_target_basin_id": int(validation["refined_target_basin_id"]),
         }
     )
     zarr.consolidate_metadata(str(zarr_path))
@@ -2645,7 +2865,10 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
         "summary": {
             "cell_count": len(sources.cell_id),
             "process_cell_count": validation["process_domain_cell_count"],
-            "terrain_context_cell_count": validation["terrain_context_cell_count"],
+            "display_cell_count": validation["display_cell_count"],
+            "display_area_km2": validation["display_area_km2"],
+            "hidden_routing_halo_cell_count": validation["hidden_routing_halo_cell_count"],
+            "hidden_routing_halo_area_km2": validation["hidden_routing_halo_area_km2"],
             "core_cell_count": validation["core_cell_count"],
             "river_reach_count": reaches.num_rows,
             "core_river_reach_count": validation["core_river_reach_count"],
@@ -2659,14 +2882,21 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
             "routing": "D8 priority flood with explicit depressions, fill/spill, water balance, and bounded prospective breach controls",
             "forcing": "L0 monthly priors redistributed by L3 orography with exact represented-parent water-volume conservation",
             "river_identity": "generated L3 reach graph plus unmodified inherited L2 trunk constraints",
-            "regional_outlet": "registered L2-to-L3 handoff terminal; not assumed to be an ocean mouth",
+            "target_basin": (
+                "natural L3 basin maximizing area overlap with the inherited coarse target; "
+                "the inherited outlet is an alignment anchor, not an artificial terminal"
+            ),
             "terrain_change": "none; hydrologic elevation and prospective breach incision are separate from base terrain",
             "water_occupancy": "physical ocean realized from L2 fractions; lakes and wetlands recomputed from L3 depressions",
             "hydrological_acceptance_scope": "fine routed catchment core only",
-            "storage_scope": "complete terrain rectangle; hydrology is solved only on catchment core plus process halo",
+            "storage_scope": (
+                "hydrology is solved across the complete stored terrain rectangle; "
+                "the outer boundary band is a hidden routing halo"
+            ),
+            "display_scope": "inner rectangle with complete relief and hydrology coverage",
             "neighbor_count": 8,
         },
-        "registered_outlet": dict(outlet),
+        "inherited_outlet_anchor": dict(outlet),
         "resume": {
             "resumed_partial": resumed,
             "forcing_resumed": forcing_resumed,
@@ -2726,6 +2956,8 @@ def generate_l3_hydrology(config: L3HydrologyConfig) -> L3HydrologyResult:
         target_id=sources.target_id,
         cell_count=len(sources.cell_id),
         process_cell_count=int(validation["process_domain_cell_count"]),
+        display_cell_count=int(validation["display_cell_count"]),
+        hidden_routing_halo_cell_count=int(validation["hidden_routing_halo_cell_count"]),
         river_reach_count=reaches.num_rows,
         lake_count=int(validation["core_lake_count"]),
         validation_passed=True,

@@ -216,7 +216,7 @@ uv run map-maker l3-terrain
 ```
 
 This writes approximately `6.04 million` deterministic cubed-sphere cells at
-about `198 m` in
+`196.7 m` area-equivalent resolution in
 resumable parent-aligned Zarr chunks under
 `out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
 The artifact includes raw and softly L2-conditioned terrain, unresolved relief,
@@ -237,15 +237,18 @@ fractional lakes and wetlands, D8 receivers, monthly discharge, physical reach
 attributes, generated and inherited river graphs, explicit lake-flow
 connectors, validation, and checksummed maps under
 `out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0/`.
-The regional outlet is a downstream handoff, not necessarily an ocean mouth.
+The inherited regional outlet is a downstream alignment anchor, not necessarily
+an ocean mouth and not an artificial fine-grid terminal.
 Base terrain is unchanged; breach incision remains prospective. Diagnostic
 maps preserve graph continuity, suppress connector strokes only beneath large
 lake polygons, use sparse arrowheads to show downstream direction, explicitly
 report whether physical ocean or closed sinks are present, and include legends
-and kilometre scales. The canonical solve covers `3.44 million` catchment and
-halo cells inside the `6.04 million`-cell stored terrain rectangle. Its other
-`2.60 million` cells are visibly muted terrain-only context, not simulated dry
-hydrology. The canonical first slice is inland and contains no physical ocean.
+and kilometre scales. The canonical solve routes all `6.04 million` stored
+cells behind an approximately `17.3 km` hidden halo, then crops relief and
+hydrology to the same `5.20 million`-cell, `201,377 km2` display. There is no
+terrain-only visible context. The selected natural target basin covers about
+`89,852 km2` and exits at roughly `1,084 m3/s`. The canonical first slice is
+inland and contains no physical ocean.
 
 Run the previous procedural generator for comparison:
 

@@ -31,20 +31,23 @@ uv run map-maker l3-hydrology
 
 It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
 `out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain/`.
-The stored terrain is a continuous rectangular window. The irregular catchment,
-its process halo, and terrain outside the process domain are explicit masks;
-there are no internal no-data holes.
+The stored terrain is a continuous rectangular routing window. Its inner
+`5.20 million`-cell display rectangle has complete relief and hydrology; an
+outer `836,352`-cell band is hidden process context. There are no internal
+no-data or unprocessed display holes.
 
 ## Resolution And Budget
 
-- The base terrain grid uses approximately `200 m` cells.
+- The base terrain grid is nominally `200 m`; the canonical spherical cells
+  have an area-equivalent width of `196.7 m`. This is not a `100 m` raster.
 - River corridors may refine deterministically to `25-50 m` where lateral
   morphology must be resolved.
 - Channels narrower than the active cell remain vectors with fractional raster
   support. A finer raster never replaces canonical river identity.
-- The catchment core remains approximately `2.60 million` cells. Its complete
-  working window is capped at seven million base cells and a `24 GB` process
-  memory budget, leaving capacity for the operating system on a 32 GB machine.
+- The inherited catchment envelope remains approximately `2.60 million` cells.
+  The `5,203,968`-cell display covers `201,376.96 km2`; routing uses all
+  `6,040,320` stored cells under a seven-million-cell and `24 GB` process-memory
+  cap, leaving capacity for the operating system on a 32 GB machine.
 - Arrays are chunked Zarr datasets. Variable-length graphs, vectors, and event
   records are Parquet. No stage may require a dense global L3 allocation.
 
@@ -65,9 +68,11 @@ The target package contains a complete coarse upstream catchment, a continuous
 L2 terrain window extending four L2 cells (about `18 km`) beyond its bounding
 box, and one further L2 source-context ring. It records the sole outlet, L2
 child indexes, source checksums, expected raster cost, and mutually exclusive
-core, process-halo, and outside roles. The inherited catchment core selects the
-target and conserves forcing. Hydrology refines its actual D8 outlet watershed
-inside the halo and measures process acceptance on that routed core.
+core, inherited process-halo, and outside roles. Those masks select the target
+and conserve forcing but no longer limit routing. Separate display and hidden-
+halo masks partition the full stored rectangle. Hydrology selects the natural
+D8 basin with maximum inherited-target overlap and measures acceptance on that
+routed core.
 
 ## V0 Process Order
 
@@ -75,8 +80,9 @@ inside the halo and measures process acceptance on that routed core.
    L2 means, relief, lithology, orogenic direction, and fixed boundary values.
 2. **Implemented:** downscale monthly precipitation, snowmelt, and runoff as conservative
    forcing fields; do not run a new atmospheric model in V0.
-3. **Implemented:** perform depression-aware routing with explicit lake storage, spill controls,
-   and one registered regional outlet.
+3. **Implemented:** perform full-window depression-aware routing with explicit
+   lake storage and spill controls; retain the inherited outlet as an alignment
+   anchor rather than an artificial one-cell terminal.
 4. **Implemented:** discover tributary vectors from accumulated flow while preserving inherited
    major-trunk identity and monthly hydrographs.
 5. **Implemented:** derive physical width, depth, velocity, slope, stream power, sediment load,
@@ -115,33 +121,33 @@ The artifact retains raw terrain for idempotent resume and surrogate examples,
 plus final elevation, offset from L2, unresolved relief, spherical geometry,
 parent conditioning, chunk records, checksums, a validation report, and a
 native-face terrain diagnostics: clean physical relief in `terrain.png` and
-explicit domain boundaries in `terrain_domain.png`. Both include legends and
-an approximate kilometre scale bar. It does not route water or create river
-cells.
+explicit inherited-target boundaries in `terrain_domain.png`. Both are cropped
+to the common fully processable display after hillshade is computed with the
+hidden halo, and both include legends and an approximate kilometre scale bar.
+The terrain stage itself does not route water or create river cells.
 
 ## Implemented Hydrology V0
 
-The hydrology artifact routes the full catchment-plus-halo process domain with
-a native D8 graph. It conservatively redistributes inherited monthly forcing,
+The hydrology artifact routes the complete `6,040,320`-cell stored rectangle
+with a native D8 graph, then crops diagnostics to the inner `5,203,968` cells.
+It conservatively redistributes inherited monthly forcing,
 realizes physical ocean separately from terrain elevation, iterates
 fill/spill/breach relaxation, and publishes lakes, prospective breach events,
 generated reaches, inherited reaches, and inherited-reach alignment. Base
 terrain is not mutated.
 
-This is not hydrology over the entire stored terrain rectangle. The canonical
-artifact has `3,438,336` process cells (`56.9%` of `6,040,320` stored cells);
-the other `2,601,984` cells are terrain-only context. Hydrology arrays retain
-sentinels there for shape consistency. Diagnostics must mute that context and
-outline the process boundary rather than showing un-routed terrain as if it
-were a riverless result. A full rectangular map requires a larger hidden
-routing halo outside the desired display area.
+The outer four L2 cells on each side, equal to `88` L3 cells or about `17.3 km`,
+are a hidden routing halo. No displayed cell may carry a process-boundary
+terminal or non-finite hydrology state. The older core/halo/outside masks remain
+selection provenance and do not create partial-map sentinels.
 
-The registered outlet is a regional handoff, not necessarily a sea mouth.
-Hydrology derives a fine routed catchment around that outlet rather than using
-the inherited L0 envelope as an artificial wall. Both masks are durable. Hard
-gates cover overlap in both directions, area ratio, outer-halo contact, outlet
-hydrograph agreement, forcing and runoff conservation, receiver topology,
-open-water fraction, and unexplained downstream discharge loss.
+The inherited outlet is an inland coarse handoff, not necessarily a sea mouth
+and not a literal L3 terminal. Hydrology selects the natural fine basin with
+the greatest inherited-envelope overlap. Hard gates cover its dominance over
+the second candidate, overlap in both directions, area ratio, outer-halo
+contact, inherited hydrograph agreement, forcing and runoff conservation,
+receiver topology, open-water fraction, and unexplained downstream discharge
+loss.
 
 Rivers remain vector reach paths with stable IDs. `reported_reach_support`
 rasterizes those paths only for diagnostics; `waterbody_flow_connector` marks
@@ -152,15 +158,16 @@ map keeps connectors through small ponds but suppresses their stroke beneath
 lakes at least `50 km2`, where the lake polygon itself shows the continuous
 water path. Physical width and depth remain reach attributes.
 
-The canonical seed-42 result contains `6.04 million` stored cells, a routed core
-of about `96,300 km2`, `18,555` reported reaches, `2,819` core lakes, a
-Strahler-order-6 network, and a roughly `1,190 m3/s` outlet. Its outlet monthly
-hydrograph differs from the inherited target by about `11.5%`, open water
-covers about `8.61%` of core land, and no material discharge loss is
-unexplained. This selected inland window contains no physical ocean, no closed
-routing sinks, and no endorheic depressions. Sparse arrowheads in the diagnostic
-show downstream direction so headwater starts are not mistaken for river ends.
-Both hydrology maps include a legend and approximate `100 km` scale bar.
+The canonical seed-42 result contains `6.04 million` routed cells, a displayed
+area of `201,376.96 km2`, and a refined target basin of `89,851.80 km2`. That
+basin contains `12,005` reported reaches and `2,539` lakes; its roughly
+`1,084 m3/s` outlet differs from the inherited monthly hydrograph by `19.4%`.
+It retains `70.13%` of inherited area, has `79.35%` of its own area inside the
+coarse target, and leads the second candidate by `6.11:1`. Open water covers
+`8.68%` of core land and no material discharge loss is unexplained. This inland
+window contains no physical ocean, 14 explicit closed sinks, and no endorheic
+depressions. Sparse arrowheads show downstream direction. Both hydrology maps
+include a legend and approximate `100 km` scale bar.
 
 ## Required Outputs
 
@@ -184,11 +191,12 @@ Both hydrology maps include a legend and approximate `100 km` scale bar.
 - exact target extent, unique stable IDs, and bounded peak memory/storage;
 - a continuous terrain rectangle with exhaustive, mutually exclusive core,
   process-halo, and outside masks;
-- explicit process-domain coverage counts, sentinel-only state outside that
-  domain, and visibly distinct terrain-only context in hydrology diagnostics;
+- exhaustive display/hidden-halo masks, full routing of every stored cell, and
+  no process-boundary terminal or invalid hydrology in the display rectangle;
 - hydrological validity and conservation acceptance measured on the fine routed core;
 - inherited/routed catchment overlap, area-ratio, and process-boundary gates;
-- all non-lake flow reaches the registered outlet or another explicit terminal;
+- the natural target basin is dominant by inherited-area overlap and every
+  non-lake flow reaches an explicit physical or outer-halo terminal;
 - no accidental sinks and no receiver cycles;
 - no material downstream discharge decrease without explicit waterbody loss;
 - inherited major trunks remain connected and discharge-conservative;

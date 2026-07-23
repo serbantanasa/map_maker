@@ -14,6 +14,7 @@ from map_maker.pipeline.l3_terrain import (
     L3TerrainResult,
     _TerrainSources,
     _conditioning_basis,
+    _display_window_masks,
     _interpolated_center_correction,
     _nice_scale_km,
     _tile_motif_metrics,
@@ -29,6 +30,7 @@ terrain_output_dir: terrain
 grid:
   base_cell_size_m: 200
   l3_refinement_factor: 22
+  display_boundary_halo_l2_cells: 4
 terrain:
   chunk_parent_count: 32
   conditioning_damping: 0.7
@@ -43,6 +45,7 @@ limits:
     assert config.target_dir == tmp_path / "target"
     assert config.output_dir == tmp_path / "terrain"
     assert config.refinement_factor == 22
+    assert config.display_boundary_halo_l2_cells == 4
     assert config.chunk_parent_count == 32
     with pytest.raises(ValueError, match="conditioning_damping"):
         L3TerrainConfig(
@@ -96,6 +99,17 @@ def test_bilinear_conditioning_basis_partitions_unity_and_crosses_parent_edges()
 
     boundary_jump = east_values[:, 0] - west_values[:, -1]
     np.testing.assert_allclose(boundary_jump, 7.0 / factor, atol=1e-12)
+
+
+def test_display_window_masks_reserve_a_hidden_rectangular_halo():
+    rows, columns = np.indices((8, 10), dtype=np.int32)
+    display, hidden, slices = _display_window_masks(rows.reshape(-1), columns.reshape(-1), 2)
+    assert slices == (slice(2, 6), slice(2, 8))
+    assert np.count_nonzero(display) == 24
+    assert np.count_nonzero(hidden) == 56
+    assert np.all(display ^ hidden)
+    with pytest.raises(ValueError, match="removes"):
+        _display_window_masks(rows.reshape(-1), columns.reshape(-1), 4)
 
 
 def test_tile_motif_metric_rejects_repeated_parent_bubbles():
@@ -314,6 +328,7 @@ def test_l3_terrain_cli(tmp_path: Path, monkeypatch, capsys):
         target_id="selected",
         parent_count=12,
         cell_count=5_808,
+        display_cell_count=4_000,
         actual_cell_size_m=198.4,
         chunk_count=3,
         resumed_chunk_count=0,
@@ -327,5 +342,6 @@ def test_l3_terrain_cli(tmp_path: Path, monkeypatch, capsys):
     assert main(["l3-terrain", "--config", str(tmp_path / "l3.yaml")]) == 0
     output = capsys.readouterr().out
     assert "L3 terrain" in output
-    assert "5808 cells" in output
+    assert "5808 stored cells" in output
+    assert "4000 cells are in the fully processable display" in output
     assert "198.4 m" in output

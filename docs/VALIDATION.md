@@ -89,15 +89,15 @@ uv run map-maker l3-hydrology
 ```
 
 It gates exact represented-parent monthly forcing conservation, native runoff
-conservation and acyclic receiver topology, registered-outlet connectivity and
-hydrograph agreement, inherited/fine catchment overlap in both directions,
-routed-to-inherited area ratio, process-boundary contact, bounded open-water
-area, cumulative prospective breach incision, river-network presence, inherited
+conservation and acyclic receiver topology, complete stored-window routing,
+finite hydrology and no process terminal in the display, natural target-basin
+dominance, inherited/fine catchment overlap in both directions, area ratio,
+outer-halo contact, inherited hydrograph agreement, bounded open-water area,
+cumulative prospective breach incision, river-network presence, inherited
 trunk support, and zero material downstream discharge losses not explained by
 lake or wetland losses. The published fine routed core is replayed from the
-receiver graph during validation. It also records the exact process-domain and
-terrain-only context counts; outside-process cells are sentinel state and may
-not be presented as hydrologically solved terrain. Cache hits recheck the
+receiver graph during validation. Exact display and hidden-halo counts are hard
+state; no visible cell may be terrain-only context. Cache hits recheck the
 complete output tree.
 
 ## Gate Classes
@@ -127,6 +127,7 @@ complete output tree.
 | L2 handoff | Sparse child terrain and surface occupancy conserve L0 parents; inherited parent priors are not presented as L2 physics; every vector path references packaged children; package publication follows validation. |
 | L3 target | The selected coarse catchment has one outlet, complete upstream ownership, a continuous terrain window and source ring, explicit domain roles, a seam-valid L2 source, stable indexes, and bounded estimated base-grid cost. |
 | L3 base terrain | Continuous regional 200 m-class terrain has stable 64-bit identity, complete context, explicit core/halo/outside masks, bounded L2 conditioning error, no parent/chunk seam or repeated correction motif, checksum-verified replay, and bounded memory/storage. Hydrology gates apply only to the core. |
+| L3 hydrology | Every stored cell is routed, every displayed cell has finite hydrology and no outer-boundary terminal, the hidden halo is explicit, the refined natural basin is dominant by inherited-target overlap, and core topology, hydrograph, water, reach, and loss budgets pass independently. |
 
 For coarse and sparse fluvial products, applied trunk erosion, deposition, and
 cell-mean terrain change remain zero. The separately bounded outlet-spill

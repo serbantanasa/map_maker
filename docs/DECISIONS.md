@@ -2608,7 +2608,7 @@ to resume and leaves room for the hydrology arrays that follow.
 
 ## Decision 053: L3 Storage Extent Is Not The Catchment Mask
 
-Status: implemented; canonical artifact regenerated; human visual acceptance pending
+Status: implemented; display/process-role clauses superseded by Decision 057
 
 Decision:
 Do not store only the irregular catchment footprint. The first L3 working
@@ -2660,7 +2660,7 @@ catchment they are required to conserve.
 
 ## Decision 054: L3 Hydrology Refines The Catchment And Keeps Rivers As Vectors
 
-Status: implemented; canonical artifact passes automated acceptance
+Status: implemented V4; routing-extent and target-outlet clauses superseded by Decision 057
 
 Decision:
 Run the first L3 hydrology solve over the complete `200 m` terrain window's
@@ -2845,3 +2845,70 @@ hydraulic targets remove the false abyss while retaining the source state for
 audit and future process refinement. Basin-level area conservation then lets
 one connected lake or inland sea occupy the locally lowest terrain rather than
 repeating the L0 storage pattern as visible geometry.
+
+## Decision 057: Every Displayed L3 Cell Is Fully Processed Behind A Hidden Halo
+
+Status: implemented; canonical terrain and hydrology artifacts regenerated and accepted
+
+Decision:
+Route hydrology across the complete stored L3 terrain rectangle, then crop all
+player-facing terrain, hydrology, and basin diagnostics to one shared inner
+display rectangle. A visible cell may not be terrain-only context or carry a
+process-boundary sentinel. Boundary-truncated state belongs only in the hidden
+halo outside the displayed map.
+
+For the canonical factor-22 slice, the stored lattice is `2640 x 2288`, or
+`6,040,320` cells. Reserve four L2 cells, equal to `88` L3 cells and about
+`17.3 km`, on every side as the hidden routing halo. The visible lattice is
+therefore `2464 x 2112`, or `5,203,968` cells covering `201,376.96 km2`.
+The hidden halo contains `836,352` cells covering `32,354.88 km2`. Compute
+hillshade and all boundary-sensitive processes on the stored lattice before
+cropping so the visible edge has real neighboring state.
+
+The base scale remains nominally `200 m`; spherical cell area gives an actual
+area-equivalent width of about `196.7 m`. It is not a `100 m` raster. A uniform
+`100 m` version would require roughly four times as many cells and is a separate
+budget decision. Decision 048 still permits adaptive `25-50 m` refinement only
+where physical channel banks or other human-scale morphology require it.
+
+The old `inside_catchment_core`, `inside_process_halo`, and
+`outside_process_domain` masks remain durable selection provenance. They no
+longer limit V5 routing. Persist separate exhaustive
+`inside_display_window` and `inside_hidden_routing_halo` masks. Only physical
+ocean and the outermost stored-lattice edge are routing terminals; no displayed
+cell may be an outer process terminal.
+
+Treat the inherited inland outlet as a coarse alignment anchor, not a literal
+one-cell L3 terminal. With downstream terrain active, a one-cell terminal is a
+pinhole that can falsely reduce a continental river to a local `3 m3/s`
+catchment. Select the natural fine D8 basin having the greatest area overlap
+with the inherited coarse target, and require it to be unambiguously dominant.
+For this 72 km-to-200 m handoff, require at least `65%` of inherited area in the
+refined basin, at least `75%` of refined-basin area inside the inherited target,
+a refined/inherited area ratio in `[0.80, 1.20]`, and at least a `3:1` overlap
+lead over the second candidate basin. Retain the `0.1%` outer-boundary contact
+and `40%` inherited-hydrograph error ceilings.
+
+The accepted seed-42 artifact routes all `6,040,320` stored cells and displays
+all `5,203,968` inner cells. Its dominant natural target basin is
+`89,851.80 km2`, retains `70.13%` of inherited area, has `79.35%` of its own
+area inside that target, and leads the next candidate by `6.11:1`. Mean outlet
+flow is about `1,084 m3/s`, versus an inherited `1,345 m3/s`, for `19.4%`
+monthly hydrograph error. The core contains `2,539` lakes, `12,005` reported
+reaches, and `8.68%` open water. The whole stored solve has 14 closed sinks and
+no endorheic depressions; these are explicit hydrological outcomes, not missing
+coverage.
+
+This decision supersedes Decision 053's use of target roles as current process
+roles and Decision 054's partial `56.9%` solve, terrain-only displayed context,
+registered one-cell terminal, and `80%` bidirectional overlap values. It does
+not change immutable base terrain, vector river identity, fractional water
+occupancy, durability, or core-only acceptance-budget semantics.
+
+Reason:
+Showing real relief but absent hydrology over `43.1%` of a regional map was
+visually and semantically misleading. Extending routing to the stored boundary
+fixed coverage, but also exposed that an inland coarse handoff cannot remain a
+terminal once downstream terrain exists. Hidden process context plus a
+dominant-overlap basin selection preserves a complete visible map and lets the
+fine terrain refine coarse drainage without hard-walling a 72 km mask.

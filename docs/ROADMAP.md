@@ -23,10 +23,14 @@ another global-stage expansion.
    `5-72 km` hills, uplands, valleys, and drainage divides under bounded soft
    L0 conditioning; bound unresolved hydraulic pits and realize lake area over
    stable basin identities; then regenerate terrain and hydrology.
-5. **Next:** turn selected raw D8 reach paths into smooth physical centerline
+5. **Complete:** route the entire stored L3 rectangle behind a four-L2-cell
+   hidden halo, crop terrain and hydrology to one fully processed display, and
+   replace the artificial inland outlet terminal with dominant natural-basin
+   refinement.
+6. **Next:** turn selected raw D8 reach paths into smooth physical centerline
    geometry and adaptively refine representative `25-50 m` channel corridors
    before applying any fluvial incision or resolving banks.
-6. In parallel, record explicit acceptance or a bounded blocker list for the
+7. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
@@ -49,11 +53,12 @@ or stamping one correction shape into every L0 parent. Decision 056 separates
 raw coarse hydraulic pits from literal L2 terrain and replaces parent-stamped
 lake quotas with basin-coherent area conservation. Raw D8
 centerline geometry remains unsuitable as final bank or meander geometry.
-The current L3 hydrology solve covers the catchment plus process halo, not the
-entire stored terrain rectangle; diagnostics now distinguish its `56.9%`
-process coverage from terrain-only context. A future full rectangular map must
-generate a larger hidden routing halo rather than truncate drainage at the
-display edge.
+Decision 057 now routes all `6.04 million` stored cells behind an approximately
+`17.3 km` hidden boundary halo and exposes a common `5.20 million`-cell terrain
+and hydrology display. No visible region is terrain-only. The inherited inland
+outlet remains an alignment prior; the accepted `89,852 km2` natural basin is
+selected by dominant overlap with the coarse target and exits the display at
+about `1,079 m3/s`.
 
 ## Thaw Gate
 

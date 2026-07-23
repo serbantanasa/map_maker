@@ -582,9 +582,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Validation: {terrain.validation_path}")
         print(f"Preview: {terrain.preview_path}")
         print(
-            f"Generated {terrain.cell_count} cells at approximately "
+            f"Generated {terrain.cell_count} stored cells at approximately "
             f"{terrain.actual_cell_size_m:.1f} m in {terrain.chunk_count} parent-aligned chunks "
-            f"for {terrain.target_id}."
+            f"for {terrain.target_id}; {terrain.display_cell_count} cells are in the "
+            "fully processable display."
         )
         return 0
 
@@ -611,9 +612,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"Validation: {hydrology.validation_path}")
         print(f"Preview: {hydrology.preview_path}")
         print(
-            f"Solved hydrology on {hydrology.process_cell_count} of {hydrology.cell_count} "
-            f"stored terrain cells, producing {hydrology.river_reach_count} reported reaches "
-            f"and {hydrology.lake_count} core lakes for {hydrology.target_id}."
+            f"Solved hydrology across all {hydrology.display_cell_count} displayed cells using "
+            f"{hydrology.process_cell_count} routed stored cells, including "
+            f"{hydrology.hidden_routing_halo_cell_count} hidden-halo cells; produced "
+            f"{hydrology.river_reach_count} reported reaches and {hydrology.lake_count} core "
+            f"lakes for {hydrology.target_id}."
         )
         return 0
 

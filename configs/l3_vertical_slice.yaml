@@ -22,6 +22,9 @@ grid:
   # cells are about 18 km; one additional L2 ring supplies interpolation data.
   terrain_window_halo_l2_cells: 4
   terrain_source_context_l2_cells: 1
+  # Route the complete stored rectangle, then crop this four-L2-cell outer
+  # band from maps. Every visible pixel therefore has relief and hydrology.
+  display_boundary_halo_l2_cells: 4
 terrain:
   seed: 4203001
   chunk_parent_count: 64
@@ -82,8 +85,12 @@ hydrology:
   maximum_runoff_conservation_relative_error: 1.0e-6
   # The 72 km inherited envelope selects the basin; routing refines its true
   # divide inside the halo instead of manufacturing a block-aligned wall.
-  minimum_inherited_core_retained_fraction: 0.80
-  minimum_routed_core_inherited_fraction: 0.80
+  # The 72 km inherited basin is an anchor, not a hard 200 m watershed mask.
+  # Select the natural L3 basin with the greatest area overlap and require it
+  # to be unambiguously dominant while preserving most of the coarse target.
+  minimum_inherited_core_retained_fraction: 0.65
+  minimum_routed_core_inherited_fraction: 0.75
+  minimum_dominant_to_second_basin_overlap_ratio: 3.0
   minimum_routed_to_inherited_area_ratio: 0.80
   maximum_routed_to_inherited_area_ratio: 1.20
   maximum_routed_core_process_boundary_contact_fraction: 0.001

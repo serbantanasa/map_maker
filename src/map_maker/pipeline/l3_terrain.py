@@ -26,7 +26,7 @@ from ._l3_terrain_native import run_l3_terrain_chunk
 from .regional_handoff import _file_checksum, _replace_directory, _tree_checksum
 
 TERRAIN_FORMAT_VERSION = 2
-TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v6"
+TERRAIN_MODEL_VERSION = "l3_conditioned_terrain_v7"
 EARTH_OROGENIC_REFERENCE_M = 1_500.0
 TERRAIN_DIAGNOSTIC_VERTICAL_EXAGGERATION = 4.0
 RAW_CHUNK_ARRAY_PATHS = (
@@ -58,6 +58,7 @@ class L3TerrainConfig:
     output_dir: Path
     requested_cell_size_m: float = 200.0
     refinement_factor: int = 22
+    display_boundary_halo_l2_cells: int = 0
     chunk_parent_count: int = 64
     terrain_seed: int = 4_203_001
     relief_realization_fraction: float = 0.42
@@ -116,6 +117,7 @@ class L3TerrainConfig:
             ),
             requested_cell_size_m=float(grid.get("base_cell_size_m", 200.0)),
             refinement_factor=int(grid.get("l3_refinement_factor", 22)),
+            display_boundary_halo_l2_cells=int(grid.get("display_boundary_halo_l2_cells", 0)),
             chunk_parent_count=int(terrain.get("chunk_parent_count", 64)),
             terrain_seed=int(terrain.get("seed", 4_203_001)),
             relief_realization_fraction=float(terrain.get("relief_realization_fraction", 0.42)),
@@ -171,6 +173,8 @@ class L3TerrainConfig:
             raise ValueError("grid.base_cell_size_m must be in [100, 250]")
         if not 2 <= self.refinement_factor <= 64:
             raise ValueError("grid.l3_refinement_factor must be in [2, 64]")
+        if not 0 <= self.display_boundary_halo_l2_cells <= 16:
+            raise ValueError("grid.display_boundary_halo_l2_cells must be in [0, 16]")
         if not 1 <= self.chunk_parent_count <= 1_024:
             raise ValueError("terrain.chunk_parent_count must be in [1, 1024]")
         if not 0 <= self.terrain_seed <= np.iinfo(np.uint64).max:
@@ -253,6 +257,7 @@ class L3TerrainResult:
     target_id: str
     parent_count: int
     cell_count: int
+    display_cell_count: int
     actual_cell_size_m: float
     chunk_count: int
     resumed_chunk_count: int
@@ -292,6 +297,53 @@ def _column_numpy(table: pa.Table, name: str, dtype: np.dtype[Any]) -> np.ndarra
 def _canonical_hash(value: object) -> str:
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _display_window_slices(
+    height: int,
+    width: int,
+    inset_cells: int,
+) -> tuple[slice, slice]:
+    """Return a non-empty inner display rectangle with a hidden outer halo."""
+
+    if height <= 0 or width <= 0:
+        raise ValueError("display window dimensions must be positive")
+    if inset_cells < 0:
+        raise ValueError("display window inset must be nonnegative")
+    if height <= 2 * inset_cells or width <= 2 * inset_cells:
+        raise ValueError(f"display inset {inset_cells} removes the {height}x{width} terrain window")
+    row_stop = height - inset_cells if inset_cells else height
+    column_stop = width - inset_cells if inset_cells else width
+    return slice(inset_cells, row_stop), slice(inset_cells, column_stop)
+
+
+def _display_window_masks(
+    rows: np.ndarray,
+    columns: np.ndarray,
+    inset_cells: int,
+) -> tuple[np.ndarray, np.ndarray, tuple[slice, slice]]:
+    """Partition a dense rectangular lattice into display and hidden-halo cells."""
+
+    rows = np.asarray(rows)
+    columns = np.asarray(columns)
+    if rows.ndim != 1 or columns.ndim != 1 or len(rows) != len(columns):
+        raise ValueError("display window coordinates must be equal-length vectors")
+    if not len(rows):
+        raise ValueError("display window coordinates cannot be empty")
+    minimum_row = int(np.min(rows))
+    maximum_row = int(np.max(rows))
+    minimum_column = int(np.min(columns))
+    maximum_column = int(np.max(columns))
+    height = maximum_row - minimum_row + 1
+    width = maximum_column - minimum_column + 1
+    slices = _display_window_slices(height, width, inset_cells)
+    display = (
+        (rows >= minimum_row + slices[0].start)
+        & (rows < minimum_row + slices[0].stop)
+        & (columns >= minimum_column + slices[1].start)
+        & (columns < minimum_column + slices[1].stop)
+    )
+    return np.ascontiguousarray(display), np.ascontiguousarray(~display), slices
 
 
 def _canonical_direction(direction: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -649,8 +701,22 @@ def _initialize_partial(
     )
     for name, semantics in (
         ("inside_catchment_core", "hydrological acceptance and reported basin interior"),
-        ("inside_process_halo", "context cells available to regional process solves"),
-        ("outside_process_domain", "continuous terrain context excluded from process gates"),
+        (
+            "inside_process_halo",
+            "inherited target process halo retained for selection provenance",
+        ),
+        (
+            "outside_process_domain",
+            "outside the inherited target process domain; not excluded from full-window routing",
+        ),
+        (
+            "inside_display_window",
+            "visible map cells; all downstream L3 processes must populate this rectangle",
+        ),
+        (
+            "inside_hidden_routing_halo",
+            "stored process context routed before the visible map is cropped",
+        ),
     ):
         _zarr_dataset(
             geometry,
@@ -809,6 +875,17 @@ def _write_chunk(
     root["terrain/unresolved_relief_m"][start:end] = outputs["unresolved_relief_m"]
     root["terrain/raw_elevation_m"][start:end] = outputs["elevation_m"]
     root["terrain/raw_offset_from_l2_m"][start:end] = outputs["offset_from_l2_m"]
+
+
+def _write_display_masks(root: Any, config: L3TerrainConfig, zarr_path: Path) -> None:
+    rows = np.asarray(root["geometry/row"][:], dtype=np.int32)
+    columns = np.asarray(root["geometry/column"][:], dtype=np.int32)
+    inset_cells = config.display_boundary_halo_l2_cells * config.refinement_factor
+    display, hidden_halo, _ = _display_window_masks(rows, columns, inset_cells)
+    root["geometry/inside_display_window"][:] = display
+    root["geometry/inside_hidden_routing_halo"][:] = hidden_halo
+    _sync_zarr_array(zarr_path, "geometry/inside_display_window")
+    _sync_zarr_array(zarr_path, "geometry/inside_hidden_routing_halo")
 
 
 def _neighbor_rows(cell_ids: np.ndarray, available_ids: np.ndarray, resolution: int) -> np.ndarray:
@@ -1184,6 +1261,10 @@ def _validate_terrain(
     inside_core = np.asarray(root["geometry/inside_catchment_core"][:], dtype=bool)
     inside_process_halo = np.asarray(root["geometry/inside_process_halo"][:], dtype=bool)
     outside_process = np.asarray(root["geometry/outside_process_domain"][:], dtype=bool)
+    inside_display = np.asarray(root["geometry/inside_display_window"][:], dtype=bool)
+    inside_hidden_routing_halo = np.asarray(
+        root["geometry/inside_hidden_routing_halo"][:], dtype=bool
+    )
     if any(
         len(array) != cell_count for array in (cell_ids, child_parent_ids, child_area, elevation)
     ):
@@ -1223,11 +1304,29 @@ def _validate_terrain(
     )
     fine_rows = np.asarray(root["geometry/row"][:], dtype=np.int32)
     fine_columns = np.asarray(root["geometry/column"][:], dtype=np.int32)
-    dense_window_cells = int(
-        (np.max(fine_rows) - np.min(fine_rows) + 1)
-        * (np.max(fine_columns) - np.min(fine_columns) + 1)
-    )
+    stored_height = int(np.max(fine_rows) - np.min(fine_rows) + 1)
+    stored_width = int(np.max(fine_columns) - np.min(fine_columns) + 1)
+    dense_window_cells = stored_height * stored_width
     continuous_window_valid = dense_window_cells == cell_count
+    display_inset_cells = config.display_boundary_halo_l2_cells * factor
+    expected_display, expected_hidden_halo, display_slices = _display_window_masks(
+        fine_rows,
+        fine_columns,
+        display_inset_cells,
+    )
+    display_partition_valid = bool(
+        np.array_equal(inside_display, expected_display)
+        and np.array_equal(inside_hidden_routing_halo, expected_hidden_halo)
+        and np.all(inside_display ^ inside_hidden_routing_halo)
+        and not np.any(inside_display & inside_hidden_routing_halo)
+    )
+    display_contains_core = bool(np.all(~inside_core | inside_display))
+    display_height = int(display_slices[0].stop - display_slices[0].start)
+    display_width = int(display_slices[1].stop - display_slices[1].start)
+    display_cell_count = int(np.count_nonzero(inside_display))
+    hidden_routing_halo_cell_count = int(np.count_nonzero(inside_hidden_routing_halo))
+    display_area_km2 = float(np.sum(child_area[inside_display]))
+    hidden_routing_halo_area_km2 = float(np.sum(child_area[inside_hidden_routing_halo]))
     actual_cell_size_m = math.sqrt(float(np.sum(child_area)) / cell_count) * 1_000.0
     cell_size_relative_error = abs(actual_cell_size_m - config.requested_cell_size_m) / float(
         config.requested_cell_size_m
@@ -1256,6 +1355,8 @@ def _validate_terrain(
             inside_core,
             inside_process_halo,
             outside_process,
+            inside_display,
+            inside_hidden_routing_halo,
         )
     )
     estimated_peak_memory_bytes = int(
@@ -1285,6 +1386,18 @@ def _validate_terrain(
         "parent_grouping_valid": int(parent_grouping_valid),
         "terrain_window_continuous_valid": int(continuous_window_valid),
         "terrain_domain_roles_valid": int(domain_roles_valid),
+        "display_window_partition_valid": int(display_partition_valid),
+        "display_window_contains_catchment_core": int(display_contains_core),
+        "stored_window_height_cells": stored_height,
+        "stored_window_width_cells": stored_width,
+        "display_window_height_cells": display_height,
+        "display_window_width_cells": display_width,
+        "display_boundary_halo_l2_cells": config.display_boundary_halo_l2_cells,
+        "display_boundary_halo_l3_cells": display_inset_cells,
+        "display_cell_count": display_cell_count,
+        "display_area_km2": display_area_km2,
+        "hidden_routing_halo_cell_count": hidden_routing_halo_cell_count,
+        "hidden_routing_halo_area_km2": hidden_routing_halo_area_km2,
         "hydrological_acceptance_scope": "catchment_core_only",
         "catchment_core_parent_count": int(np.count_nonzero(sources.domain_inside_core)),
         "catchment_core_cell_count": int(np.count_nonzero(inside_core)),
@@ -1370,6 +1483,8 @@ def _validate_terrain(
         "parent_grouping_valid",
         "terrain_window_continuous_valid",
         "terrain_domain_roles_valid",
+        "display_window_partition_valid",
+        "display_window_contains_catchment_core",
         "unique_stable_ids_valid",
         "uint64_ids_required",
         "all_finite_valid",
@@ -1450,6 +1565,7 @@ def _render_terrain(
     path: Path,
     actual_cell_size_m: float,
     *,
+    display_inset_cells: int = 0,
     show_domain: bool = False,
 ) -> None:
     rows = np.asarray(root["geometry/row"][:], dtype=np.int32)
@@ -1457,7 +1573,6 @@ def _render_terrain(
     elevation = np.asarray(root["terrain/elevation_m"][:], dtype=np.float32)
     inside_core = np.asarray(root["geometry/inside_catchment_core"][:], dtype=bool)
     inside_halo = np.asarray(root["geometry/inside_process_halo"][:], dtype=bool)
-    outside_process = np.asarray(root["geometry/outside_process_domain"][:], dtype=bool)
     min_row, max_row = int(np.min(rows)), int(np.max(rows))
     min_col, max_col = int(np.min(columns)), int(np.max(columns))
     dense = np.full((max_row - min_row + 1, max_col - min_col + 1), np.nan, dtype=np.float32)
@@ -1467,10 +1582,8 @@ def _render_terrain(
         raise RuntimeError("L3 terrain diagnostic refuses a window with internal no-data holes")
     dense_core = np.zeros_like(valid)
     dense_halo = np.zeros_like(valid)
-    dense_outside = np.zeros_like(valid)
     dense_core[rows - min_row, columns - min_col] = inside_core
     dense_halo[rows - min_row, columns - min_col] = inside_halo
-    dense_outside[rows - min_row, columns - min_col] = outside_process
     padded = np.pad(dense, 1, mode="constant", constant_values=np.nan)
     center = padded[1:-1, 1:-1]
     north = padded[:-2, 1:-1]
@@ -1491,13 +1604,12 @@ def _render_terrain(
     shade = np.clip(0.58 + 0.48 * illumination, 0.42, 1.08)
     colors = _terrain_colors(dense) * shade[..., None]
     if show_domain:
-        colors[dense_outside] = (
-            colors[dense_outside] * 0.76 + np.asarray([214.0, 216.0, 210.0]) * 0.24
-        )
-        process_boundary = _inner_boundary(dense_core | dense_halo)
+        inherited_context_boundary = _inner_boundary(dense_core | dense_halo)
         core_boundary = _inner_boundary(dense_core)
-        colors[process_boundary] = np.asarray([180.0, 177.0, 162.0])
+        colors[inherited_context_boundary] = np.asarray([180.0, 116.0, 66.0])
         colors[core_boundary] = np.asarray([32.0, 35.0, 31.0])
+    display_slices = _display_window_slices(dense.shape[0], dense.shape[1], display_inset_cells)
+    colors = colors[display_slices]
     map_image = Image.fromarray(np.clip(colors, 0, 255).astype(np.uint8), mode="RGB")
 
     title_height = 50
@@ -1513,7 +1625,11 @@ def _render_terrain(
     title_font = _diagnostic_font(22)
     label_font = _diagnostic_font(17)
     small_font = _diagnostic_font(15)
-    title = "L3 conditioned terrain and process domain" if show_domain else "L3 conditioned terrain"
+    title = (
+        "L3 conditioned terrain and inherited target"
+        if show_domain
+        else "L3 conditioned terrain - display extent"
+    )
     draw.text((18, 13), title, fill=(25, 30, 27), font=title_font)
     draw.line((map_image.width, 0, map_image.width, canvas.height), fill=(178, 181, 174), width=1)
 
@@ -1554,19 +1670,25 @@ def _render_terrain(
             font=small_font,
         )
         role_y += 34
-        draw.line((legend_x, role_y, legend_x + 36, role_y), fill=(180, 177, 162), width=4)
+        draw.line((legend_x, role_y, legend_x + 36, role_y), fill=(180, 116, 66), width=4)
         draw.text(
             (legend_x + 48, role_y - 9),
-            "Process halo limit",
+            "Inherited context limit",
             fill=(35, 39, 36),
             font=small_font,
         )
         role_y += 34
-        draw.rectangle((legend_x, role_y - 9, legend_x + 36, role_y + 9), fill=(196, 198, 193))
         draw.text(
-            (legend_x + 48, role_y - 9),
-            "Outside process",
-            fill=(35, 39, 36),
+            (legend_x, role_y - 9),
+            "Visible rectangle is fully processable",
+            fill=(70, 74, 70),
+            font=small_font,
+        )
+        role_y += 26
+        draw.text(
+            (legend_x, role_y - 9),
+            "Hidden routing halo is outside frame",
+            fill=(70, 74, 70),
             font=small_font,
         )
 
@@ -1700,6 +1822,7 @@ def _existing_result(
         target_id=sources.target_id,
         parent_count=int(validation["parent_count"]),
         cell_count=int(validation["cell_count"]),
+        display_cell_count=int(validation["display_cell_count"]),
         actual_cell_size_m=float(validation["actual_area_equivalent_cell_size_m"]),
         chunk_count=int(manifest["chunking"]["chunk_count"]),
         resumed_chunk_count=int(manifest["chunking"].get("resumed_chunk_count", 0)),
@@ -1791,6 +1914,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         )
     if not bool(np.all(np.asarray(complete[:], dtype=bool))):
         raise RuntimeError("L3 terrain generation ended with incomplete chunks")
+    _write_display_masks(root, config, zarr_path)
     conditioning_path = partial / "conditioning.json"
     if not bool(root.attrs.get("center_corrections_solved", False)):
         context_correction, conditioning_metrics = _solve_center_corrections(root, sources, config)
@@ -1844,18 +1968,23 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         root,
         preview_path,
         float(validation["actual_area_equivalent_cell_size_m"]),
+        display_inset_cells=(config.display_boundary_halo_l2_cells * config.refinement_factor),
     )
     domain_preview_path = partial / "terrain_domain.png"
     _render_terrain(
         root,
         domain_preview_path,
         float(validation["actual_area_equivalent_cell_size_m"]),
+        display_inset_cells=(config.display_boundary_halo_l2_cells * config.refinement_factor),
         show_domain=True,
     )
     root.attrs["status"] = "complete"
     root.attrs["actual_area_equivalent_cell_size_m"] = validation[
         "actual_area_equivalent_cell_size_m"
     ]
+    root.attrs["display_cell_count"] = validation["display_cell_count"]
+    root.attrs["hidden_routing_halo_cell_count"] = validation["hidden_routing_halo_cell_count"]
+    root.attrs["display_boundary_halo_l2_cells"] = config.display_boundary_halo_l2_cells
     zarr.consolidate_metadata(str(partial / "terrain.zarr"))
     storage_bytes = sum(path.stat().st_size for path in partial.rglob("*") if path.is_file())
     validation["storage_bytes"] = storage_bytes
@@ -1888,6 +2017,14 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
             "process_halo_parent_count": int(np.count_nonzero(sources.domain_inside_process_halo)),
             "outside_process_parent_count": int(np.count_nonzero(sources.domain_outside_process)),
             "cell_count": expected_cells,
+            "display_cell_count": validation["display_cell_count"],
+            "display_area_km2": validation["display_area_km2"],
+            "display_window_height_cells": validation["display_window_height_cells"],
+            "display_window_width_cells": validation["display_window_width_cells"],
+            "hidden_routing_halo_cell_count": validation["hidden_routing_halo_cell_count"],
+            "hidden_routing_halo_area_km2": validation["hidden_routing_halo_area_km2"],
+            "display_boundary_halo_l2_cells": config.display_boundary_halo_l2_cells,
+            "display_boundary_halo_l3_cells": validation["display_boundary_halo_l3_cells"],
             "requested_cell_size_m": config.requested_cell_size_m,
             "actual_area_equivalent_cell_size_m": validation["actual_area_equivalent_cell_size_m"],
             "cell_id_dtype": "uint64",
@@ -1895,8 +2032,14 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
                 "geometry/inside_catchment_core",
                 "geometry/inside_process_halo",
                 "geometry/outside_process_domain",
+                "geometry/inside_display_window",
+                "geometry/inside_hidden_routing_halo",
             ],
             "hydrological_acceptance_scope": "catchment_core_only",
+            "display_scope": (
+                "inner rectangle reserved for complete process coverage; outer stored ring "
+                "is a hidden routing halo"
+            ),
         },
         "chunking": {
             "parent_aligned": True,
@@ -1995,6 +2138,7 @@ def generate_l3_terrain(config: L3TerrainConfig) -> L3TerrainResult:
         target_id=sources.target_id,
         parent_count=len(sources.domain_ids),
         cell_count=expected_cells,
+        display_cell_count=int(validation["display_cell_count"]),
         actual_cell_size_m=float(validation["actual_area_equivalent_cell_size_m"]),
         chunk_count=chunk_count,
         resumed_chunk_count=resumed_chunk_count,
