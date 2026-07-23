@@ -25,6 +25,7 @@ from map_maker.pipeline.l3_surface_materials import (
     _interpolation_stencil,
     _kernel_controls,
     _local_relief,
+    _local_terrain_slope,
     _require_disjoint_output,
     _require_source_manifest_checksum,
     _validate,
@@ -43,6 +44,7 @@ surface_materials_output_dir: soils
 l3_surface_materials:
   chunk_rows: 32768
   local_relief_radius_cells: 8
+  terrain_slope_smoothing_radius_cells: 6
   spinup_years: 12
 limits:
   maximum_surface_materials_storage_gb: 1
@@ -55,6 +57,8 @@ limits:
     assert config.channel_geometry_dir == tmp_path / "channels"
     assert config.output_dir == tmp_path / "soils"
     assert config.chunk_rows == 32_768
+    assert config.local_relief_radius_cells == 8
+    assert config.terrain_slope_smoothing_radius_cells == 6
     assert config.spinup_years == 12
 
 
@@ -66,6 +70,16 @@ def test_local_relief_uses_continuous_spatial_window() -> None:
     assert relief[2, 2] == 100.0
     assert relief[1, 1] == 100.0
     assert relief[0, 0] == 0.0
+
+
+def test_local_terrain_slope_uses_physical_elevation_gradient() -> None:
+    rows, columns = np.indices((5, 5), dtype=np.float32)
+    elevation = (8.0 * rows + 6.0 * columns).reshape(-1)
+    order = np.arange(25, dtype=np.int32)
+    slope = _local_terrain_slope(elevation, order, 5, 5, 2.0, 1).reshape(5, 5)
+    assert slope[2, 2] == pytest.approx(5.0, abs=1e-6)
+    assert np.isfinite(slope).all()
+    assert np.all(slope >= 0.0)
 
 
 def test_alluvial_legacy_localizes_parent_prior_to_low_valley_ground(
@@ -211,6 +225,14 @@ def _tiny_sources() -> _MaterialSources:
         area_km2=np.full(count, 0.04, dtype=np.float64),
         elevation_m=elevation,
         local_relief_m=_local_relief(elevation, order, height, width, 1),
+        local_terrain_slope=_local_terrain_slope(
+            elevation,
+            order,
+            height,
+            width,
+            200.0,
+            1,
+        ),
         inside_display=np.ones(count, dtype=bool),
         inside_core=np.ones(count, dtype=bool),
         spatial_order=order,
@@ -251,6 +273,11 @@ def test_parent_interpolation_and_native_chunk_are_continuous_and_conservative(
     assert np.all(inputs["monthly_snowfall"] <= inputs["monthly_precipitation"])
     assert np.ptp(drivers["TemperatureAdjustmentC"]) > 0.0
     assert drivers["AlluvialLegacyFraction"][5] > drivers["AlluvialLegacyFraction"][0]
+    np.testing.assert_array_equal(drivers["LocalTerrainSlope"], inputs["flow_slope"])
+    assert not np.array_equal(
+        inputs["flow_slope"],
+        sources.hydrology["routing/flow_slope"],
+    )
     outputs = _allocate_outputs(16)
     metadata = run_surface_materials(
         **_kernel_controls(config),

@@ -1,7 +1,8 @@
 # L3 Regional Vertical Slice
 
-Status: base terrain, hydrology V0, physical channel geometry, and initial
-surface materials/soils implemented; adaptive channel refinement pending
+Status: base terrain, hydrology V0, physical channel geometry, initial
+surface materials/soils, and ecology V0 implemented; adaptive channel
+refinement pending
 
 ## Purpose
 
@@ -40,6 +41,13 @@ Realize surface materials, initial mineral soils, and monthly soil water with:
 
 ```bash
 uv run map-maker l3-surface-materials
+```
+
+Replay the fine resource envelope, functional vegetation, and biome mixtures
+with:
+
+```bash
+uv run map-maker l3-ecology
 ```
 
 It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
@@ -107,9 +115,12 @@ routed core.
 7. **Implemented:** realize initial surface-material mixtures, mineral-soil
    properties, and monthly soil water from inherited geology/climate plus L3
    terrain, water, and channel support.
-8. Apply bounded fluvial incision and deposition only where the active terrain
+8. **Implemented:** replay the established resource-envelope,
+   potential-biosphere, functional-vegetation, and derived-biome kernels from
+   accepted fine soil and water state.
+9. Apply bounded fluvial incision and deposition only where the active terrain
    resolution can represent the process support.
-9. Adaptively refine selected channel corridors before resolving banks,
+10. Adaptively refine selected channel corridors before resolving banks,
    meanders, crossings, or categorical water surfaces.
 
 Every stage writes resumable intermediate data and exposes supervised input and
@@ -229,6 +240,13 @@ elevation lapse correction, and accepted L3 precipitation, melt, lakes,
 wetlands, channels, floodplains, and relief drive the fine result. The monthly
 soil-water bucket receives a 24-year periodic spin-up.
 
+Soil formation and alluvial localization use a persisted geomorphic
+`LocalTerrainSlope` derived from the physical elevation field over a
+hillslope-scale smoothing window controlled independently by
+`terrain_slope_smoothing_radius_cells`. The receiver-edge
+`routing/flow_slope` remains a hydraulic quantity and is never used as a
+soil-forming terrain gradient.
+
 A completion marker is trusted only when its durable chunk-stat record exists
 and every output-chunk checksum still matches. A missing or damaged completed
 chunk is marked incomplete and regenerated before validation.
@@ -241,25 +259,26 @@ older valley deposits without widening current channel water. It is not an
 applied sediment-transport solve and must be replaced or updated when a later
 L3 erosion/deposition history exists.
 
-The canonical result covers all `6,040,320` stored cells and the common
-`5,203,968`-cell display. Land is `71.4%` soil-bearing with `2.6%` hydric-soil
-support, `1.03 m` mean regolith, `0.77 m` mean soil depth, pH `5.56`, and
-fertility potential `0.21`. Area-weighted materials are `28.7%` exposed
-bedrock, `48.2%` residual regolith, `7.3%` colluvium, `9.2%` alluvium, `6.6%`
-lacustrine sediment, and less than `0.1%` glacial deposit. The parent-material
-mixture L1 difference p95 is `0.72`; it is bounded but deliberately not exact.
+The corrected canonical result covers all `6,040,320` stored cells and the
+common `5,203,968`-cell display. Land is `77.0%` soil-bearing with `3.4%`
+hydric-soil support, `1.19 m` mean regolith, `0.93 m` mean soil depth, pH
+`5.56`, and fertility potential `0.22`. Area-weighted materials are `21.9%`
+exposed bedrock, `53.7%` residual regolith, `6.4%` colluvium, `10.9%`
+alluvium, `7.1%` lacustrine sediment, and less than `0.1%` glacial deposit.
+The parent-material mixture L1 difference p95 is `0.63`; it is bounded but
+deliberately not exact.
 
 All material and texture sums, monthly water budgets, finite/bounded outputs,
 soil support, source/output checksums, memory, and storage gates pass. Peak RSS
-is about `2.2 GB`; the artifact is about `1.6 GB`. Its diagnostic,
+is about `2.3 GB`; the artifact is about `1.5 GB`. Its diagnostic,
 `surface-materials-v0/surface_materials.png`, includes the complete display,
 legend, and labelled `100 km` scale. These are initial mineral soils: no
 groundwater/baseflow, vegetation feedback, soil taxonomy, dynamic disturbance,
 or mineral-resource deposits are claimed.
 
-## Next Contract: L3 Ecology V0
+## Implemented L3 Ecology V0
 
-L3 ecology must replay the established causal stack in regional chunks:
+L3 ecology replays the established causal stack in 93 regional chunks:
 
 1. reconstruct monthly insolation from the inherited orbital field, monthly
    temperature from the shared parent climate plus persisted L3 lapse
@@ -275,17 +294,22 @@ L3 ecology must replay the established causal stack in regional chunks:
 5. run the existing Rust derived-biome kernel only after the functional
    partition passes.
 
-The stage will persist monthly envelope and productivity state, potential
+The stage persists monthly envelope and productivity state, potential
 traits, eight functional vegetation fractions, five nonvegetated fractions,
 resource potentials, 13 familiar biome fractions, confidence/transition state,
 and reproducible query codes. Arrays remain cell-first in the regional Zarr
 artifact; native kernels receive month- or class-first contiguous chunks.
 
-Inherited potential-biosphere, functional-vegetation, and biome fields are
+Inherited potential-biosphere, functional-vegetation, and biome fields remain
 comparison priors and surrogate-training context. They are not copied labels,
 hard parent quotas, or permission to create L0-aligned ecological blocks. Fine
 soil water and terrain may move a child away from its parent mixture, while
 represented-parent divergence and parent-boundary motif metrics remain bounded.
+
+Broad annual precipitation used for biome climatology is bilinearly
+interpolated from parent monthly climate so L0 conservation blocks do not
+become ecological boundaries. Productivity still consumes accepted L3 monthly
+soil liquid and saturation, preserving the fine water-budget result.
 
 V0 reuses the source world's orbital, atmosphere, and calibrated ecology
 controls. It does not run a regional atmosphere, model vegetation feedback,
@@ -297,13 +321,22 @@ hydric-soil, wetland, and soil-water state; a narrow river does not make a whole
 Acceptance requires finite and bounded outputs, zero terrestrial state over
 physical ocean, exact functional/nonvegetated and biome/ice/water partitions,
 code reconstruction, monthly-to-annual productivity closure, rooting depth
-within regolith, checksum-audited resume, and a storage ceiling initially set
-at `6 GB`. Relational diagnostics must show wetter fine soils favoring
+within regolith, checksum-audited geometry/mask/output resume, and a storage
+ceiling initially set at `6 GB`. Relational diagnostics must show wetter fine soils favoring
 hydrophytic/wetland mixtures, cold/high terrain favoring cold or alpine
 mixtures, and deeper fertile valley soils improving productivity and resource
 potential relative to comparable adjacent slopes. A complete diagnostic must
 include a legend and labelled kilometre scale. Earthlike global abundance
 ranges are context, not hard regional quotas.
+
+The canonical run covers `233,732 km2` of land. Mean annual NPP is `0.192 kg
+C/m2/year`, potential vegetation cover is `37.6%`, and standing biomass is
+`4.09 kg C/m2`. Wet-soil response is `+0.027`, cold/highland response is
+`+0.064`, and fertile-valley NPP response is `+0.094 kg C/m2/year`.
+Parent-boundary p95 is bounded both relatively (`2.95`) and absolutely
+(`0.052`), while repeated-parent motif correlation p95 is `0.196`. All
+durability, closure, relational, memory, and storage gates pass; peak RSS is
+about `2.6 GB` and the artifact is about `2.1 GB`.
 
 ## Required Outputs
 
@@ -316,6 +349,8 @@ ranges are context, not hard regional quotas.
 - sediment flux and deposited material class;
 - mutually exclusive surface-material mixtures, initial mineral-soil
   properties, and monthly soil-water state;
+- monthly ecological resource and productivity state, functional vegetation,
+  familiar biome mixtures, and derived query codes;
 - context/boundary state and exact source provenance;
 - diagnostic terrain, basin, river-hierarchy, and process-budget renders.
 
@@ -354,8 +389,8 @@ ranges are context, not hard regional quotas.
 ## Non-Goals
 
 - full dynamic regional atmosphere or ocean circulation;
-- final taxonomic or vegetation-conditioned soils, ecosystems, minerals,
-  settlements, or game tiles;
+- final taxonomic or vegetation-conditioned soils, dynamic ecosystems,
+  mineral-resource deposits, settlements, or game tiles;
 - resolving every narrow channel at the `200 m` base scale;
 - refining the entire basin-395 L2 package to L3;
 - training or deploying the neural surrogate.

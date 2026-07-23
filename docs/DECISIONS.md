@@ -2926,7 +2926,7 @@ fine terrain refine coarse drainage without hard-walling a 72 km mask.
 
 ## Decision 058: L3 Surface Materials Disaggregate History, Not River Width
 
-Status: implemented V1; ecological calibration pending
+Status: implemented V2; ecology replay passing
 
 Decision:
 Realize initial L3 surface-material mixtures, mineral-soil properties, and
@@ -2936,6 +2936,11 @@ continuous geology and climate priors, retain categorical geological province
 identity, apply a bounded elevation lapse correction to monthly temperature,
 and consume accepted L3 precipitation, melt, lakes, wetlands, relief, and
 channel-support state.
+
+Derive soil-forming slope from the physical L3 elevation field over a declared
+hillslope-scale smoothing window. Persist that `LocalTerrainSlope` driver.
+Never substitute receiver-edge hydraulic `flow_slope`, whose semantics include
+depression conditioning and discrete receiver geometry.
 
 Do not infer regional alluvial extent from active channel width. A 10-30 m
 channel remains a vector or fractional feature in a nominal 200 m cell, while
@@ -2954,10 +2959,11 @@ than regolith, checksum mismatch, or unbounded divergence from represented
 parent priors. Preserve every stage input and output needed for later surrogate
 training.
 
-The canonical seed-42 artifact covers `6,040,320` cells in 47 chunks. It is
-`71.4%` soil-bearing over land, with `0.77 m` mean soil depth, `2.6%` hydric
-support, and `9.2%` alluvium. Parent-material mixture L1 difference p95 is
-`0.72`. Peak RSS is about `2.2 GB` and storage is about `1.6 GB`. Cold
+The corrected canonical seed-42 artifact covers `6,040,320` cells in 47
+chunks. It is `77.0%` soil-bearing over land, with `0.93 m` mean soil depth,
+`3.4%` hydric support, and `10.9%` alluvium. Parent-material mixture L1
+difference p95 is `0.63`. Peak RSS is about `2.3 GB` and storage is about
+`1.5 GB`. Cold
 generation, checksum-verifying replay, and deliberate cache-corruption
 rejection pass.
 
@@ -2977,8 +2983,7 @@ current water width with the deposits left by its history.
 
 ## Decision 059: L3 Ecology Recomputes From Fine Soil Water Before Naming Biomes
 
-Status: provisional implementation contract; implementation and regional
-calibration pending
+Status: implemented V0; regional calibration passing
 
 Decision:
 Replay the established ecology chain at L3 rather than downscaling a finished
@@ -2994,6 +2999,9 @@ persisted L3 lapse adjustment used by surface materials. Use accepted L3
 monthly soil liquid input and saturation, soil support, nutrients, fertility,
 salinity, confidence, lakes, wetlands, glacier support, and local relief.
 This is a regional ecological replay, not a new regional atmosphere.
+Use continuously interpolated parent monthly precipitation only for broad
+biome climatology; exact-conservation fine hydrology remains authoritative for
+soil liquid, saturation, and therefore productivity.
 
 Persist monthly envelope and NPP state, potential producer traits, eight
 functional vegetation fractions, five nonvegetated fractions, five resource
@@ -3020,8 +3028,8 @@ Hard acceptance covers finite/bounded state, zero terrestrial output over
 physical ocean, exact functional plus nonvegetated closure, exact biome plus
 ice/water closure, independently reconstructed codes, monthly-to-annual
 productivity closure, rooting depth within regolith, source lineage, durable
-chunk checksums, cache integrity, `24 GB` peak memory, and an initial `6 GB`
-artifact ceiling. Regional relational diagnostics replace inappropriate global
+geometry/mask/output chunk checksums, cache integrity, `24 GB` peak memory, and
+an initial `6 GB` artifact ceiling. Regional relational diagnostics replace inappropriate global
 abundance quotas: wetter soils must favor hydrophytic/wetland mixtures,
 cold/high terrain must favor cold or alpine mixtures, and deeper fertile valley
 soils must improve productivity/resource potential against comparable nearby
@@ -3035,3 +3043,45 @@ training examples. Replaying the same calibrated kernels with fine physical
 inputs preserves the validated model while allowing real regional ecotones,
 riparian effects, cold uplands, wet depressions, and fertile alluvial ground to
 emerge at the active resolution.
+
+The canonical artifact covers all `6,040,320` stored cells in 93 chunks and
+`233,732 km2` of displayed land. Mean annual NPP is `0.192 kg C/m2/year`,
+potential cover is `37.6%`, and standing biomass is `4.09 kg C/m2`. Wet-soil,
+cold/highland, and fertile-valley responses are positive. Parent-boundary
+difference p95 is `0.052`, its boundary/interior ratio is `2.95`, and repeated
+parent motif correlation p95 is `0.196`. All validation, checksum replay,
+`24 GB` memory, and `6 GB` storage gates pass.
+
+## Decision 060: L3 Hydraulic Receiver Slope Is Not Geomorphic Hillslope Slope
+
+Status: implemented for L3; legacy global-stage correction deferred
+
+Decision:
+Within L3, treat `routing/flow_slope` as a hydraulic receiver-edge quantity
+used only for routing, velocity, stream power, and related channel
+calculations. It measures conditioned head drop along a discrete downstream
+edge and may legitimately encode lake spill surfaces, depression handling, and
+receiver geometry.
+
+Any weathering, soil-depth, colluvial, alluvial, erosion, or ecological process
+that needs terrain steepness must derive a separate geomorphic slope from the
+physical elevation field at a declared process scale. Surface Materials V2
+uses a Gaussian-smoothed hillslope field with approximately `1.2 km` sigma and
+`2.4 km` support, controlled independently by
+`terrain_slope_smoothing_radius_cells`. It persists the result as
+`drivers/LocalTerrainSlope`, fingerprints the model change, and validates that
+the driver is finite and nonnegative.
+
+The legacy global surface-material stage still consumes hydrology `FlowSlope`.
+That is recorded technical debt, not covered by this decision's implemented
+status. Decision 045 keeps the global stage frozen; correct it before global or
+L2 soil/material state becomes a causal input to mineral-system work.
+
+Reason:
+Using routed edge slope as a soil-forming slope produced thousands of visible
+concentric bullseyes around conditioned depressions and receivers. The raw
+physical terrain gradient was continuous; the artifact was a semantic driver
+error, not defective terrain noise. Separating the fields removes the motif
+without changing accepted terrain, receivers, discharge, lakes, or river
+identity and prevents the same category error in future erosion and resource
+stages.

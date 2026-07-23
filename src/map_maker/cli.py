@@ -132,9 +132,7 @@ def _regional_handoff_parser(subparsers) -> argparse.ArgumentParser:
         "--config",
         type=Path,
         default=Path("configs/l2_regional_handoff.yaml"),
-        help=(
-            "Regional handoff YAML configuration " "(default: configs/l2_regional_handoff.yaml)."
-        ),
+        help=("Regional handoff YAML configuration (default: configs/l2_regional_handoff.yaml)."),
     )
     parser.add_argument("--output-dir", type=Path, help="Override package output directory.")
     parser.add_argument(
@@ -234,6 +232,25 @@ def _l3_surface_materials_parser(subparsers) -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         help="Override L3 surface-material output directory.",
+    )
+    return parser
+
+
+def _l3_ecology_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-ecology",
+        help="Replay the causal biosphere, functional vegetation, and biome stack at L3.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 vertical-slice YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override L3 ecology output directory.",
     )
     return parser
 
@@ -370,6 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _l3_hydrology_parser(subparsers)
     _l3_channel_geometry_parser(subparsers)
     _l3_surface_materials_parser(subparsers)
+    _l3_ecology_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -725,6 +743,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Realized materials and initial soils across "
             f"{materials.display_cell_count} displayed cells for "
             f"{materials.target_id}; {materials.chunk_count} chunks passed."
+        )
+        return 0
+
+    if args.command == "l3-ecology":
+        try:
+            from .pipeline.l3_ecology import L3EcologyConfig, generate_l3_ecology
+
+            ecology_config = L3EcologyConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+            )
+            ecology = generate_l3_ecology(ecology_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 ecology: {ecology.output_dir}")
+        print(f"Manifest: {ecology.manifest_path}")
+        print(f"Validation: {ecology.validation_path}")
+        print(f"Preview: {ecology.preview_path}")
+        print(
+            f"Replayed the causal ecology stack across "
+            f"{ecology.display_cell_count} displayed cells for "
+            f"{ecology.target_id}; {ecology.chunk_count} chunks passed."
         )
         return 0
 

@@ -155,12 +155,8 @@ def run_potential_biosphere(  # noqa: PLR0913
     **output_arrays: np.ndarray,
 ) -> dict[str, Any]:
     area_array = _read_array(areas, name="areas", dtype=np.dtype(np.float64))
-    if (
-        area_array.ndim != 3
-        or area_array.shape[0] != 6
-        or area_array.shape[1] != area_array.shape[2]
-    ):
-        raise ValueError("areas must have shape (6, n, n)")
+    if area_array.ndim < 1 or area_array.size == 0:
+        raise ValueError("areas must contain at least one spatial cell")
     shape = area_array.shape
     monthly_shape = (12, *shape)
     float_inputs_raw = {

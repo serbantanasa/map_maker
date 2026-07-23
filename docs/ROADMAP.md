@@ -35,13 +35,16 @@ another global-stage expansion.
    priors plus accepted L3 terrain, water, and channel geometry. The canonical
    artifact covers the complete stored window in durable chunks and keeps
    active channel width separate from inherited alluvial history.
-8. **Next:** implement the provisional Decision 059 L3 ecology contract:
-   recompute the resource envelope and potential biosphere from L3 monthly soil
-   water before deriving fractional functional vegetation and biome mixtures.
-   Do not interpolate coarse biome colors as the regional result.
-9. **Deferred:** design mineral systems globally and at L2 before realizing
-   veins, seams, lenses, and placers at L3. Do not paint resource deposits
-   without a causal upstream inventory.
+8. **Complete:** replay the causal ecology stack from L3 soil water through
+   resource envelope, potential biosphere, functional vegetation, and
+   fractional biome mixtures. Broad climate is interpolated continuously;
+   accepted fine soil water controls productivity, and coarse biome colors are
+   comparison priors only.
+9. **Next decision:** specify the causal global/L2 mineral-system inventory
+   needed before L3 can realize veins, seams, lenses, evaporites, and placers,
+   or prioritize adaptive `25-50 m` river-corridor refinement. Do not paint
+   resource deposits or resolve banks before their respective upstream
+   contracts exist.
 10. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
@@ -70,7 +73,11 @@ Decision 057 now routes all `6.04 million` stored cells behind an approximately
 and hydrology display. No visible region is terrain-only. The inherited inland
 outlet remains an alignment prior; the accepted `89,852 km2` natural basin is
 selected by dominant overlap with the coarse target and exits the display at
-about `1,079 m3/s`.
+about `1,079 m3/s`. Decisions 058-060 now cover passing regional soils and
+ecology, including the rule that hydraulic receiver slope cannot stand in for
+physical hillslope gradient at L3. The legacy global material stage still uses
+`FlowSlope`; fix that frozen technical debt before global/L2 material state
+becomes a causal mineral-system input.
 
 ## Thaw Gate
 

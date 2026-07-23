@@ -99,3 +99,23 @@ Stop and record a blocker instead of weakening gates when:
 - Mineral realization remains deliberately deferred. The biome-stage contract
   is recorded by Decision 059; implementation is the next milestone, not an
   unfinished item in this dated plan.
+
+## Subsequent Outcome
+
+The soil replay was corrected after visual review found that hydraulic
+receiver-edge slope had been misused as physical hillslope gradient. Decision
+060 records the separation. The corrected artifact is `77.0%` soil-bearing,
+`3.4%` hydric, `0.93 m` mean soil depth, and `10.9%` alluvium, with no repeated
+receiver-bullseye motif in the diagnostic.
+The hillslope smoothing radius is independent of the local-relief window. The
+equivalent legacy global-stage `FlowSlope` use remains frozen technical debt
+and must be corrected before causal mineral-system implementation.
+
+Decision 059 is now implemented in `ecology-v0/`. The stage replays all four
+existing Rust ecology kernels over `6,040,320` fine cells, passes cold
+generation and checksum-verifying replay, and publishes a full-window map with
+legend and `100 km` scale. Mean annual NPP is `0.192 kg C/m2/year`, potential
+cover is `37.6%`, standing biomass is `4.09 kg C/m2`, and wet, cold/highland,
+and fertile-valley relational checks all pass.
+Geometry, parent IDs, display/core masks, drivers, and outputs are all covered
+by per-chunk resume checksums and final source-array comparison.

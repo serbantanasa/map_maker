@@ -13,7 +13,7 @@ from typing import Any, Mapping
 
 import numpy as np
 from PIL import Image, ImageDraw
-from scipy.ndimage import maximum_filter, minimum_filter
+from scipy.ndimage import gaussian_filter, maximum_filter, minimum_filter
 import yaml  # type: ignore[import-untyped]
 import zarr  # type: ignore[import-untyped]
 
@@ -47,7 +47,7 @@ from .stages.surface_materials import (
 )
 
 SURFACE_MATERIALS_FORMAT_VERSION = 1
-SURFACE_MATERIALS_MODEL_VERSION = "l3_surface_materials_v1"
+SURFACE_MATERIALS_MODEL_VERSION = "l3_surface_materials_v2"
 MONTHS = 12
 
 NATIVE_OUTPUT_NAMES = {
@@ -94,6 +94,7 @@ SOIL_PATHS = {name: f"soil/{name}" for name in SOIL_OUTPUTS}
 MONTHLY_PATHS = {name: f"monthly/{name}" for name in MONTHLY_OUTPUTS}
 DRIVER_PATHS = {
     "LocalReliefM": "drivers/LocalReliefM",
+    "LocalTerrainSlope": "drivers/LocalTerrainSlope",
     "TemperatureAdjustmentC": "drivers/TemperatureAdjustmentC",
     "AlluvialLegacyFraction": "drivers/AlluvialLegacyFraction",
 }
@@ -149,6 +150,7 @@ class L3SurfaceMaterialsConfig:
     output_dir: Path
     chunk_rows: int = 131_072
     local_relief_radius_cells: int = 12
+    terrain_slope_smoothing_radius_cells: int = 12
     temperature_lapse_rate_c_per_m: float = 0.0065
     maximum_temperature_adjustment_c: float = 12.0
     spinup_years: int = 24
@@ -198,6 +200,7 @@ class L3SurfaceMaterialsConfig:
         known = {
             "chunk_rows",
             "local_relief_radius_cells",
+            "terrain_slope_smoothing_radius_cells",
             "temperature_lapse_rate_c_per_m",
             "maximum_temperature_adjustment_c",
             "spinup_years",
@@ -220,7 +223,12 @@ class L3SurfaceMaterialsConfig:
         unknown = set(controls) - known
         if unknown:
             raise ValueError(f"Unknown L3 surface-material controls: {', '.join(sorted(unknown))}")
-        integer_names = {"chunk_rows", "local_relief_radius_cells", "spinup_years"}
+        integer_names = {
+            "chunk_rows",
+            "local_relief_radius_cells",
+            "terrain_slope_smoothing_radius_cells",
+            "spinup_years",
+        }
         values: dict[str, int | float] = {}
         for name in known:
             if name in controls:
@@ -257,6 +265,10 @@ class L3SurfaceMaterialsConfig:
             raise ValueError("l3_surface_materials.chunk_rows must be in [16384, 524288]")
         if not 1 <= self.local_relief_radius_cells <= 64:
             raise ValueError("l3_surface_materials.local_relief_radius_cells must be in [1, 64]")
+        if not 1 <= self.terrain_slope_smoothing_radius_cells <= 64:
+            raise ValueError(
+                "l3_surface_materials.terrain_slope_smoothing_radius_cells must be in [1, 64]"
+            )
         if (
             not math.isfinite(self.temperature_lapse_rate_c_per_m)
             or not 0.0 <= self.temperature_lapse_rate_c_per_m <= 0.02
@@ -339,6 +351,7 @@ class _MaterialSources:
     area_km2: np.ndarray
     elevation_m: np.ndarray
     local_relief_m: np.ndarray
+    local_terrain_slope: np.ndarray
     inside_display: np.ndarray
     inside_core: np.ndarray
     spatial_order: np.ndarray
@@ -457,6 +470,32 @@ def _local_relief(
     )
     parent_major = np.empty(len(elevation_m), dtype=np.float32)
     parent_major[spatial_order] = np.asarray(relief, dtype=np.float32).reshape(-1)
+    return parent_major
+
+
+def _local_terrain_slope(
+    elevation_m: np.ndarray,
+    spatial_order: np.ndarray,
+    height: int,
+    width: int,
+    cell_size_m: float,
+    radius: int,
+) -> np.ndarray:
+    if not math.isfinite(cell_size_m) or cell_size_m <= 0.0:
+        raise ValueError("local terrain slope requires a positive finite cell size")
+    if radius < 1:
+        raise ValueError("local terrain slope requires a positive smoothing radius")
+    elevation = elevation_m[spatial_order].reshape(height, width).astype(np.float64)
+    smoothed = gaussian_filter(
+        elevation,
+        sigma=max(radius / 2.0, 0.5),
+        mode="nearest",
+        truncate=2.0,
+    )
+    north_south, east_west = np.gradient(smoothed, cell_size_m)
+    slope = np.hypot(east_west, north_south)
+    parent_major = np.empty(len(elevation_m), dtype=np.float32)
+    parent_major[spatial_order] = np.asarray(slope, dtype=np.float32).reshape(-1)
     return parent_major
 
 
@@ -595,6 +634,14 @@ def _load_sources(config: L3SurfaceMaterialsConfig) -> _MaterialSources:
     if child_resolution % parent_resolution:
         raise RuntimeError("L3 and parent face resolutions are not integer-related")
     actual_cell_size_m = float(terrain_manifest["hierarchy"]["actual_area_equivalent_cell_size_m"])
+    local_terrain_slope = _local_terrain_slope(
+        elevation_m,
+        order,
+        height,
+        width,
+        actual_cell_size_m,
+        config.terrain_slope_smoothing_radius_cells,
+    )
     return _MaterialSources(
         target_id=target_ids.pop(),
         terrain_manifest=terrain_manifest,
@@ -615,6 +662,7 @@ def _load_sources(config: L3SurfaceMaterialsConfig) -> _MaterialSources:
         area_km2=np.ascontiguousarray(area_km2),
         elevation_m=np.ascontiguousarray(elevation_m),
         local_relief_m=np.ascontiguousarray(relief),
+        local_terrain_slope=np.ascontiguousarray(local_terrain_slope),
         inside_display=np.ascontiguousarray(inside_display),
         inside_core=np.ascontiguousarray(inside_core),
         spatial_order=order,
@@ -878,10 +926,7 @@ def _chunk_inputs(
             channels["support/valley_fraction"][start:end],
             dtype=np.float32,
         ),
-        np.asarray(
-            hydrology["routing/flow_slope"][start:end],
-            dtype=np.float32,
-        ),
+        np.asarray(sources.local_terrain_slope[start:end], dtype=np.float32),
         config,
     )
     hydroperiod = np.ascontiguousarray(
@@ -904,7 +949,7 @@ def _chunk_inputs(
         "elevation_confidence": _prior(sources, "elevation/ElevationConfidence", rows, weights),
         "relief": np.ascontiguousarray(sources.local_relief_m[start:end], dtype=np.float32),
         "flow_slope": np.ascontiguousarray(
-            hydrology["routing/flow_slope"][start:end], dtype=np.float32
+            sources.local_terrain_slope[start:end], dtype=np.float32
         ),
         "river_corridor": np.ascontiguousarray(
             channels["support/channel_fraction"][start:end], dtype=np.float32
@@ -951,6 +996,7 @@ def _chunk_inputs(
     }
     drivers = {
         "LocalReliefM": inputs["relief"],
+        "LocalTerrainSlope": inputs["flow_slope"],
         "TemperatureAdjustmentC": temperature_adjustment,
         "AlluvialLegacyFraction": alluvial_legacy,
     }
@@ -1352,6 +1398,8 @@ def _validate(
     physical_bounds_valid = True
     ocean_outputs_zero = True
     dominant_material_valid = True
+    local_terrain_drivers_valid = True
+    maximum_local_terrain_slope = 0.0
     land_area = 0.0
     sums = {
         "soil_bearing": 0.0,
@@ -1482,7 +1530,35 @@ def _validate(
             root[DRIVER_PATHS["AlluvialLegacyFraction"]][start:end],
             dtype=np.float64,
         )
-        finite &= bool(np.all(np.isfinite(alluvial_legacy)))
+        local_relief = np.asarray(
+            root[DRIVER_PATHS["LocalReliefM"]][start:end],
+            dtype=np.float64,
+        )
+        local_slope = np.asarray(
+            root[DRIVER_PATHS["LocalTerrainSlope"]][start:end],
+            dtype=np.float64,
+        )
+        temperature_adjustment = np.asarray(
+            root[DRIVER_PATHS["TemperatureAdjustmentC"]][start:end],
+            dtype=np.float64,
+        )
+        finite &= bool(
+            np.all(np.isfinite(alluvial_legacy))
+            and np.all(np.isfinite(local_relief))
+            and np.all(np.isfinite(local_slope))
+            and np.all(np.isfinite(temperature_adjustment))
+        )
+        local_terrain_drivers_valid &= bool(
+            np.all(local_relief >= 0.0)
+            and np.all(local_slope >= 0.0)
+            and np.all(
+                np.abs(temperature_adjustment) <= config.maximum_temperature_adjustment_c + 1e-6
+            )
+        )
+        maximum_local_terrain_slope = max(
+            maximum_local_terrain_slope,
+            float(np.max(local_slope, initial=0.0)),
+        )
         bounded &= bool(
             np.all((alluvial_legacy >= 0.0) & (alluvial_legacy <= config.maximum_alluvial_fraction))
         )
@@ -1531,6 +1607,7 @@ def _validate(
         "maximum_chunk_water_balance_relative_error": maximum_water_error,
         "maximum_soil_depth_excess_m": maximum_soil_depth_excess,
         "maximum_soil_support_excess": maximum_soil_support_excess,
+        "maximum_local_terrain_slope": maximum_local_terrain_slope,
         "soil_bearing_land_area_fraction": sums["soil_bearing"] / land_area,
         "hydric_soil_land_area_fraction": sums["hydric"] / land_area,
         "land_mean_regolith_depth_m": sums["regolith_depth"] / land_area,
@@ -1555,6 +1632,7 @@ def _validate(
             maximum_material_error <= config.maximum_component_balance_error
         ),
         "dominant_material_valid": dominant_material_valid,
+        "local_terrain_drivers_valid": local_terrain_drivers_valid,
         "texture_balance_valid": (maximum_texture_error <= config.maximum_component_balance_error),
         "monthly_water_balance_valid": (
             maximum_water_error <= config.maximum_water_balance_relative_error

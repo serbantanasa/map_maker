@@ -125,12 +125,8 @@ def run_derived_biomes(  # noqa: PLR0913
     **output_arrays: np.ndarray,
 ) -> dict[str, Any]:
     area_array = _read_array(areas, name="areas", dtype=np.dtype(np.float64))
-    if (
-        area_array.ndim != 3
-        or area_array.shape[0] != 6
-        or area_array.shape[1] != area_array.shape[2]
-    ):
-        raise ValueError("areas must have shape (6, n, n)")
+    if area_array.ndim < 1 or area_array.size == 0:
+        raise ValueError("areas must contain at least one spatial cell")
     shape = area_array.shape
     scalar_inputs_raw = {
         "ocean": ocean,
@@ -249,9 +245,7 @@ def run_derived_biomes(  # noqa: PLR0913
             ),
             _ffi.cast("float*", _ffi.from_buffer("float[]", outputs["dominance_margin_out"])),
             _ffi.cast("float*", _ffi.from_buffer("float[]", outputs["transition_index_out"])),
-            _ffi.cast(
-                "uint8_t*", _ffi.from_buffer("uint8_t[]", outputs["primary_biome_code_out"])
-            ),
+            _ffi.cast("uint8_t*", _ffi.from_buffer("uint8_t[]", outputs["primary_biome_code_out"])),
             _ffi.cast(
                 "uint8_t*", _ffi.from_buffer("uint8_t[]", outputs["secondary_biome_code_out"])
             ),

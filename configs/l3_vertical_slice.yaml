@@ -5,6 +5,7 @@ terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-cat
 hydrology_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0
 channel_geometry_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/channel-geometry-v0
 surface_materials_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/surface-materials-v0
+ecology_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/ecology-v0
 target:
   id: temperate-highland-catchment
   # Chosen from seed 42 by catchment completeness, runoff, relief, water,
@@ -110,6 +111,7 @@ l3_surface_materials:
   chunk_rows: 131072
   spinup_years: 24
   local_relief_radius_cells: 12
+  terrain_slope_smoothing_radius_cells: 12
   temperature_lapse_rate_c_per_m: 0.0065
   maximum_temperature_adjustment_c: 12
   maximum_regolith_depth_m: 20
@@ -130,6 +132,19 @@ l3_surface_materials:
   monthly_deep_drainage_fraction: 0.06
   maximum_component_balance_error: 1.0e-5
   maximum_water_balance_relative_error: 1.0e-5
+l3_ecology:
+  chunk_rows: 65536
+  minimum_parent_coverage_fraction: 0.75
+  maximum_parent_npp_relative_difference_p95: 2.0
+  maximum_parent_functional_l1_difference_p95: 1.50
+  maximum_parent_biome_l1_difference_p95: 1.60
+  maximum_parent_boundary_p95_ratio: 3.25
+  maximum_parent_boundary_absolute_difference_p95: 0.075
+  maximum_repeated_parent_motif_correlation_p95: 0.85
+  minimum_wet_ecology_response: 0.01
+  minimum_cold_highland_response: 0.01
+  minimum_valley_productivity_response: 0.0
+  minimum_valley_resource_response: 0.0
 limits:
   maximum_base_cell_count: 7000000
   maximum_peak_memory_gb: 24
@@ -137,3 +152,4 @@ limits:
   maximum_hydrology_storage_gb: 4
   maximum_channel_geometry_storage_gb: 2
   maximum_surface_materials_storage_gb: 4
+  maximum_ecology_storage_gb: 6

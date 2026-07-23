@@ -250,6 +250,22 @@ terrain-only visible context. The selected natural target basin covers about
 `89,852 km2` and exits at roughly `1,084 m3/s`. The canonical first slice is
 inland and contains no physical ocean.
 
+Derive physical river geometry, soils, and the first causal L3 ecology stack
+with:
+
+```bash
+uv run map-maker l3-channel-geometry
+uv run map-maker l3-surface-materials
+uv run map-maker l3-ecology
+```
+
+These stages keep narrow channels as vectors with fractional corridor support,
+realize initial materials and soil water from accepted terrain and hydrology,
+then replay the Rust resource-envelope, potential-biosphere,
+functional-vegetation, and derived-biome kernels over the full regional
+window. Each artifact is chunked, resumable, checksum-audited, and includes a
+complete diagnostic with a legend and physical scale.
+
 Run the previous procedural generator for comparison:
 
 ```bash
