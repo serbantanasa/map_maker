@@ -1,6 +1,6 @@
 # Current Roadmap
 
-Status: current sequencing as of 2026-07-22. Numbered decisions remain the
+Status: current sequencing as of 2026-07-23. Numbered decisions remain the
 authority when this summary and the decision log differ.
 
 ## Controlling Milestone
@@ -27,10 +27,17 @@ another global-stage expansion.
    hidden halo, crop terrain and hydrology to one fully processed display, and
    replace the artificial inland outlet terminal with dominant natural-basin
    refinement.
-6. **Next:** turn selected raw D8 reach paths into smooth physical centerline
-   geometry and adaptively refine representative `25-50 m` channel corridors
-   before applying any fluvial incision or resolving banks.
-7. In parallel, record explicit acceptance or a bounded blocker list for the
+6. **In progress:** turn selected raw D8 reach paths into smooth physical
+   centerline geometry and publish channel, riparian, floodplain, and valley
+   support suitable for L3 soils and biomes. The dated execution contract is
+   [L3 Ecology Readiness: 2026-07-23](plans/2026-07-23-l3-ecology-readiness.md).
+7. **Next:** realize L3 surface materials and initial soils from inherited
+   priors plus accepted L3 terrain, water, and channel geometry; then derive
+   fractional vegetation and biome mixtures.
+8. **Deferred:** design mineral systems globally and at L2 before realizing
+   veins, seams, lenses, and placers at L3. Do not paint resource deposits
+   without a causal upstream inventory.
+9. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
