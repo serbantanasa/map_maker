@@ -1,6 +1,6 @@
 # L3 Ecology Readiness: 2026-07-23
 
-Status: in progress
+Status: complete
 
 ## Objective
 
@@ -51,7 +51,7 @@ model before regional deposit realization.
    - Treat inherited alluvium as a soft depositional-history prior localized by
      fine valley, slope, and channel-distance state; do not widen active water
      to match coarse material fractions.
-6. **In progress: biome-stage contract**
+6. **Complete: biome-stage contract**
    - Specify how L2 climate and vegetation priors combine with L3 soils,
      hydrology, elevation, and disturbance support.
    - Keep biome output fractional and reserve mineral deposits for a separate
@@ -97,4 +97,5 @@ Stop and record a blocker instead of weakening gates when:
 - Cold generation and checksum-verifying cache replay pass. The miniature
   end-to-end test covers publish, cache reuse, and deliberate Zarr corruption.
 - Mineral realization remains deliberately deferred. The biome-stage contract
-  is the only open item in this dated plan.
+  is recorded by Decision 059; implementation is the next milestone, not an
+  unfinished item in this dated plan.

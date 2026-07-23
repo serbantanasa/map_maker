@@ -2974,3 +2974,64 @@ would discard geological history; painting coarse alluvium into every child
 would recreate visible L0 blocks. Localized soft disaggregation preserves broad
 depositional history and fine terrain causality without confusing a river's
 current water width with the deposits left by its history.
+
+## Decision 059: L3 Ecology Recomputes From Fine Soil Water Before Naming Biomes
+
+Status: provisional implementation contract; implementation and regional
+calibration pending
+
+Decision:
+Replay the established ecology chain at L3 rather than downscaling a finished
+biome map. In chunk order, run the existing Rust biosphere-envelope,
+potential-biosphere, functional-vegetation, and derived-biome kernels. A
+familiar biome mixture is valid only after its L3 resource envelope, potential
+traits, and conserved functional-cover partition have passed.
+
+Use inherited monthly orbital insolation and source atmosphere controls with
+L3 elevation to reconstruct radiation and hydrostatic CO2/oxygen support.
+Reconstruct monthly temperature from the same bilinear parent climate and
+persisted L3 lapse adjustment used by surface materials. Use accepted L3
+monthly soil liquid input and saturation, soil support, nutrients, fertility,
+salinity, confidence, lakes, wetlands, glacier support, and local relief.
+This is a regional ecological replay, not a new regional atmosphere.
+
+Persist monthly envelope and NPP state, potential producer traits, eight
+functional vegetation fractions, five nonvegetated fractions, five resource
+potentials, 13 familiar biome fractions, confidence and transition fields, and
+reproducible dominant/secondary query codes. Keep fractions canonical and codes
+derived. Store regional arrays cell-first while converting each native chunk to
+the class- or month-first layout expected by the existing kernels.
+
+Inherited potential-biosphere, functional-cover, and biome products are soft
+comparison priors and supervised-learning context. They are not labels to
+interpolate, hard parent quotas, or visual masks. L3 soil water and terrain may
+move child mixtures away from their parent, but represented-parent divergence,
+parent-boundary discontinuity, and repeated-parent motif metrics must remain
+bounded.
+
+V0 has no vegetation-to-hydrology feedback, succession, disturbance events,
+species, actual grazing, actual fire, or human land use. Existing fire,
+grazing, forest, pasture, and crop outputs remain physical potentials. A narrow
+channel affects ecology through fractional hydric soil, riparian/floodplain
+support, and monthly soil water; it does not convert an entire 200 m cell into
+wetland.
+
+Hard acceptance covers finite/bounded state, zero terrestrial output over
+physical ocean, exact functional plus nonvegetated closure, exact biome plus
+ice/water closure, independently reconstructed codes, monthly-to-annual
+productivity closure, rooting depth within regolith, source lineage, durable
+chunk checksums, cache integrity, `24 GB` peak memory, and an initial `6 GB`
+artifact ceiling. Regional relational diagnostics replace inappropriate global
+abundance quotas: wetter soils must favor hydrophytic/wetland mixtures,
+cold/high terrain must favor cold or alpine mixtures, and deeper fertile valley
+soils must improve productivity/resource potential against comparable nearby
+slopes. Diagnostics require a legend and labelled physical scale.
+
+Reason:
+The coarse world already contains calibrated ecology, but directly
+interpolating its final 13 biome fractions would ignore the hydrology and soils
+that motivated L3, preserve L0 block structure, and create no new causal
+training examples. Replaying the same calibrated kernels with fine physical
+inputs preserves the validated model while allowing real regional ecotones,
+riparian effects, cold uplands, wet depressions, and fertile alluvial ground to
+emerge at the active resolution.

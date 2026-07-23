@@ -257,6 +257,54 @@ legend, and labelled `100 km` scale. These are initial mineral soils: no
 groundwater/baseflow, vegetation feedback, soil taxonomy, dynamic disturbance,
 or mineral-resource deposits are claimed.
 
+## Next Contract: L3 Ecology V0
+
+L3 ecology must replay the established causal stack in regional chunks:
+
+1. reconstruct monthly insolation from the inherited orbital field, monthly
+   temperature from the shared parent climate plus persisted L3 lapse
+   adjustment, and hydrostatic CO2/oxygen partial pressure from the source
+   atmosphere controls plus L3 elevation;
+2. run the existing Rust biosphere-envelope kernel with L3 monthly soil liquid
+   input, saturation, soil support, nutrients, fertility, salinity, and
+   confidence;
+3. run the existing Rust potential-biosphere kernel from that fine resource
+   envelope;
+4. run the existing Rust functional-vegetation kernel with L3 soil, water,
+   glacier, wetland, and relief state; and
+5. run the existing Rust derived-biome kernel only after the functional
+   partition passes.
+
+The stage will persist monthly envelope and productivity state, potential
+traits, eight functional vegetation fractions, five nonvegetated fractions,
+resource potentials, 13 familiar biome fractions, confidence/transition state,
+and reproducible query codes. Arrays remain cell-first in the regional Zarr
+artifact; native kernels receive month- or class-first contiguous chunks.
+
+Inherited potential-biosphere, functional-vegetation, and biome fields are
+comparison priors and surrogate-training context. They are not copied labels,
+hard parent quotas, or permission to create L0-aligned ecological blocks. Fine
+soil water and terrain may move a child away from its parent mixture, while
+represented-parent divergence and parent-boundary motif metrics remain bounded.
+
+V0 reuses the source world's orbital, atmosphere, and calibrated ecology
+controls. It does not run a regional atmosphere, model vegetation feedback,
+simulate succession/fire/grazing events, place species, or realize human land
+use. Channel/riparian effects enter through accepted fractional floodplain,
+hydric-soil, wetland, and soil-water state; a narrow river does not make a whole
+200 m cell wetland.
+
+Acceptance requires finite and bounded outputs, zero terrestrial state over
+physical ocean, exact functional/nonvegetated and biome/ice/water partitions,
+code reconstruction, monthly-to-annual productivity closure, rooting depth
+within regolith, checksum-audited resume, and a storage ceiling initially set
+at `6 GB`. Relational diagnostics must show wetter fine soils favoring
+hydrophytic/wetland mixtures, cold/high terrain favoring cold or alpine
+mixtures, and deeper fertile valley soils improving productivity and resource
+potential relative to comparable adjacent slopes. A complete diagnostic must
+include a legend and labelled kilometre scale. Earthlike global abundance
+ranges are context, not hard regional quotas.
+
 ## Required Outputs
 
 - base terrain elevation and unresolved relief;

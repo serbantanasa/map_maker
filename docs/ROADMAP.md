@@ -35,9 +35,10 @@ another global-stage expansion.
    priors plus accepted L3 terrain, water, and channel geometry. The canonical
    artifact covers the complete stored window in durable chunks and keeps
    active channel width separate from inherited alluvial history.
-8. **In progress:** specify fractional L3 vegetation and biome mixtures from
-   accepted climate, terrain, monthly soil water, soil properties, wetlands,
-   lakes, and channel support without inventing a new regional atmosphere.
+8. **Next:** implement the provisional Decision 059 L3 ecology contract:
+   recompute the resource envelope and potential biosphere from L3 monthly soil
+   water before deriving fractional functional vegetation and biome mixtures.
+   Do not interpolate coarse biome colors as the regional result.
 9. **Deferred:** design mineral systems globally and at L2 before realizing
    veins, seams, lenses, and placers at L3. Do not paint resource deposits
    without a causal upstream inventory.
