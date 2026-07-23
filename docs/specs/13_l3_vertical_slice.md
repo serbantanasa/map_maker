@@ -1,6 +1,7 @@
 # L3 Regional Vertical Slice
 
-Status: base terrain and hydrology V0 implemented; channel geometry pending
+Status: base terrain, hydrology V0, and physical channel geometry implemented;
+adaptive channel refinement pending
 
 ## Purpose
 
@@ -27,6 +28,12 @@ Route its monthly water, depressions, and vector river network with:
 
 ```bash
 uv run map-maker l3-hydrology
+```
+
+Derive smooth physical centerlines and ecology-facing corridor support with:
+
+```bash
+uv run map-maker l3-channel-geometry
 ```
 
 It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
@@ -85,11 +92,15 @@ routed core.
    anchor rather than an artificial one-cell terminal.
 4. **Implemented:** discover tributary vectors from accumulated flow while preserving inherited
    major-trunk identity and monthly hydrographs.
-5. **Implemented:** derive physical width, depth, velocity, slope, stream power, sediment load,
-   and channel/floodplain/valley fractional support.
-6. Apply bounded fluvial incision and deposition only where the active terrain
+5. **Implemented:** derive physical width, depth, velocity, slope, stream
+   power, sediment load, and preliminary channel/floodplain/valley fractional
+   support.
+6. **Implemented:** smooth physical channel reaches inside their raw D8
+   corridors, retain exact graph endpoints, and publish distance,
+   flow-persistence, channel, riparian, floodplain, and valley support.
+7. Apply bounded fluvial incision and deposition only where the active terrain
    resolution can represent the process support.
-7. Adaptively refine selected channel corridors before resolving banks,
+8. Adaptively refine selected channel corridors before resolving banks,
    meanders, crossings, or categorical water surfaces.
 
 Every stage writes resumable intermediate data and exposes supervised input and
@@ -168,6 +179,36 @@ coarse target, and leads the second candidate by `6.11:1`. Open water covers
 window contains no physical ocean, 14 explicit closed sinks, and no endorheic
 depressions. Sparse arrowheads show downstream direction. Both hydrology maps
 include a legend and approximate `100 km` scale bar.
+
+## Implemented Channel Geometry V0
+
+The channel-geometry artifact consumes accepted terrain and hydrology without
+mutating either one. Endpoint-anchored Chaikin smoothing converts physical
+channel reaches from raw D8 cell paths into continuous local and spherical
+polylines. Lake and unresolved-hydraulic connectors retain graph continuity
+but do not become physical channel beds.
+
+The canonical result preserves all `33,181` source reach records and smooths
+`17,095` physical channels. Every graph endpoint is exact, no centerline
+self-intersects, the largest displacement from a raw path is `17.4 m`, and the
+smallest smoothed/raw length ratio is `0.858`. Mean interior turn angle falls
+from `31.6` to `5.2` degrees. Cold generation uses about `2.0 GB` peak RSS,
+writes about `63 MB`, and a cache replay verifies every output checksum.
+
+The raster product covers all `6.04 million` stored cells and retains the same
+`5.20 million`-cell display. It publishes distance to physical channel,
+distance to a declared reliably flowing subset, nearest stable reach identity,
+flow-persistence fraction, and exactly nested fractional channel, riparian,
+floodplain, and valley support. Reliability currently means at least six
+months at or above `0.15 m3/s`; all generated channels still have at least one
+zero-flow month. This is not called perennial flow because groundwater and
+baseflow are not yet modeled.
+
+The diagnostic is
+`channel-geometry-v0/channel_geometry.png`. It includes complete terrain,
+water, smoothed channels, ecology support, a legend, and a labelled
+`100 km` scale. Adaptive `25-50 m` bank-resolution corridor meshes remain a
+separate later stage.
 
 ## Required Outputs
 

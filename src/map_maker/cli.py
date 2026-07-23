@@ -200,6 +200,25 @@ def _l3_hydrology_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _l3_channel_geometry_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-channel-geometry",
+        help="Smooth L3 river vectors and derive ecology-facing corridor support.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 vertical-slice YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override channel-geometry output directory.",
+    )
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -330,6 +349,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _l3_target_parser(subparsers)
     _l3_terrain_parser(subparsers)
     _l3_hydrology_parser(subparsers)
+    _l3_channel_geometry_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -617,6 +637,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{hydrology.hidden_routing_halo_cell_count} hidden-halo cells; produced "
             f"{hydrology.river_reach_count} reported reaches and {hydrology.lake_count} core "
             f"lakes for {hydrology.target_id}."
+        )
+        return 0
+
+    if args.command == "l3-channel-geometry":
+        try:
+            from .pipeline.l3_channel_geometry import (
+                L3ChannelGeometryConfig,
+                generate_l3_channel_geometry,
+            )
+
+            channel_config = L3ChannelGeometryConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+            )
+            channels = generate_l3_channel_geometry(channel_config)
+        except (
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 channel geometry: {channels.output_dir}")
+        print(f"Manifest: {channels.manifest_path}")
+        print(f"Validation: {channels.validation_path}")
+        print(f"Preview: {channels.preview_path}")
+        print(
+            f"Smoothed {channels.channel_reach_count} physical channel reaches for "
+            f"{channels.target_id}; ecology support covers all "
+            f"{channels.display_cell_count} displayed cells."
         )
         return 0
 

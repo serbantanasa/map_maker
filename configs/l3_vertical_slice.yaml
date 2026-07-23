@@ -3,6 +3,7 @@ handoff_dir: ../out/cubed-sphere-crust-state-42/regional-handoffs/canonical-l2
 output_dir: ../out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-catchment
 terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain
 hydrology_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0
+channel_geometry_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/channel-geometry-v0
 target:
   id: temperate-highland-catchment
   # Chosen from seed 42 by catchment completeness, runoff, relief, water,
@@ -96,8 +97,17 @@ hydrology:
   maximum_routed_core_process_boundary_contact_fraction: 0.001
   maximum_outlet_hydrograph_relative_error: 0.40
   maximum_core_open_water_fraction: 0.10
+channel_geometry:
+  smoothing_iterations: 2
+  maximum_centerline_offset_cells: 0.75
+  minimum_centerline_length_ratio: 0.70
+  maximum_centerline_length_ratio: 1.01
+  active_month_discharge_m3s: 0.15
+  reliable_flow_minimum_active_months: 6
+  riparian_position_between_channel_and_floodplain: 0.35
 limits:
   maximum_base_cell_count: 7000000
   maximum_peak_memory_gb: 24
   maximum_terrain_storage_gb: 2
   maximum_hydrology_storage_gb: 4
+  maximum_channel_geometry_storage_gb: 2

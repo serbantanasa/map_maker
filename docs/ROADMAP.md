@@ -27,11 +27,11 @@ another global-stage expansion.
    hidden halo, crop terrain and hydrology to one fully processed display, and
    replace the artificial inland outlet terminal with dominant natural-basin
    refinement.
-6. **In progress:** turn selected raw D8 reach paths into smooth physical
+6. **Complete:** turn selected raw D8 reach paths into smooth physical
    centerline geometry and publish channel, riparian, floodplain, and valley
    support suitable for L3 soils and biomes. The dated execution contract is
    [L3 Ecology Readiness: 2026-07-23](plans/2026-07-23-l3-ecology-readiness.md).
-7. **Next:** realize L3 surface materials and initial soils from inherited
+7. **In progress:** realize L3 surface materials and initial soils from inherited
    priors plus accepted L3 terrain, water, and channel geometry; then derive
    fractional vegetation and biome mixtures.
 8. **Deferred:** design mineral systems globally and at L2 before realizing

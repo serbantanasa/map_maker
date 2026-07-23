@@ -2340,7 +2340,8 @@ channel processes out of its abyssal floor.
 
 ## Decision 048: Terrain Resolution Owns Physical River Morphology
 
-Status: approved; global and sparse safeguards implemented, local refinement pending
+Status: approved; vector centerlines and fractional local support implemented,
+adaptive bank-resolution refinement pending
 
 Decision:
 Treat the global and sparse-basin hydrology products as multiscale constraints,
@@ -2392,6 +2393,16 @@ The representation contract applies at every resolution:
   crossings, or other lateral morphology must be resolved. Its cell size is
   chosen from physical channel width so the channel spans multiple cells, with
   stable refinement bounds, seeding, and tie-breaking.
+
+Implementation note:
+The first L3 slice now derives endpoint-anchored smooth centerlines from the
+accepted D8 graph without changing stable reach IDs, endpoints, receivers,
+discharge, lakes, or terrain. It publishes distance to channel, explicit
+flow-persistence state, and nested fractional channel, riparian, floodplain,
+and valley support over the complete stored window. The stage does not call
+any reach perennial because regional groundwater and baseflow are not yet
+modeled. Adaptive `25-50 m` corridor meshes, banks, meanders, and applied
+incision remain pending.
 
 The current global and sparse stages implement the persistent vector graph,
 fractional support, and no-whole-cell-excavation safeguards. Deterministic local

@@ -16,36 +16,39 @@ model before regional deposit realization.
 
 ## Work Order
 
-1. **Record and protect the baseline**
+1. **Complete: record and protect the baseline**
    - Confirm the current terrain and hydrology artifacts and tests are green.
    - Treat base terrain, receivers, discharge, lakes, and reach identities as
      immutable inputs.
-2. **Physical river centerlines**
+2. **Complete: physical river centerlines**
    - Add a derived, resumable L3 channel-geometry artifact.
    - Smooth selected raw D8 reach paths into continuous physical polylines.
    - Preserve stable reach IDs, graph endpoints, downstream order, lake
      connectors, and inherited-trunk identity.
    - Keep sub-cell channels as vectors; do not paint whole 200 m cells as river.
-3. **Ecology support fields**
-   - Publish distance to reported channel and distance to perennial channel.
+3. **Complete: ecology support fields**
+   - Publish distance to reported channel and reach flow-persistence state.
+     Groundwater/baseflow is not yet modeled, so do not call zero-flow-month
+     reaches perennial; publish distance to a declared reliably flowing subset
+     instead.
    - Publish nested channel, riparian, floodplain, and valley influence fields
      from physical reach dimensions and local terrain.
    - Keep these as fractional/probabilistic support rather than categorical
      land-cover replacement.
-4. **Validation and diagnostic**
+4. **Complete: validation and diagnostic**
    - Add deterministic unit and miniature end-to-end coverage.
    - Reject disconnected paths, endpoint drift, non-finite geometry,
      non-monotone path distance, broken support nesting, or checksum mismatch.
    - Render a complete regional diagnostic with a legend and labelled
      kilometre scale.
-5. **Stretch: L3 surface materials and initial soils**
+5. **In progress: L3 surface materials and initial soils**
    - Consume inherited L2 geology/material/soil priors, L3 terrain, lakes,
      wetlands, and the new channel-support fields.
    - Realize bedrock exposure, residual regolith, alluvium, lacustrine
      sediment, soil depth, drainage class, hydric tendency, pH, and salinity.
    - Preserve provenance: inherited priors remain distinct from recomputed L3
      state.
-6. **Stretch: biome-stage contract**
+6. **Pending: biome-stage contract**
    - Specify how L2 climate and vegetation priors combine with L3 soils,
      hydrology, elevation, and disturbance support.
    - Keep biome output fractional and reserve mineral deposits for a separate
