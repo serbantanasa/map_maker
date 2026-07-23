@@ -41,14 +41,17 @@ model before regional deposit realization.
      non-monotone path distance, broken support nesting, or checksum mismatch.
    - Render a complete regional diagnostic with a legend and labelled
      kilometre scale.
-5. **In progress: L3 surface materials and initial soils**
+5. **Complete: L3 surface materials and initial soils**
    - Consume inherited L2 geology/material/soil priors, L3 terrain, lakes,
      wetlands, and the new channel-support fields.
    - Realize bedrock exposure, residual regolith, alluvium, lacustrine
      sediment, soil depth, drainage class, hydric tendency, pH, and salinity.
    - Preserve provenance: inherited priors remain distinct from recomputed L3
      state.
-6. **Pending: biome-stage contract**
+   - Treat inherited alluvium as a soft depositional-history prior localized by
+     fine valley, slope, and channel-distance state; do not widen active water
+     to match coarse material fractions.
+6. **In progress: biome-stage contract**
    - Specify how L2 climate and vegetation priors combine with L3 soils,
      hydrology, elevation, and disturbance support.
    - Keep biome output fractional and reserve mineral deposits for a separate
@@ -84,7 +87,14 @@ Stop and record a blocker instead of weakening gates when:
 
 ## End-Of-Day Evidence
 
-- Commits for each completed milestone.
-- Test and lint results.
-- Paths to the canonical diagnostic images and manifests.
-- A short status update here marking completed, deferred, and blocked items.
+- Physical channel geometry: complete in `channel-geometry-v0/`; `17,095`
+  physical channels preserve all source graph records and exact endpoints.
+- Surface materials and initial soils: complete in `surface-materials-v0/`;
+  `6,040,320` cells in 47 durable chunks, with `5,203,968` displayed cells.
+- Canonical soil result: `71.4%` soil-bearing land, `2.6%` hydric support,
+  `0.77 m` mean soil depth, `9.2%` alluvium, and parent-material L1 difference
+  p95 `0.72`.
+- Cold generation and checksum-verifying cache replay pass. The miniature
+  end-to-end test covers publish, cache reuse, and deliberate Zarr corruption.
+- Mineral realization remains deliberately deferred. The biome-stage contract
+  is the only open item in this dated plan.

@@ -31,13 +31,17 @@ another global-stage expansion.
    centerline geometry and publish channel, riparian, floodplain, and valley
    support suitable for L3 soils and biomes. The dated execution contract is
    [L3 Ecology Readiness: 2026-07-23](plans/2026-07-23-l3-ecology-readiness.md).
-7. **In progress:** realize L3 surface materials and initial soils from inherited
-   priors plus accepted L3 terrain, water, and channel geometry; then derive
-   fractional vegetation and biome mixtures.
-8. **Deferred:** design mineral systems globally and at L2 before realizing
+7. **Complete:** realize L3 surface materials and initial soils from inherited
+   priors plus accepted L3 terrain, water, and channel geometry. The canonical
+   artifact covers the complete stored window in durable chunks and keeps
+   active channel width separate from inherited alluvial history.
+8. **In progress:** specify fractional L3 vegetation and biome mixtures from
+   accepted climate, terrain, monthly soil water, soil properties, wetlands,
+   lakes, and channel support without inventing a new regional atmosphere.
+9. **Deferred:** design mineral systems globally and at L2 before realizing
    veins, seams, lenses, and placers at L3. Do not paint resource deposits
    without a causal upstream inventory.
-9. In parallel, record explicit acceptance or a bounded blocker list for the
+10. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology

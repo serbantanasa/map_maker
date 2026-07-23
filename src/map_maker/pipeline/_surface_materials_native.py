@@ -193,12 +193,10 @@ def run_surface_materials(  # noqa: PLR0913
     **output_arrays: np.ndarray,
 ) -> dict[str, Any]:
     area_array = _read_array(areas, name="areas", dtype=np.dtype(np.float64))
-    if (
-        area_array.ndim != 3
-        or area_array.shape[0] != 6
-        or area_array.shape[1] != area_array.shape[2]
-    ):
-        raise ValueError("areas must have shape (6, n, n)")
+    if area_array.ndim < 1 or area_array.size == 0:
+        raise ValueError("areas must be a non-empty spatial array")
+    if area_array.size > np.iinfo(np.int32).max:
+        raise ValueError("surface-material batch exceeds the native int32 cell limit")
     shape = area_array.shape
     monthly_shape = (12, *shape)
     float_inputs = {
@@ -345,9 +343,7 @@ def run_surface_materials(  # noqa: PLR0913
             monthly_deep_drainage_fraction,
             _ffi.cast("const double*", _ffi.from_buffer("double[]", inputs["areas"])),
             float_input_ptr["ocean"],
-            _ffi.cast(
-                "const uint8_t*", _ffi.from_buffer("uint8_t[]", inputs["province_class"])
-            ),
+            _ffi.cast("const uint8_t*", _ffi.from_buffer("uint8_t[]", inputs["province_class"])),
             float_input_ptr["crust_age"],
             float_input_ptr["rock_strength"],
             float_input_ptr["accommodation"],

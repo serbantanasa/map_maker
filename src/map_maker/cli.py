@@ -219,6 +219,25 @@ def _l3_channel_geometry_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _l3_surface_materials_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "l3-surface-materials",
+        help="Realize L3 surface materials, initial soils, and monthly soil water.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/l3_vertical_slice.yaml"),
+        help="L3 vertical-slice YAML configuration (default: configs/l3_vertical_slice.yaml).",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        help="Override L3 surface-material output directory.",
+    )
+    return parser
+
+
 def _topology_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "topology", help="Generate the canonical cubed-sphere topology diagnostic."
@@ -350,6 +369,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _l3_terrain_parser(subparsers)
     _l3_hydrology_parser(subparsers)
     _l3_channel_geometry_parser(subparsers)
+    _l3_surface_materials_parser(subparsers)
     _topology_parser(subparsers)
     subparsers.add_parser("doctor", help="Check that the native pipeline is runnable.")
     subparsers.add_parser("legacy", help="Run the previous procedural generator.")
@@ -670,6 +690,41 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"Smoothed {channels.channel_reach_count} physical channel reaches for "
             f"{channels.target_id}; ecology support covers all "
             f"{channels.display_cell_count} displayed cells."
+        )
+        return 0
+
+    if args.command == "l3-surface-materials":
+        try:
+            from .pipeline.l3_surface_materials import (
+                L3SurfaceMaterialsConfig,
+                generate_l3_surface_materials,
+            )
+
+            materials_config = L3SurfaceMaterialsConfig.from_file(
+                args.config,
+                output_dir=args.output_dir,
+            )
+            materials = generate_l3_surface_materials(materials_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            OSError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"L3 surface materials: {materials.output_dir}")
+        print(f"Manifest: {materials.manifest_path}")
+        print(f"Validation: {materials.validation_path}")
+        print(f"Preview: {materials.preview_path}")
+        print(
+            f"Realized materials and initial soils across "
+            f"{materials.display_cell_count} displayed cells for "
+            f"{materials.target_id}; {materials.chunk_count} chunks passed."
         )
         return 0
 

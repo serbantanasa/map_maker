@@ -12,8 +12,9 @@ from map_maker.pipeline.stages.surface_materials import (
 )
 
 
-def _native_case() -> tuple[dict[str, np.ndarray], dict[str, float]]:
-    shape = (6, 2, 2)
+def _native_case(
+    shape: tuple[int, ...] = (6, 2, 2),
+) -> tuple[dict[str, np.ndarray], dict[str, float]]:
     monthly_shape = (12, *shape)
     fields = {
         "areas": np.full(shape, 1.0e10, dtype=np.float64),
@@ -48,7 +49,7 @@ def _native_case() -> tuple[dict[str, np.ndarray], dict[str, float]]:
         "monthly_snowmelt": np.zeros(monthly_shape, dtype=np.float32),
         "monthly_glacier_melt": np.zeros(monthly_shape, dtype=np.float32),
     }
-    flat = {name: value.reshape(-1) for name, value in fields.items() if value.ndim == 3}
+    flat = {name: value.reshape(-1) for name, value in fields.items() if value.shape == shape}
     flat["river_corridor"][1] = 1.0
     flat["floodplain"][1] = 0.8
     flat["refined_mask"][2] = 1.0
@@ -149,14 +150,13 @@ def test_native_surface_materials_are_fractional_causal_and_conservative():
     assert np.all(material_sum[~land] == 0.0)
     assert outputs["AlluviumFraction"].reshape(-1)[1] > outputs["AlluviumFraction"].reshape(-1)[6]
     assert outputs["LacustrineSedimentFraction"].reshape(-1)[2] > 0.4
-    assert outputs["VolcaniclasticFraction"].reshape(-1)[3] > outputs[
-        "VolcaniclasticFraction"
-    ].reshape(-1)[6]
+    assert (
+        outputs["VolcaniclasticFraction"].reshape(-1)[3]
+        > outputs["VolcaniclasticFraction"].reshape(-1)[6]
+    )
     assert outputs["GlacialDepositFraction"].reshape(-1)[4] > 0.1
     assert outputs["SoilDepthM"].reshape(-1)[6] > outputs["SoilDepthM"].reshape(-1)[5]
-    assert outputs["SoilSalinityIndex"].reshape(-1)[2] > outputs[
-        "SoilSalinityIndex"
-    ].reshape(-1)[6]
+    assert outputs["SoilSalinityIndex"].reshape(-1)[2] > outputs["SoilSalinityIndex"].reshape(-1)[6]
 
     annual_input = np.sum(outputs["MonthlySoilLiquidInputMm"], axis=0)
     annual_losses = sum(
@@ -170,3 +170,10 @@ def test_native_surface_materials_are_fractional_causal_and_conservative():
     residual = annual_input - annual_losses - outputs["AnnualSoilWaterStorageChangeMm"]
     assert np.max(np.abs(residual[land])) < 2e-4
     assert metadata["water_balance_relative_error"] < 1e-12
+
+
+def test_native_surface_materials_accept_sparse_flat_batches():
+    outputs, metadata = _native_case((24,))
+    assert outputs["SoilDepthM"].shape == (24,)
+    assert outputs["MonthlySoilWaterMm"].shape == (12, 24)
+    assert metadata["material_balance_max_error"] < 1e-6

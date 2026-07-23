@@ -2923,3 +2923,54 @@ fixed coverage, but also exposed that an inland coarse handoff cannot remain a
 terminal once downstream terrain exists. Hidden process context plus a
 dominant-overlap basin selection preserves a complete visible map and lets the
 fine terrain refine coarse drainage without hard-walling a 72 km mask.
+
+## Decision 058: L3 Surface Materials Disaggregate History, Not River Width
+
+Status: implemented V1; ecological calibration pending
+
+Decision:
+Realize initial L3 surface-material mixtures, mineral-soil properties, and
+monthly soil water over the complete stored terrain and hydrology window. Reuse
+the existing Rust property-first kernel in durable chunks. Bilinearly condition
+continuous geology and climate priors, retain categorical geological province
+identity, apply a bounded elevation lapse correction to monthly temperature,
+and consume accepted L3 precipitation, melt, lakes, wetlands, relief, and
+channel-support state.
+
+Do not infer regional alluvial extent from active channel width. A 10-30 m
+channel remains a vector or fractional feature in a nominal 200 m cell, while
+its abandoned floodplains, terraces, fans, deltas, and older valley deposits
+may cover kilometres. Treat inherited coarse `AlluviumFraction` as a soft
+depositional-history prior and localize it with continuous L3 channel distance,
+valley support, and slope. Persist the resulting
+`AlluvialLegacyFraction` separately. It may influence the initial material and
+soil state, but it does not widen active water, alter the river graph, or claim
+that L3 sediment transport has been simulated.
+
+L0 material and soil fields remain comparison priors rather than exact
+blockwise targets. Reject non-finite or unbounded state, material or texture
+imbalance, negative monthly fluxes, failed monthly water balance, soil deeper
+than regolith, checksum mismatch, or unbounded divergence from represented
+parent priors. Preserve every stage input and output needed for later surrogate
+training.
+
+The canonical seed-42 artifact covers `6,040,320` cells in 47 chunks. It is
+`71.4%` soil-bearing over land, with `0.77 m` mean soil depth, `2.6%` hydric
+support, and `9.2%` alluvium. Parent-material mixture L1 difference p95 is
+`0.72`. Peak RSS is about `2.2 GB` and storage is about `1.6 GB`. Cold
+generation, checksum-verifying replay, and deliberate cache-corruption
+rejection pass.
+
+Groundwater/baseflow, vegetation feedback, soil taxonomy, dynamic fluvial
+erosion/deposition, and mineral resources remain absent. A future sediment
+history must update or supersede the inherited alluvial prior explicitly rather
+than silently stacking another deposit field onto it.
+
+Reason:
+The first fine run produced only `0.5%` alluvium because it correctly treated
+active channels and floodplains as narrow physical support, while the coarse
+history prior represented about `17%` alluvium. Relaxing the comparison gate
+would discard geological history; painting coarse alluvium into every child
+would recreate visible L0 blocks. Localized soft disaggregation preserves broad
+depositional history and fine terrain causality without confusing a river's
+current water width with the deposits left by its history.

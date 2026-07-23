@@ -1,7 +1,7 @@
 # L3 Regional Vertical Slice
 
-Status: base terrain, hydrology V0, and physical channel geometry implemented;
-adaptive channel refinement pending
+Status: base terrain, hydrology V0, physical channel geometry, and initial
+surface materials/soils implemented; adaptive channel refinement pending
 
 ## Purpose
 
@@ -34,6 +34,12 @@ Derive smooth physical centerlines and ecology-facing corridor support with:
 
 ```bash
 uv run map-maker l3-channel-geometry
+```
+
+Realize surface materials, initial mineral soils, and monthly soil water with:
+
+```bash
+uv run map-maker l3-surface-materials
 ```
 
 It writes approximately `6.04 million` cubed-sphere cells at about `198 m` under
@@ -98,9 +104,12 @@ routed core.
 6. **Implemented:** smooth physical channel reaches inside their raw D8
    corridors, retain exact graph endpoints, and publish distance,
    flow-persistence, channel, riparian, floodplain, and valley support.
-7. Apply bounded fluvial incision and deposition only where the active terrain
+7. **Implemented:** realize initial surface-material mixtures, mineral-soil
+   properties, and monthly soil water from inherited geology/climate plus L3
+   terrain, water, and channel support.
+8. Apply bounded fluvial incision and deposition only where the active terrain
    resolution can represent the process support.
-8. Adaptively refine selected channel corridors before resolving banks,
+9. Adaptively refine selected channel corridors before resolving banks,
    meanders, crossings, or categorical water surfaces.
 
 Every stage writes resumable intermediate data and exposes supervised input and
@@ -210,6 +219,44 @@ water, smoothed channels, ecology support, a legend, and a labelled
 `100 km` scale. Adaptive `25-50 m` bank-resolution corridor meshes remain a
 separate later stage.
 
+## Implemented Surface Materials V0
+
+The surface-material artifact reuses the Rust property-first materials and
+initial-soil kernel over 47 resumable L3 chunks. Continuous geology and monthly
+climate priors are bilinearly conditioned across L0 boundaries, geological
+province identity remains categorical, temperature receives a bounded
+elevation lapse correction, and accepted L3 precipitation, melt, lakes,
+wetlands, channels, floodplains, and relief drive the fine result. The monthly
+soil-water bucket receives a 24-year periodic spin-up.
+
+A completion marker is trusted only when its durable chunk-stat record exists
+and every output-chunk checksum still matches. A missing or damaged completed
+chunk is marked incomplete and regenerated before validation.
+
+Active river width is not used as a proxy for alluvial history. The inherited
+coarse `AlluviumFraction` is a soft cumulative depositional prior, localized by
+L3 valley support, channel distance, and slope and persisted independently as
+`AlluvialLegacyFraction`. It can place abandoned floodplain, terrace, fan, and
+older valley deposits without widening current channel water. It is not an
+applied sediment-transport solve and must be replaced or updated when a later
+L3 erosion/deposition history exists.
+
+The canonical result covers all `6,040,320` stored cells and the common
+`5,203,968`-cell display. Land is `71.4%` soil-bearing with `2.6%` hydric-soil
+support, `1.03 m` mean regolith, `0.77 m` mean soil depth, pH `5.56`, and
+fertility potential `0.21`. Area-weighted materials are `28.7%` exposed
+bedrock, `48.2%` residual regolith, `7.3%` colluvium, `9.2%` alluvium, `6.6%`
+lacustrine sediment, and less than `0.1%` glacial deposit. The parent-material
+mixture L1 difference p95 is `0.72`; it is bounded but deliberately not exact.
+
+All material and texture sums, monthly water budgets, finite/bounded outputs,
+soil support, source/output checksums, memory, and storage gates pass. Peak RSS
+is about `2.2 GB`; the artifact is about `1.6 GB`. Its diagnostic,
+`surface-materials-v0/surface_materials.png`, includes the complete display,
+legend, and labelled `100 km` scale. These are initial mineral soils: no
+groundwater/baseflow, vegetation feedback, soil taxonomy, dynamic disturbance,
+or mineral-resource deposits are claimed.
+
 ## Required Outputs
 
 - base terrain elevation and unresolved relief;
@@ -219,6 +266,8 @@ separate later stage.
 - fractional channel, floodplain, valley, lake, and wetland support;
 - prospective and applied erosion/deposition kept as separate fields;
 - sediment flux and deposited material class;
+- mutually exclusive surface-material mixtures, initial mineral-soil
+  properties, and monthly soil-water state;
 - context/boundary state and exact source provenance;
 - diagnostic terrain, basin, river-hierarchy, and process-budget renders.
 
@@ -243,6 +292,8 @@ separate later stage.
 - inherited major trunks remain connected and discharge-conservative;
 - precipitation/runoff, lake storage, erosion, deposition, and sediment budgets
   close within their declared tolerances;
+- material and soil-texture mixtures close, soil depth never exceeds regolith,
+  monthly soil water closes, and every persisted soil state is finite;
 - channel, floodplain, and valley fractions are nested and never exceed cell
   capacity;
 - applied terrain change has physically resolved support and never represents a
@@ -255,7 +306,8 @@ separate later stage.
 ## Non-Goals
 
 - full dynamic regional atmosphere or ocean circulation;
-- final calibrated soils, ecosystems, minerals, settlements, or game tiles;
+- final taxonomic or vegetation-conditioned soils, ecosystems, minerals,
+  settlements, or game tiles;
 - resolving every narrow channel at the `200 m` base scale;
 - refining the entire basin-395 L2 package to L3;
 - training or deploying the neural surrogate.

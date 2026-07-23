@@ -4,6 +4,7 @@ output_dir: ../out/cubed-sphere-crust-state-42/l3-targets/temperate-highland-cat
 terrain_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/base-terrain
 hydrology_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/hydrology-v0
 channel_geometry_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/channel-geometry-v0
+surface_materials_output_dir: ../out/cubed-sphere-crust-state-42/l3/temperate-highland-catchment/surface-materials-v0
 target:
   id: temperate-highland-catchment
   # Chosen from seed 42 by catchment completeness, runoff, relief, water,
@@ -105,9 +106,34 @@ channel_geometry:
   active_month_discharge_m3s: 0.15
   reliable_flow_minimum_active_months: 6
   riparian_position_between_channel_and_floodplain: 0.35
+l3_surface_materials:
+  chunk_rows: 131072
+  spinup_years: 24
+  local_relief_radius_cells: 12
+  temperature_lapse_rate_c_per_m: 0.0065
+  maximum_temperature_adjustment_c: 12
+  maximum_regolith_depth_m: 20
+  maximum_soil_depth_m: 3
+  maximum_alluvial_fraction: 0.65
+  maximum_lacustrine_fraction: 0.85
+  maximum_glacial_fraction: 0.80
+  # Active channels are narrow at 200 m, but older floodplains, terraces,
+  # fans, and abandoned channels leave broader alluvial deposits. Localize
+  # the inherited coarse alluvium prior using L3 valleys, slope, and distance.
+  alluvial_legacy_decay_m: 2500
+  alluvial_legacy_slope_scale: 0.012
+  alluvial_legacy_background: 0.20
+  alluvial_legacy_proximity_boost: 2.50
+  weathering_temperature_scale_c: 22
+  weathering_precipitation_scale_mm: 1600
+  soil_evaporation_factor: 1
+  monthly_deep_drainage_fraction: 0.06
+  maximum_component_balance_error: 1.0e-5
+  maximum_water_balance_relative_error: 1.0e-5
 limits:
   maximum_base_cell_count: 7000000
   maximum_peak_memory_gb: 24
   maximum_terrain_storage_gb: 2
   maximum_hydrology_storage_gb: 4
   maximum_channel_geometry_storage_gb: 2
+  maximum_surface_materials_storage_gb: 4
