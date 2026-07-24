@@ -73,6 +73,21 @@ def _biosphere_validation_parser(subparsers) -> argparse.ArgumentParser:
     return parser
 
 
+def _mineral_validation_parser(subparsers) -> argparse.ArgumentParser:
+    parser = subparsers.add_parser(
+        "validate-minerals",
+        help="Run the Causal Mineral Systems V0 fixed-seed screen.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path("configs/mineral_systems_validation.yaml"),
+        help="Mineral ensemble YAML (default: configs/mineral_systems_validation.yaml).",
+    )
+    parser.add_argument("--output-dir", type=Path, help="Override mineral validation output root.")
+    return parser
+
+
 def _atlas_parser(subparsers) -> argparse.ArgumentParser:
     parser = subparsers.add_parser(
         "atlas", help="Export the canonical projected physical world map."
@@ -379,6 +394,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     _generate_parser(subparsers)
     _validation_parser(subparsers)
     _biosphere_validation_parser(subparsers)
+    _mineral_validation_parser(subparsers)
     _atlas_parser(subparsers)
     _basin_atlas_parser(subparsers)
     _regional_handoff_parser(subparsers)
@@ -480,6 +496,39 @@ def main(argv: Sequence[str] | None = None) -> int:
         for gate in biosphere_validation.gates:
             if not gate.passed:
                 print(f"  {gate.name}: {gate.value} (expected {gate.expectation})")
+        return 1
+
+    if args.command == "validate-minerals":
+        try:
+            from .pipeline.mineral_systems_ensemble import (
+                MineralEnsembleConfig,
+                run_mineral_ensemble,
+            )
+
+            ensemble_config = MineralEnsembleConfig.from_file(
+                args.config, output_dir=args.output_dir
+            )
+            mineral_validation = run_mineral_ensemble(ensemble_config)
+        except (
+            NativeLibraryAbiError,
+            NativeLibraryNotBuiltError,
+            FileNotFoundError,
+            KeyError,
+            RuntimeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"map-maker: {exc}", file=sys.stderr)
+            return 2
+        print(f"Mineral validation report: {mineral_validation.report_path}")
+        print(f"Family KPI catalog: {mineral_validation.family_catalog_path}")
+        print(f"Dominant-system gallery: {mineral_validation.gallery_path}")
+        if mineral_validation.passed:
+            print("PASS: causal mineral systems passed the fixed-seed screen.")
+            return 0
+        print("FAIL: causal mineral systems failed the fixed-seed screen.")
+        for failure in mineral_validation.evaluation.hard_failures:
+            print(f"  {failure}")
         return 1
 
     if args.command == "atlas":

@@ -273,9 +273,9 @@ def test_parent_interpolation_and_native_chunk_are_continuous_and_conservative(
     assert np.all(inputs["monthly_snowfall"] <= inputs["monthly_precipitation"])
     assert np.ptp(drivers["TemperatureAdjustmentC"]) > 0.0
     assert drivers["AlluvialLegacyFraction"][5] > drivers["AlluvialLegacyFraction"][0]
-    np.testing.assert_array_equal(drivers["LocalTerrainSlope"], inputs["flow_slope"])
+    np.testing.assert_array_equal(drivers["LocalTerrainSlope"], inputs["terrain_slope"])
     assert not np.array_equal(
-        inputs["flow_slope"],
+        inputs["terrain_slope"],
         sources.hydrology["routing/flow_slope"],
     )
     outputs = _allocate_outputs(16)

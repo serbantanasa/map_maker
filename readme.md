@@ -107,10 +107,12 @@ coarse/fine discharge mismatch instead of borrowing flow from a sibling
 tributary. The canonical state now has a first projected physical-atlas export;
 visual acceptance and finer vector shoreline generalization remain provisional.
 
-Current feature development is frozen after derived biomes until the global
-map-export milestone is accepted. Hydrology and biosphere work is bugfix-only;
-active product work is surface geography, elevation and orogeny, continental
-margins, cartography, and their multi-seed visual gates.
+The bounded Causal Mineral Systems V0 stage now persists six causal support
+axes for ten geological system families, fifteen relative commodity
+prospectivity fields, stable regional systems, and coarse deposit-candidate
+hypotheses. It does not claim reserves, economic viability, petroleum systems,
+or L3 orebody geometry. Hydrology and biosphere work remains bugfix-only while
+the physical-atlas acceptance gate stays open.
 
 The passing `earth_biosphere_v1` profile now gates a Rust-backed
 `functional_vegetation` stage. It conservatively partitions each land cell among
@@ -354,11 +356,19 @@ uv run map-maker-pipeline --stage derived_biomes_validation --config configs/cub
 
 # Canonical fixed-seed profiles plus surface-geography and biome galleries
 uv run map-maker validate-biosphere --config configs/biosphere_validation.yaml
+
+# Causal mineral-system directional, catalog, and fixed-seed stability gates
+uv run map-maker validate-minerals --config configs/mineral_systems_validation.yaml
 ```
 
-The canonical command writes `out/biosphere_validation/report.json`,
+The biosphere command writes `out/biosphere_validation/report.json`,
 `surface_geography_gallery.png`, and `biome_gallery.png`. Both galleries require
 human review even when every numerical gate passes.
+
+The mineral command writes `out/mineral-systems-validation/report.json`,
+`family_ensemble_kpis.parquet`, `seed_execution_kpis.parquet`, and
+`dominant_system_gallery.png`. It exits nonzero for failed integrity,
+directional, non-collapse, or distinct-seed-state gates.
 
 Built wheels currently contain the Python orchestration package only. Until native
 wheel bundling is implemented, run the pipeline from a source checkout after the

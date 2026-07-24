@@ -9,7 +9,9 @@ from map_maker.pipeline.stages.surface_materials import (
     MONTHLY_OUTPUTS,
     SOIL_OUTPUTS,
     SurfaceMaterialsConfig,
+    _surface_geomorphic_slope,
 )
+from map_maker.pipeline.cubed_sphere import CubedSphereGrid
 
 
 def _native_case(
@@ -26,7 +28,7 @@ def _native_case(
         "province_confidence": np.full(shape, 0.9, dtype=np.float32),
         "elevation_confidence": np.full(shape, 0.9, dtype=np.float32),
         "relief": np.full(shape, 250.0, dtype=np.float32),
-        "flow_slope": np.full(shape, 0.002, dtype=np.float32),
+        "terrain_slope": np.full(shape, 0.002, dtype=np.float32),
         "river_corridor": np.zeros(shape, dtype=np.float32),
         "floodplain": np.zeros(shape, dtype=np.float32),
         "lake_fraction": np.zeros(shape, dtype=np.float32),
@@ -59,7 +61,7 @@ def _native_case(
     flat["province_class"][3] = 6
     flat["glacier_fraction"][4] = 0.20
     flat["annual_temperature"][4] = -8.0
-    flat["flow_slope"][5] = 0.08
+    flat["terrain_slope"][5] = 0.08
     flat["relief"][5] = 1_100.0
     flat["annual_temperature"][5] = 28.0
     flat["annual_precipitation"][5] = 80.0
@@ -137,6 +139,45 @@ def test_surface_material_config_rejects_invalid_controls():
         SurfaceMaterialsConfig.from_mapping(
             {"maximum_regolith_depth_m": 1.0, "maximum_soil_depth_m": 2.0}
         )
+    with pytest.raises(ValueError, match="geomorphic_slope_smoothing_passes"):
+        SurfaceMaterialsConfig.from_mapping({"geomorphic_slope_smoothing_passes": 9})
+
+
+def test_surface_geomorphic_slope_uses_physical_elevation_and_topology():
+    grid = CubedSphereGrid.create(8)
+    constant = np.full(grid.face_shape, 123.0, dtype=np.float32)
+    np.testing.assert_array_equal(
+        _surface_geomorphic_slope(
+            grid,
+            constant,
+            planet_radius_m=6_371_008.8,
+            smoothing_passes=2,
+        ),
+        np.zeros(grid.face_shape, dtype=np.float32),
+    )
+
+    radius_m = 6_371_008.8
+    amplitude_m = 10_000.0
+
+    def normalized_error(resolution: int) -> tuple[float, float]:
+        ramp_grid = CubedSphereGrid.create(resolution)
+        z = np.asarray(ramp_grid.xyz[..., 2], dtype=np.float64)
+        estimated = _surface_geomorphic_slope(
+            ramp_grid,
+            z * amplitude_m,
+            planet_radius_m=radius_m,
+            smoothing_passes=0,
+        )
+        scale = amplitude_m / radius_m
+        analytical = scale * np.sqrt(np.maximum(1.0 - z * z, 0.0))
+        absolute = np.abs(np.asarray(estimated, dtype=np.float64) - analytical) / scale
+        return float(np.sqrt(np.mean(absolute * absolute))), float(np.max(absolute))
+
+    coarse_rms, _ = normalized_error(16)
+    fine_rms, fine_max = normalized_error(64)
+    assert fine_rms < coarse_rms * 0.35
+    assert fine_rms < 0.002
+    assert fine_max < 0.01
 
 
 def test_native_surface_materials_are_fractional_causal_and_conservative():

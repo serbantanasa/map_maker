@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-from typing import Iterable, Optional, Tuple
+import sys
+from typing import Iterable, Mapping, Optional, Tuple
 
 import numpy as np
 from PIL import Image
@@ -41,6 +42,20 @@ def _normalize(array: np.ndarray) -> np.ndarray:
         return np.zeros_like(arr, dtype=np.uint8)
     normalized = (arr - arr_min) / (arr_max - arr_min)
     return (normalized * 255.0).astype(np.uint8)
+
+
+def _mineral_validation_failures(stage_result) -> tuple[str, ...]:
+    record = stage_result.artifact_records.get("MineralSystemsValidationMetadata")
+    metadata = record.value if record is not None else None
+    if not isinstance(metadata, Mapping):
+        return ("missing_validation_metadata",)
+    if metadata.get("hard_gate_pass") == 1:
+        return ()
+    raw_failures = metadata.get("hard_failures", ())
+    if isinstance(raw_failures, (str, bytes)) or not isinstance(raw_failures, Iterable):
+        return ("invalid_hard_failure_catalog",)
+    failures = tuple(str(failure) for failure in raw_failures)
+    return failures or ("hard_gate_pass",)
 
 
 def _topology_visualizer(
@@ -290,6 +305,8 @@ def main(args: Iterable[str] | None = None) -> int:
             "functional_vegetation_validation",
             "derived_biomes",
             "derived_biomes_validation",
+            "mineral_systems",
+            "mineral_systems_validation",
         ],
         default="topology",
     )
@@ -394,14 +411,27 @@ def main(args: Iterable[str] | None = None) -> int:
             stage_name = "derived_biomes"
         elif parsed.stage == "derived_biomes_validation":
             stage_name = "derived_biomes_validation"
+        elif parsed.stage == "mineral_systems":
+            stage_name = "mineral_systems"
+        elif parsed.stage == "mineral_systems_validation":
+            stage_name = "mineral_systems_validation"
         else:
             stage_name = "surface_water_final"
         started = time.perf_counter()
-        ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run([stage_name])
+        results = ExecutionEngine(config, generate_visuals=not parsed.skip_visuals).run(
+            [stage_name]
+        )
         elapsed_ms = (time.perf_counter() - started) * 1000.0
         visuals_dir = config.run_visual_dir() / stage_name
         stage_label = stage_name.replace("_", " ").title()
         print(f"{stage_label} visuals written to {visuals_dir} (elapsed {elapsed_ms:.2f} ms)")
+        if stage_name == "mineral_systems_validation":
+            failures = _mineral_validation_failures(results[stage_name])
+            if failures:
+                print("FAIL: causal mineral systems failed hard validation.", file=sys.stderr)
+                for failure in failures:
+                    print(f"  {failure}", file=sys.stderr)
+                return 1
         return 0
 
     invalid_controls = [
@@ -438,6 +468,8 @@ def main(args: Iterable[str] | None = None) -> int:
         "functional_vegetation_validation",
         "derived_biomes",
         "derived_biomes_validation",
+        "mineral_systems",
+        "mineral_systems_validation",
     }:
         parser.error(f"--stage {parsed.stage} requires --config")
     if parsed.stage == "topology":

@@ -100,6 +100,40 @@ receiver graph during validation. Exact display and hidden-halo counts are hard
 state; no visible cell may be terrain-only context. Cache hits recheck the
 complete output tree.
 
+The coarse causal mineral inventory is generated and self-validated with:
+
+```bash
+uv run map-maker-pipeline --stage mineral_systems_validation \
+  --config configs/cubed_sphere_crust_state.yaml
+```
+
+Its hard gates cover finite bounded causal fields, reconstruction of each
+family potential from its six persisted supports, terrestrial support over
+open ocean, catalog identity and references, topology-aware candidate local
+maxima, and independent directional enrichment against upstream geological
+drivers. The canonical seed-42 face-128 artifact passes all ten families and
+publishes 385 regional systems and 996 coarse candidate hypotheses. These
+counts are diagnostic, not Earth abundance quotas. The command exits nonzero
+when the per-world hard gate is red, and a red artifact cannot enter a regional
+handoff.
+
+The fixed mineral-system ensemble is validated with:
+
+```bash
+uv run map-maker validate-minerals \
+  --config configs/mineral_systems_validation.yaml
+```
+
+The 2026-07-24 baseline passes seeds `42`, `101`, `202`, `303`, `404`, and
+`505` at face resolution 64. Every family passes its directional and
+non-collapse gates on all six seeds, and all six combined state checksums are
+distinct. The screening config relaxes only named
+coarse L2 terrain-acceptance metrics needed to execute the reduced-resolution
+screen; it does not alter generated terrain or mineral state. The report
+records those overrides with `acceptance_only_no_terrain_state_change`
+semantics. Petroleum, measured reserves, economic viability, and L3 deposit
+geometry remain explicitly unsupported.
+
 ## Gate Classes
 
 `hard_invariant`
@@ -123,6 +157,7 @@ complete output tree.
 | Hydrology | Complete acyclic receiver and reach graphs, registered terminals, nonnegative discharge, explicit storage/loss attribution, closed water budgets, and source-to-terminal identity across hydraulic connectors. |
 | River resolution | River vectors and the reach graph remain canonical at every resolution. Raster layers carry fractional channel-water, floodplain, wetland, and valley effects; they do not replace the graph with categorical river cells or whole-cell excavation. Prospective and applied process fields remain distinct. |
 | Materials and ecology | Finite nonnegative state, bounded fractions, exact mixture/partition closure within declared tolerance, and no terrestrial state over unsupported ocean area. |
+| Mineral systems | Each coarse prospectivity field has persisted source, process, transport, trap, timing, and preservation support; potentials reconstruct within declared tolerance; terrestrial systems vanish over open ocean; catalogs have stable IDs and valid local-maxima references; and every supported family passes directional causal-enrichment and multi-seed non-collapse gates. |
 | Atlas | Rendering consumes immutable truth artifacts, records provenance, and never feeds cartographic width, projection, or style into simulation state. |
 | L2 handoff | Sparse child terrain and surface occupancy conserve L0 parents; inherited parent priors are not presented as L2 physics; every vector path references packaged children; package publication follows validation. |
 | L3 target | The selected coarse catchment has one outlet, complete upstream ownership, a continuous terrain window and source ring, explicit domain roles, a seam-valid L2 source, stable indexes, and bounded estimated base-grid cost. |

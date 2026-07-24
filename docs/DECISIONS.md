@@ -3085,3 +3085,87 @@ error, not defective terrain noise. Separating the fields removes the motif
 without changing accepted terrain, receivers, discharge, lakes, or river
 identity and prevents the same category error in future erosion and resource
 stages.
+
+## Decision 061: Mineral Systems V0 Is Causal, Coarse, And Explicitly Incomplete
+
+Status: implemented and validated in V0 on 2026-07-24
+
+Decision:
+Open one bounded exception to Decision 045's global resource-stage freeze:
+build the causal global/L2 mineral-system inventory required before regional
+deposit geometry can exist. Correct the legacy global surface-material stage
+first so that it consumes a topology-aware geomorphic slope derived from
+physical surface elevation, never hydrology `FlowSlope`.
+
+Mineral Systems V0 supports ten families:
+
+1. arc magmatic-hydrothermal;
+2. orogenic/shear;
+3. mafic-ultramafic;
+4. volcanogenic seafloor;
+5. sediment-hosted basin;
+6. ancient iron/cratonic;
+7. weathering/residual/supergene;
+8. placer/heavy-mineral;
+9. evaporite/chemical sediment; and
+10. coal basin.
+
+Volcanogenic-seafloor support is restricted to eligible current marine
+tectonic settings in V0. Land-hosted preserved or accreted VMS requires
+explicit paleo-seafloor lineage and remains deferred.
+
+For every family, persist separate source, process, transport, trap, timing,
+and preservation support fields. Derive system potential and confidence from
+those fields in a deterministic Rust kernel. Randomness may only express
+bounded unresolved natural uncertainty after the causal supports exist; it may
+not sprinkle deposits independently of geology, climate, water, soils, or
+biological productivity. Its spatial scale follows the coarse parent
+resolution and its effect on potential remains a minor modifier.
+
+Persist fifteen commodity prospectivity fields and stable regional
+mineral-system and major-deposit candidate catalogs. Candidate records carry
+host setting, causal lineage, confidence, exposure/depth proxies, relative
+size and grade distributions, and stable IDs. At the approximately 72 km
+global cell scale these are prospectivity and subgrid occurrence hypotheses,
+not literal orebody footprints, measured reserves, or guarantees of economic
+extraction. L3 may later refine veins, seams, lenses, placers, weathering
+profiles, and mine-scale geometry while retaining the parent system identity.
+
+Petroleum is explicitly unsupported in V0. The current model does not yet
+provide source-rock deposition, burial-temperature history, maturation,
+reservoir, seal, trap, migration, and timing relations. Producing petroleum
+prospectivity without that chain would violate Decision 016. Coal is supported
+because current productivity, wetland, accommodation, subsidence, burial, and
+preservation proxies can form a bounded first causal model; its thermal rank
+and seam geometry remain deferred.
+
+Acceptance requires finite bounded fields, exact deterministic replay, stable
+catalog IDs, no terrestrial-system support over open ocean, local-maxima
+catalog consistency, and directional causal enrichment for every family.
+Multi-seed validation checks that families do not collapse and that enrichment
+relations survive world variation. It does not impose Earth deposit counts or
+global commodity quotas. Diagnostics must include named legends and physical
+scale/projection information.
+
+Reason:
+Regional resource realization needs inherited geological systems, not painted
+ore noise. The available tectonic, geological-province, climate, hydrology,
+surface-material, and biosphere history is sufficient for a useful coarse
+inventory, but not for exact orebodies or petroleum. Separating the causal
+supports makes limitations inspectable, creates supervised-learning features,
+and lets later L3 work add geometry without discarding system identity.
+
+Implementation evidence:
+The native `mineral_systems_v0` kernel and Python orchestration persist all six
+causal axes for ten families, fifteen commodity prospectivity fields, stable
+system and candidate catalogs, and equirectangular diagnostics with legends
+and physical scale. The canonical seed-42 face-128 artifact passes all ten
+family gates with zero candidate local-maximum or candidate-potential
+reconstruction error and emits 385 systems plus 996 coarse candidate
+hypotheses. The fixed six-seed face-64 ensemble passes every family on every
+seed and rejects duplicate seed-state checksums. Global surface
+materials now derive physical gradient through a tangent-plane least-squares
+solve rather than hydraulic receiver slope or skewed logical cube directions.
+Canonical commands and regional handoff publication reject red mineral hard
+gates. Petroleum, reserves, economics, and L3 deposit geometry remain
+unsupported as required.

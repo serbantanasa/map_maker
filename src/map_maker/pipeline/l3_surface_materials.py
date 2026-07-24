@@ -813,14 +813,14 @@ def _alluvial_legacy_fraction(
     alluvium_prior: np.ndarray,
     distance_to_channel_m: np.ndarray,
     valley_fraction: np.ndarray,
-    flow_slope: np.ndarray,
+    terrain_slope: np.ndarray,
     config: L3SurfaceMaterialsConfig,
 ) -> np.ndarray:
     proximity = np.maximum(
         np.exp(-np.maximum(distance_to_channel_m, 0.0) / config.alluvial_legacy_decay_m),
         np.clip(valley_fraction, 0.0, 1.0),
     )
-    low_slope = np.exp(-np.maximum(flow_slope, 0.0) / config.alluvial_legacy_slope_scale)
+    low_slope = np.exp(-np.maximum(terrain_slope, 0.0) / config.alluvial_legacy_slope_scale)
     legacy = (
         np.clip(alluvium_prior, 0.0, 1.0)
         * (config.alluvial_legacy_background + config.alluvial_legacy_proximity_boost * proximity)
@@ -948,7 +948,7 @@ def _chunk_inputs(
         "province_confidence": _prior(sources, "geology/ProvinceConfidence", rows, weights),
         "elevation_confidence": _prior(sources, "elevation/ElevationConfidence", rows, weights),
         "relief": np.ascontiguousarray(sources.local_relief_m[start:end], dtype=np.float32),
-        "flow_slope": np.ascontiguousarray(
+        "terrain_slope": np.ascontiguousarray(
             sources.local_terrain_slope[start:end], dtype=np.float32
         ),
         "river_corridor": np.ascontiguousarray(
@@ -996,7 +996,7 @@ def _chunk_inputs(
     }
     drivers = {
         "LocalReliefM": inputs["relief"],
-        "LocalTerrainSlope": inputs["flow_slope"],
+        "LocalTerrainSlope": inputs["terrain_slope"],
         "TemperatureAdjustmentC": temperature_adjustment,
         "AlluvialLegacyFraction": alluvial_legacy,
     }

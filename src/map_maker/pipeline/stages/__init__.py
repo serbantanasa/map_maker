@@ -23,6 +23,8 @@ from . import functional_vegetation  # noqa: F401
 from . import functional_vegetation_validation  # noqa: F401
 from . import derived_biomes  # noqa: F401
 from . import derived_biomes_validation  # noqa: F401
+from . import mineral_systems  # noqa: F401
+from . import mineral_systems_validation  # noqa: F401
 from . import tectonics  # noqa: F401
 from . import world_age  # noqa: F401
 from . import geology  # noqa: F401
@@ -58,6 +60,8 @@ def ensure_builtin_stages() -> None:
         "functional_vegetation_validation": functional_vegetation_validation,
         "derived_biomes": derived_biomes,
         "derived_biomes_validation": derived_biomes_validation,
+        "mineral_systems": mineral_systems,
+        "mineral_systems_validation": mineral_systems_validation,
         "tectonics": tectonics,
         "world_age": world_age,
         "geology": geology,

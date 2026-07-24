@@ -1,15 +1,18 @@
 # Current Roadmap
 
-Status: current sequencing as of 2026-07-23. Numbered decisions remain the
+Status: current sequencing as of 2026-07-24. Numbered decisions remain the
 authority when this summary and the decision log differ.
 
 ## Controlling Milestone
 
 [Decision 045](DECISIONS.md#decision-045-freeze-late-simulation-work-until-global-map-export)
-continues to freeze new global hydrology, biosphere, and resource-system stages.
+continues to freeze unbounded global hydrology and biosphere expansion.
 [Decision 051](DECISIONS.md#decision-051-first-l3-slice-is-a-bounded-complete-catchment)
 explicitly opens only the bounded first L3 vertical slice. It does not authorize
 another global-stage expansion.
+[Decision 061](DECISIONS.md#decision-061-mineral-systems-v0-is-causal-coarse-and-explicitly-incomplete)
+now opens one bounded global resource-stage exception: the causal mineral
+inventory required before L3 deposit geometry.
 
 ## Current Work
 
@@ -40,12 +43,16 @@ another global-stage expansion.
    fractional biome mixtures. Broad climate is interpolated continuously;
    accepted fine soil water controls productivity, and coarse biome colors are
    comparison priors only.
-9. **Next decision:** specify the causal global/L2 mineral-system inventory
-   needed before L3 can realize veins, seams, lenses, evaporites, and placers,
-   or prioritize adaptive `25-50 m` river-corridor refinement. Do not paint
-   resource deposits or resolve banks before their respective upstream
-   contracts exist.
-10. In parallel, record explicit acceptance or a bounded blocker list for the
+9. **Complete:** implement Causal Mineral Systems V0 under Decision 061:
+   first correct the global geomorphic-slope driver, then persist causal
+   supports, system and commodity prospectivity, stable catalogs, diagnostics,
+   and multi-seed validation. The canonical face-128 artifact and fixed
+   six-seed face-64 ensemble pass; petroleum and L3 deposit geometry remain
+   explicitly deferred.
+10. **Next decision after V0:** select the first L3 resource-realization
+   vertical slice or adaptive `25-50 m` river-corridor refinement. Do not
+   resolve deposits or banks before their respective upstream contracts exist.
+11. In parallel, record explicit acceptance or a bounded blocker list for the
    current six-seed physical-atlas gallery and face-128 release candidate.
 
 The July 2026 six-seed surface-geography gallery passed its broad morphology
@@ -75,9 +82,9 @@ outlet remains an alignment prior; the accepted `89,852 km2` natural basin is
 selected by dominant overlap with the coarse target and exits the display at
 about `1,079 m3/s`. Decisions 058-060 now cover passing regional soils and
 ecology, including the rule that hydraulic receiver slope cannot stand in for
-physical hillslope gradient at L3. The legacy global material stage still uses
-`FlowSlope`; fix that frozen technical debt before global/L2 material state
-becomes a causal mineral-system input.
+physical hillslope gradient at L3. Decision 061 extends that correction to
+global materials and records the passing causal coarse mineral inventory used
+as the future L3 resource prior.
 
 ## Thaw Gate
 

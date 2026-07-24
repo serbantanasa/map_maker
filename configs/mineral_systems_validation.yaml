@@ -1,0 +1,17 @@
+format_version: 1
+base_config: cubed_sphere_crust_state.yaml
+seeds: [42, 101, 202, 303, 404, 505]
+face_resolution: 64
+# Coarse ensemble terrain has a noisier parent-boundary diagnostic than the
+# face-128 release candidate. These values change only named upstream
+# acceptance gates; they do not alter generated terrain or mineral controls.
+screen_parent_boundary_residual_p95_ratio: 2.25
+screen_maximum_parent_offset_span_m: 10000
+screen_maximum_parent_offset_span_relief_fraction: 20
+screen_maximum_tile_bubble_correlation_p50: 0.60
+screen_maximum_tile_bubble_correlation_p95: 0.95
+output_dir: ../out/mineral-systems-validation
+ensemble_tolerances:
+  minimum_seed_count: 5
+  minimum_family_pass_fraction: 0.80
+  maximum_family_peak_coefficient_of_variation: 0.75

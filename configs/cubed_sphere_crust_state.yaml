@@ -216,6 +216,7 @@ stage_overrides:
     weathering_precipitation_scale_mm: 1600.0
     soil_evaporation_factor: 1.0
     monthly_deep_drainage_fraction: 0.06
+    geomorphic_slope_smoothing_passes: 2
     maximum_component_balance_error: 0.00001
     maximum_water_balance_relative_error: 0.00001
   biosphere_envelope:
@@ -291,3 +292,22 @@ stage_overrides:
     minimum_nontrivial_biome_fraction: 0.002
     maximum_partition_absolute_error: 0.000001
     maximum_reconstruction_absolute_error: 0.000001
+  mineral_systems:
+    minimum_dominant_potential: 0.14
+    system_catalog_potential_threshold: 0.22
+    deposit_minimum_potential: 0.25
+    deposit_minimum_confidence: 0.20
+    maximum_deposits_per_system: 128
+    minimum_deposit_spacing_steps: 2
+    maximum_potential_reconstruction_error: 0.000002
+    maximum_open_ocean_terrestrial_support: 0.0000001
+  mineral_systems_validation:
+    minimum_family_peak_potential: 0.25
+    minimum_directional_enrichment_ratio: 1.10
+    minimum_directional_enrichment_difference: 0.02
+    minimum_broad_cratonic_enrichment_ratio: 1.02
+    minimum_broad_cratonic_enrichment_difference: 0.008
+    minimum_candidates_per_family: 1
+    driver_high_quantile: 0.80
+    driver_low_quantile: 0.20
+    maximum_candidate_local_maximum_error: 0.0000001

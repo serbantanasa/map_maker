@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -18,9 +19,26 @@ from map_maker.pipeline.regional_handoff import (
     RegionalHandoffResult,
     _maximum_group_fraction_error,
     _realize_surface_fractions,
+    _require_passing_mineral_validation,
     _restrict_grid_array,
     export_regional_handoff,
 )
+
+
+def test_handoff_rejects_red_mineral_validation_before_publication():
+    result = SimpleNamespace(
+        stage_name="mineral_systems_validation",
+        artifact_records={
+            "MineralSystemsValidationMetadata": SimpleNamespace(
+                value={
+                    "hard_gate_pass": 0,
+                    "hard_failures": ["placer_heavy_mineral_directional_or_noncollapse"],
+                }
+            )
+        },
+    )
+    with pytest.raises(RuntimeError, match="rejected failed mineral-system validation"):
+        _require_passing_mineral_validation(result)
 
 
 def test_config_resolves_paths_and_applies_cli_overrides(tmp_path: Path):
@@ -189,6 +207,18 @@ stage_overrides:
     maximum_parent_offset_span_m: 5000.0
     maximum_parent_offset_span_relief_fraction: 10.0
     maximum_tile_bubble_correlation_p50: 0.50
+  mineral_systems:
+    system_catalog_potential_threshold: 0.10
+    deposit_minimum_potential: 0.15
+    deposit_minimum_confidence: 0.10
+    maximum_deposits_per_system: 32
+    minimum_deposit_spacing_steps: 1
+  mineral_systems_validation:
+    minimum_family_peak_potential: 0.10
+    minimum_directional_enrichment_ratio: 1.0
+    minimum_directional_enrichment_difference: 0.0
+    minimum_broad_cratonic_enrichment_ratio: 1.0
+    minimum_broad_cratonic_enrichment_difference: 0.0
 """,
         encoding="utf8",
     )
@@ -238,6 +268,25 @@ region:
     assert region["l2/geometry/cell_id"].shape == (result.child_count,)
     assert region["l2/surface/ocean_fraction"].shape == (result.child_count,)
     assert (result.output_dir / "tables/refined_river_reaches.parquet").is_file()
+    assert (result.output_dir / "tables/mineral_systems.parquet").is_file()
+    assert (result.output_dir / "tables/major_deposit_candidates.parquet").is_file()
+    assert region["parent_priors/mineral_systems/MineralSystemPotential"].shape == (
+        result.parent_count,
+        10,
+    )
+    assert manifest["mineral_systems"]["hard_gate_pass"] == 1
+    assert len(manifest["mineral_systems"]["system_axis"]) == 10
+    assert len(manifest["mineral_systems"]["commodity_axis"]) == 15
+    assert manifest["mineral_systems"]["causal_axis"] == [
+        "source",
+        "process",
+        "transport",
+        "trap",
+        "timing",
+        "preservation",
+    ]
+    assert manifest["mineral_systems"]["l3_deposit_geometry_supported"] == 0
+    assert manifest["semantics"]["resources"].startswith("validated coarse mineral prospectivity")
     assert result.preview_path.is_file()
 
     repeated = export_regional_handoff(config)

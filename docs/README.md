@@ -18,6 +18,7 @@ this index owns document authority and lifecycle.
 | [Physical Atlas Export](specs/11_physical_atlas_export.md) | Current atlas composition, provenance, export, and visual-acceptance contract. |
 | [L2 Regional Handoff](specs/12_l2_regional_handoff.md) | Selected-basin L2 package, conservative child surfaces, inherited priors, and L3 boundary contract. |
 | [L3 Regional Vertical Slice](specs/13_l3_vertical_slice.md) | Selected catchment, 200 m terrain and hydrology ownership, adaptive river corridors, budgets, and acceptance gates. |
+| [Causal Mineral Systems V0](specs/14_causal_mineral_systems.md) | Coarse causal resource systems, persisted training features, validation, and explicit deposit/petroleum deferrals. |
 | [Code Standards](standards.md) | Repository process and contribution rules. |
 
 The product spec owns intent, the decision log owns approved choices, and the

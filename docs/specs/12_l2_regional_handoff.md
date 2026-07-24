@@ -73,9 +73,12 @@ or climate feedback.
 ## Priors And Vectors
 
 Every grid-shaped artifact available on the causal path through derived biomes
-is restricted to packaged parent IDs and stored parent-first under its source
-stage and artifact name. These are inherited priors. Monthly, class-mixture,
-and vector components remain trailing dimensions.
+and validated mineral systems is restricted to packaged parent IDs and stored
+parent-first under its source stage and artifact name. These are inherited
+priors. Monthly, class-mixture, mineral-system, commodity, and vector
+components remain trailing dimensions. The manifest carries the complete
+versioned mineral-system, commodity, and causal axes plus the upstream mineral
+validation checksum; publication is forbidden when that hard gate is red.
 
 The package also includes the selected and halo drainage graph, represented
 basin and waterbody catalogs, inherited source reaches, refined reaches, and
@@ -102,6 +105,8 @@ bank placement, meanders, and applied erosion remain L3 work.
     river_reaches.parquet
     refined_river_reaches.parquet
     refined_reach_cells.parquet
+    mineral_systems.parquet
+    major_deposit_candidates.parquet
 ```
 
 Zarr arrays are row-chunked and Parquet owns variable-length graph/vector
@@ -114,15 +119,16 @@ preview, source artifacts, and both configuration files.
 - recomputed L2 climate or soil chemistry;
 - physical river incision or sediment deposition;
 - newly discovered tributaries;
-- mineral or energy deposits not yet present in the parent world;
+- realized mineral-deposit geometry, reserves, economics, or energy systems;
 - L3 banks, floodplains, settlements, or game tiles.
 
 ## Canonical Evidence
 
 The seed-42 face-128 export selects basin `395`, packages `1,587` core parents,
 `832` halo parents, and one additional source-context parent, and realizes
-`619,520` factor-16 children. The package contains `178` inherited parent-prior
-fields. Its validation report passes area, bounded terrain-mean, surface-mean,
+`619,520` factor-16 children. The package contains `190` inherited parent-prior
+fields, including validated mineral-system and commodity axes. Its validation
+report passes area, bounded terrain-mean, surface-mean,
 occupancy, child-ID, parent-membership, hydraulic-depth, local-relief, seam,
 motif, and refined river-graph gates. Maximum terrain-mean error is `10.19 m`,
 its parent-boundary residual p95 ratio is `1.04`, and motif correlation is

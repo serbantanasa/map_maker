@@ -19,6 +19,8 @@ from .climate import _cube_net_rgb, _palette
 if TYPE_CHECKING:
     from ..execution import PipelineContext
 
+EARTH_MEAN_RADIUS_M = 6_371_008.8
+
 MATERIAL_OUTPUTS = (
     "BedrockSurfaceFraction",
     "ResidualRegolithFraction",
@@ -123,6 +125,7 @@ class SurfaceMaterialsConfig:
     weathering_precipitation_scale_mm: float = 1_600.0
     soil_evaporation_factor: float = 1.0
     monthly_deep_drainage_fraction: float = 0.06
+    geomorphic_slope_smoothing_passes: int = 2
     maximum_component_balance_error: float = 1e-5
     maximum_water_balance_relative_error: float = 1e-5
 
@@ -137,10 +140,16 @@ class SurfaceMaterialsConfig:
             raw = mapping.get(name, field.default)
             if isinstance(raw, bool) or not isinstance(raw, (int, float)):
                 raise ValueError(f"{name} must be numeric")
-            values[name] = int(raw) if name == "spinup_years" else float(raw)
+            values[name] = (
+                int(raw)
+                if name in {"spinup_years", "geomorphic_slope_smoothing_passes"}
+                else float(raw)
+            )
         config = cls(**values)  # type: ignore[arg-type]
         if not 2 <= config.spinup_years <= 2_000:
             raise ValueError("spinup_years must be in [2, 2000]")
+        if not 0 <= config.geomorphic_slope_smoothing_passes <= 8:
+            raise ValueError("geomorphic_slope_smoothing_passes must be in [0, 8]")
         if not 0.0 < config.maximum_soil_depth_m <= config.maximum_regolith_depth_m:
             raise ValueError(
                 "maximum_soil_depth_m must be positive and no greater than maximum_regolith_depth_m"
@@ -162,6 +171,72 @@ class SurfaceMaterialsConfig:
             if not np.isfinite(value) or not minimum <= value <= maximum:
                 raise ValueError(f"{name} must be finite and in [{minimum}, {maximum}]")
         return config
+
+
+def _surface_geomorphic_slope(
+    topology: CubedSphereGrid,
+    elevation_m: np.ndarray,
+    *,
+    planet_radius_m: float,
+    smoothing_passes: int,
+) -> np.ndarray:
+    """Return physical terrain-gradient magnitude on the topology-aware D4 lattice."""
+
+    if not np.isfinite(planet_radius_m) or planet_radius_m <= 0.0:
+        raise ValueError("planet_radius_m must be finite and positive")
+    elevation = np.asarray(elevation_m, dtype=np.float64)
+    if elevation.shape != topology.face_shape or np.any(~np.isfinite(elevation)):
+        raise ValueError("elevation_m must be finite and match the cubed-sphere face shape")
+    if not 0 <= smoothing_passes <= 8:
+        raise ValueError("smoothing_passes must be in [0, 8]")
+
+    neighbors = topology.neighbor_indices.reshape(topology.cell_count, 4)
+    smoothed = elevation.reshape(-1).copy()
+    for _ in range(smoothing_passes):
+        smoothed = 0.5 * smoothed + 0.125 * np.sum(smoothed[neighbors], axis=1)
+
+    xyz = np.asarray(topology.xyz, dtype=np.float64).reshape(topology.cell_count, 3)
+    adjacent_xyz = xyz[neighbors]
+    dot = np.clip(np.einsum("ij,ikj->ik", xyz, adjacent_xyz, optimize=True), -1.0, 1.0)
+    angular_distance = np.arccos(dot)
+    tangent = adjacent_xyz - dot[..., None] * xyz[:, None, :]
+    tangent_norm = np.linalg.norm(tangent, axis=2)
+    if (
+        np.any(~np.isfinite(angular_distance))
+        or np.any(angular_distance <= 0.0)
+        or np.any(tangent_norm <= 0.0)
+    ):
+        raise RuntimeError("cubed-sphere contains an invalid physical neighbor distance")
+
+    # Solve the four geodesic edge differences in an orthonormal tangent basis.
+    # Logical cube directions are skewed away from face centers, so treating
+    # opposing D4 edges as duplicated Cartesian components imprints cube geometry.
+    reference = np.zeros_like(xyz)
+    reference[:, 2] = 1.0
+    near_pole = np.abs(xyz[:, 2]) > 0.90
+    reference[near_pole] = (0.0, 1.0, 0.0)
+    east = np.cross(reference, xyz)
+    east /= np.linalg.norm(east, axis=1)[:, None]
+    north = np.cross(xyz, east)
+
+    displacement = (
+        tangent / tangent_norm[..., None] * (angular_distance * planet_radius_m)[..., None]
+    )
+    dx = np.einsum("ikj,ij->ik", displacement, east, optimize=True)
+    dy = np.einsum("ikj,ij->ik", displacement, north, optimize=True)
+    dz = smoothed[neighbors] - smoothed[:, None]
+    xx = np.sum(dx * dx, axis=1)
+    xy = np.sum(dx * dy, axis=1)
+    yy = np.sum(dy * dy, axis=1)
+    xz = np.sum(dx * dz, axis=1)
+    yz = np.sum(dy * dz, axis=1)
+    determinant = xx * yy - xy * xy
+    if np.any(~np.isfinite(determinant)) or np.any(determinant <= 0.0):
+        raise RuntimeError("cubed-sphere tangent gradient system is singular")
+    gradient_east = (xz * yy - yz * xy) / determinant
+    gradient_north = (yz * xx - xz * xy) / determinant
+    slope = np.hypot(gradient_east, gradient_north)
+    return np.ascontiguousarray(slope.reshape(topology.face_shape), dtype=np.float32)
 
 
 def _artifact_array(result: StageResult, name: str) -> np.ndarray:
@@ -224,12 +299,8 @@ def _refined_surface_fields(
     ):
         raise RuntimeError("refined surface-water parent has invalid physical area")
 
-    eroded_volume = np.asarray(
-        cells["applied_terrain_erosion_volume_m3"], dtype=np.float64
-    )
-    deposited_volume = np.asarray(
-        cells["applied_terrain_deposition_volume_m3"], dtype=np.float64
-    )
+    eroded_volume = np.asarray(cells["applied_terrain_erosion_volume_m3"], dtype=np.float64)
+    deposited_volume = np.asarray(cells["applied_terrain_deposition_volume_m3"], dtype=np.float64)
     eroded_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     deposited_parent: np.ndarray = np.zeros(total, dtype=np.float64)
     np.add.at(eroded_parent, parent_ids, eroded_volume)
@@ -442,6 +513,7 @@ def _visualizer(
         "elevation",
         "geology",
         "sea_level",
+        "planet",
     ),
     outputs=(
         *MATERIAL_OUTPUTS,
@@ -449,9 +521,10 @@ def _visualizer(
         *SOIL_OUTPUTS,
         *MONTHLY_OUTPUTS,
         *EFFECTIVE_SURFACE_WATER_OUTPUTS,
+        "SurfaceGeomorphicSlope",
         "SurfaceMaterialsMetadata",
     ),
-    version="v5",
+    version="v7",
     native_libraries=("surface_materials_native",),
     visualizer=_visualizer,
 )
@@ -479,6 +552,7 @@ def surface_materials_stage(
         **{name: shape for name in SOIL_OUTPUTS},
         **{name: monthly_shape for name in MONTHLY_OUTPUTS},
         **{name: shape for name in EFFECTIVE_SURFACE_WATER_OUTPUTS},
+        "SurfaceGeomorphicSlope": shape,
         "DominantSurfaceMaterialCode": shape,
     }
     handles = {
@@ -499,6 +573,14 @@ def surface_materials_stage(
     climate = deps["climate"]
     cryosphere = deps["cryosphere"]
     sea_level = deps["sea_level"]
+    planet_metadata = _artifact_mapping(deps["planet"], "PlanetMetadata")
+    planet_radius_m = float(planet_metadata["planet_radius_earth"]) * EARTH_MEAN_RADIUS_M
+    views["SurfaceGeomorphicSlope"][:] = _surface_geomorphic_slope(
+        context.topology,
+        _artifact_array(sea_level, "SurfaceElevationM"),
+        planet_radius_m=planet_radius_m,
+        smoothing_passes=config.geomorphic_slope_smoothing_passes,
+    )
     coarse_lake = np.ascontiguousarray(_artifact_array(hydrology, "LakeFraction"), dtype=np.float32)
     coarse_wetland = np.ascontiguousarray(
         _artifact_array(hydrology, "WetlandFraction"), dtype=np.float32
@@ -590,9 +672,7 @@ def surface_materials_stage(
             relief=np.ascontiguousarray(
                 _artifact_array(elevation, "TerrainReliefM"), dtype=np.float32
             ),
-            flow_slope=np.ascontiguousarray(
-                _artifact_array(hydrology, "FlowSlope"), dtype=np.float32
-            ),
+            terrain_slope=np.ascontiguousarray(views["SurfaceGeomorphicSlope"], dtype=np.float32),
             river_corridor=np.ascontiguousarray(
                 _artifact_array(hydrology, "RiverCorridor"), dtype=np.float32
             ),
@@ -710,6 +790,16 @@ def surface_materials_stage(
             **asdict(config),
             "model": "fractional_surface_materials_and_initial_soils_v2",
             "topology": "cubed_sphere",
+            "geomorphic_slope_semantics": (
+                "physical_surface_elevation_geodesic_D4_tangent_plane_least_squares"
+                "_after_topology_aware_smoothing"
+            ),
+            "geomorphic_slope_planet_radius_m": planet_radius_m,
+            "geomorphic_slope_land_mean": land_mean("SurfaceGeomorphicSlope"),
+            "geomorphic_slope_land_p95": float(
+                np.quantile(np.asarray(views["SurfaceGeomorphicSlope"])[land], 0.95)
+            ),
+            "hydraulic_flow_slope_consumed": 0,
             "material_codes": {str(code): name for code, name in MATERIAL_CODES.items()},
             "material_fraction_semantics": "mutually_exclusive_L2_component_area_fractions",
             "texture_semantics": "fine_earth_sand_silt_clay_sum_to_one",
@@ -758,5 +848,6 @@ __all__ = [
     "MONTHLY_OUTPUTS",
     "SOIL_OUTPUTS",
     "SurfaceMaterialsConfig",
+    "_surface_geomorphic_slope",
     "surface_materials_stage",
 ]

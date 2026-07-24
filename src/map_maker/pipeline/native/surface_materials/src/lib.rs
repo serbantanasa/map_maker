@@ -60,7 +60,7 @@ struct Inputs<'a> {
     province_confidence: &'a [f32],
     elevation_confidence: &'a [f32],
     relief: &'a [f32],
-    flow_slope: &'a [f32],
+    terrain_slope: &'a [f32],
     river_corridor: &'a [f32],
     floodplain: &'a [f32],
     lake_fraction: &'a [f32],
@@ -216,7 +216,7 @@ fn run_model(
         let rock_strength = clamp01(f64::from(inputs.rock_strength[cell]));
         let accommodation = clamp01(f64::from(inputs.accommodation[cell]));
         let relief = clamp01(f64::from(inputs.relief[cell]) / 1_200.0);
-        let slope = clamp01(f64::from(inputs.flow_slope[cell]) / 0.025);
+        let slope = clamp01(f64::from(inputs.terrain_slope[cell]) / 0.025);
         let river = clamp01(f64::from(inputs.river_corridor[cell]));
         let floodplain = clamp01(f64::from(inputs.floodplain[cell]));
         let depression = clamp01(f64::from(inputs.depression_fill_depth[cell]) / 180.0);
@@ -645,7 +645,7 @@ pub unsafe extern "C" fn surface_materials_run(
     province_confidence_ptr: *const f32,
     elevation_confidence_ptr: *const f32,
     relief_ptr: *const f32,
-    flow_slope_ptr: *const f32,
+    terrain_slope_ptr: *const f32,
     river_corridor_ptr: *const f32,
     floodplain_ptr: *const f32,
     lake_fraction_ptr: *const f32,
@@ -714,7 +714,7 @@ pub unsafe extern "C" fn surface_materials_run(
         province_confidence_ptr.cast::<()>(),
         elevation_confidence_ptr.cast::<()>(),
         relief_ptr.cast::<()>(),
-        flow_slope_ptr.cast::<()>(),
+        terrain_slope_ptr.cast::<()>(),
         river_corridor_ptr.cast::<()>(),
         floodplain_ptr.cast::<()>(),
         lake_fraction_ptr.cast::<()>(),
@@ -827,7 +827,7 @@ pub unsafe extern "C" fn surface_materials_run(
         province_confidence: unsafe { slice::from_raw_parts(province_confidence_ptr, total) },
         elevation_confidence: unsafe { slice::from_raw_parts(elevation_confidence_ptr, total) },
         relief: unsafe { slice::from_raw_parts(relief_ptr, total) },
-        flow_slope: unsafe { slice::from_raw_parts(flow_slope_ptr, total) },
+        terrain_slope: unsafe { slice::from_raw_parts(terrain_slope_ptr, total) },
         river_corridor: unsafe { slice::from_raw_parts(river_corridor_ptr, total) },
         floodplain: unsafe { slice::from_raw_parts(floodplain_ptr, total) },
         lake_fraction: unsafe { slice::from_raw_parts(lake_fraction_ptr, total) },
@@ -866,7 +866,7 @@ pub unsafe extern "C" fn surface_materials_run(
             inputs.province_confidence,
             inputs.elevation_confidence,
             inputs.relief,
-            inputs.flow_slope,
+            inputs.terrain_slope,
             inputs.river_corridor,
             inputs.floodplain,
             inputs.lake_fraction,

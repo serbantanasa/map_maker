@@ -21,6 +21,7 @@ NATIVE_LIBRARIES = (
     "hydrology_native",
     "hydrology_pass2_native",
     "l3_terrain_native",
+    "mineral_systems_native",
     "planet_native",
     "potential_biosphere_native",
     "refinement_native",

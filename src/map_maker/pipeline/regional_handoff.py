@@ -27,7 +27,7 @@ from .execution import ExecutionEngine
 from .models import StageResult
 
 HANDOFF_FORMAT_VERSION = 1
-HANDOFF_MODEL_VERSION = "l2_regional_handoff_v3"
+HANDOFF_MODEL_VERSION = "l2_regional_handoff_v5"
 PARENT_PRIOR_STAGES = (
     "geometry",
     "planet",
@@ -49,6 +49,7 @@ PARENT_PRIOR_STAGES = (
     "potential_biosphere",
     "functional_vegetation",
     "derived_biomes",
+    "mineral_systems",
 )
 
 
@@ -176,6 +177,26 @@ def _artifact_table(result: StageResult, name: str) -> pa.Table:
     if record is None or not isinstance(record.value, pa.Table):
         raise KeyError(f"Missing handoff table {result.stage_name}.{name}")
     return record.value.combine_chunks()
+
+
+def _artifact_mapping(result: StageResult, name: str) -> Mapping[str, Any]:
+    record = result.artifact_records.get(name)
+    if record is None or not isinstance(record.value, Mapping):
+        raise KeyError(f"Missing handoff metadata {result.stage_name}.{name}")
+    return cast(Mapping[str, Any], record.value)
+
+
+def _require_passing_mineral_validation(
+    result: StageResult,
+) -> Mapping[str, Any]:
+    metadata = _artifact_mapping(result, "MineralSystemsValidationMetadata")
+    if metadata.get("hard_gate_pass") != 1:
+        failures = metadata.get("hard_failures", [])
+        raise RuntimeError(
+            "regional handoff rejected failed mineral-system validation: "
+            + ", ".join(str(failure) for failure in failures)
+        )
+    return metadata
 
 
 def _column_numpy(table: pa.Table, name: str, dtype: np.dtype | None = None) -> np.ndarray:
@@ -679,7 +700,11 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
         world.log_dir = scratch / "logs"
         world.run_id = "l2-regional-handoff-build"
         engine = ExecutionEngine(world, generate_visuals=False)
-        results = engine.run(["derived_biomes", "basin_refinement"])
+        results = engine.run(["derived_biomes", "basin_refinement", "mineral_systems_validation"])
+        mineral_validation_result = results["mineral_systems_validation"]
+        mineral_validation_metadata = _require_passing_mineral_validation(mineral_validation_result)
+        mineral_systems_result = results["mineral_systems"]
+        mineral_metadata = _artifact_mapping(mineral_systems_result, "MineralSystemsMetadata")
         refinement_result = results["basin_refinement"]
         refinement_metadata = cast(
             dict[str, Any], refinement_result.artifact_records["BasinRefinementMetadata"].value
@@ -935,6 +960,21 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 pa.scalar(selected_basin_id, type=pa.int32()),
             )
         )
+        mineral_systems = mineral_systems_result
+        parent_province_ids = np.asarray(
+            _artifact_array(results["geology"], "GeologicalProvinceID"),
+            dtype=np.int32,
+        ).reshape(-1)[parent_ids]
+        regional_mineral_systems = _filter_isin(
+            _artifact_table(mineral_systems, "MineralSystemCatalog"),
+            "province_id",
+            np.unique(parent_province_ids),
+        )
+        regional_deposit_candidates = _filter_isin(
+            _artifact_table(mineral_systems, "MajorDepositCandidateCatalog"),
+            "host_cell_id",
+            parent_ids,
+        )
         table_values: dict[str, pa.Table] = {
             "parent_cells": parents,
             "basins": basin_catalog,
@@ -954,6 +994,8 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             "river_reaches": source_reaches,
             "refined_river_reaches": refined_reaches,
             "refined_reach_cells": refined_reach_cells,
+            "mineral_systems": regional_mineral_systems,
+            "major_deposit_candidates": regional_deposit_candidates,
         }
         table_sources = {
             "basins": ("hydrology", "BasinCatalog"),
@@ -969,6 +1011,11 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 "RefinedRiverReachCatalog",
             ),
             "refined_reach_cells": ("basin_refinement", "RefinedReachCellCatalog"),
+            "mineral_systems": ("mineral_systems", "MineralSystemCatalog"),
+            "major_deposit_candidates": (
+                "mineral_systems",
+                "MajorDepositCandidateCatalog",
+            ),
         }
         for name, table in table_values.items():
             _write_parquet(tables_dir / f"{name}.parquet", table)
@@ -1147,6 +1194,11 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             ),
             "all_refined_path_cells_packaged": int(path_cells_packaged),
             "refined_path_graph_valid": int(refinement_metadata["directed_path_graph_valid"]),
+            "mineral_systems_hard_gate_pass": int(mineral_validation_metadata["hard_gate_pass"]),
+            "mineral_systems_hard_failures": list(mineral_validation_metadata["hard_failures"]),
+            "mineral_systems_validation_checksum": mineral_validation_result.artifact_records[
+                "MineralSystemsValidationMetadata"
+            ].checksum,
         }
         validation["passed"] = bool(
             validation["maximum_parent_area_relative_error"] <= 1e-9
@@ -1168,6 +1220,7 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
             and validation["all_child_parents_packaged"] == 1
             and validation["all_refined_path_cells_packaged"] == 1
             and validation["refined_path_graph_valid"] == 1
+            and validation["mineral_systems_hard_gate_pass"] == 1
         )
         if not validation["passed"]:
             raise RuntimeError("regional handoff failed its conservation or topology contract")
@@ -1188,6 +1241,8 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 ("sea_level", "SurfaceOceanFraction"),
                 ("surface_materials", "EffectiveLakeFraction"),
                 ("surface_materials", "EffectiveWetlandFraction"),
+                ("mineral_systems", "MineralSystemsMetadata"),
+                ("mineral_systems_validation", "MineralSystemsValidationMetadata"),
             }
         )
         source_artifacts = _source_provenance(results, packaged_fields, direct_sources)
@@ -1255,6 +1310,25 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 "native_libraries": simulation_native_fingerprints(),
             },
             "parent_prior_fields": packaged_fields,
+            "mineral_systems": {
+                "model": mineral_metadata["model"],
+                "system_count": mineral_metadata["system_count"],
+                "commodity_count": mineral_metadata["commodity_count"],
+                "system_axis": list(mineral_metadata["system_axis"]),
+                "commodity_axis": list(mineral_metadata["commodity_axis"]),
+                "causal_axis": list(mineral_metadata["causal_axis"]),
+                "prospectivity_semantics": mineral_metadata["prospectivity_semantics"],
+                "candidate_geometry_semantics": mineral_metadata["candidate_geometry_semantics"],
+                "petroleum_supported": mineral_metadata["petroleum_supported"],
+                "measured_reserves_supported": mineral_metadata["measured_reserves_supported"],
+                "economic_viability_supported": mineral_metadata["economic_viability_supported"],
+                "l3_deposit_geometry_supported": mineral_metadata["l3_deposit_geometry_supported"],
+                "validation_model": mineral_validation_metadata["model"],
+                "validation_checksum": mineral_validation_result.artifact_records[
+                    "MineralSystemsValidationMetadata"
+                ].checksum,
+                "hard_gate_pass": mineral_validation_metadata["hard_gate_pass"],
+            },
             "tables": {
                 name: {"path": f"tables/{name}.parquet", "rows": table.num_rows}
                 for name, table in table_values.items()
@@ -1271,7 +1345,10 @@ def export_regional_handoff(config: RegionalHandoffConfig) -> RegionalHandoffRes
                 ),
                 "parent_priors": "inherited values; not recomputed or claimed as L2 downscaling",
                 "rivers": "inherited graph/vector identities with no applied L2 incision",
-                "resources": "absent until an upstream mineral and energy system exists",
+                "resources": (
+                    "validated coarse mineral prospectivity and candidate lineage only; "
+                    "no L2 deposit geometry, reserves, economics, or energy system"
+                ),
             },
             "validation_passed": True,
         }
